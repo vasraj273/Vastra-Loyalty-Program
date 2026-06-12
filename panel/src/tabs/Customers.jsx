@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { get, post } from '../api.js'
+import { get, post, patch, del } from '../api.js'
 
 const EMPTY = { name: '', shop_name: '', region: '', phone: '' }
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
@@ -12,6 +12,7 @@ export default function Customers() {
   const [notice, setNotice] = useState(null)
   const [busy, setBusy] = useState(false)
   const [query, setQuery] = useState('')
+  const [editing, setEditing] = useState(null)
 
   const [cities, setCities] = useState([])
 
@@ -47,6 +48,37 @@ export default function Customers() {
       setError(err.message)
     } finally {
       setBusy(false)
+    }
+  }
+
+  const saveEdit = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await patch(`/retailers/${editing.id}`, {
+        name: editing.name,
+        shop_name: editing.shop_name,
+        region: editing.region,
+        phone: editing.phone || null,
+      })
+      setEditing(null)
+      load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const remove = async (r) => {
+    if (!window.confirm(`Remove "${r.shop_name}"? This cannot be undone.`))
+      return
+    setError(null)
+    try {
+      await del(`/retailers/${r.id}`)
+      load()
+    } catch (err) {
+      setError(err.message)
     }
   }
 
@@ -151,31 +183,118 @@ export default function Customers() {
               <th>Location</th>
               <th className="num">Scans</th>
               <th className="num">Points</th>
+              <th className="actions-col">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {filtered.map((r) => (
-              <tr key={r.id}>
-                <td>{r.shop_name}</td>
-                <td>{r.name}</td>
-                <td>{r.region}</td>
-                <td className="mono">{r.phone ?? '—'}</td>
-                <td>
-                  {r.location_source === 'gps' ? (
-                    <span className="loc-badge gps">GPS · exact</span>
-                  ) : r.location_source === 'city' ? (
-                    <span className="loc-badge">city</span>
-                  ) : (
-                    <span className="loc-badge none">pending</span>
-                  )}
-                </td>
-                <td className="num">{fmt(r.scans)}</td>
-                <td className="num">{fmt(r.points)}</td>
-              </tr>
-            ))}
+            {filtered.map((r) =>
+              editing?.id === r.id ? (
+                <tr key={r.id} className="editing-row">
+                  <td>
+                    <input
+                      className="inline-input"
+                      value={editing.shop_name}
+                      onChange={(e) =>
+                        setEditing({ ...editing, shop_name: e.target.value })
+                      }
+                    />
+                  </td>
+                  <td>
+                    <input
+                      className="inline-input"
+                      value={editing.name}
+                      onChange={(e) =>
+                        setEditing({ ...editing, name: e.target.value })
+                      }
+                    />
+                  </td>
+                  <td>
+                    <input
+                      className="inline-input"
+                      list="city-options"
+                      value={editing.region}
+                      onChange={(e) =>
+                        setEditing({ ...editing, region: e.target.value })
+                      }
+                    />
+                  </td>
+                  <td>
+                    <input
+                      className="inline-input"
+                      value={editing.phone ?? ''}
+                      onChange={(e) =>
+                        setEditing({ ...editing, phone: e.target.value })
+                      }
+                    />
+                  </td>
+                  <td>
+                    <span className="loc-badge">
+                      {r.location_source === 'gps' ? 'GPS kept' : 'auto'}
+                    </span>
+                  </td>
+                  <td className="num">{fmt(r.scans)}</td>
+                  <td className="num">{fmt(r.points)}</td>
+                  <td className="actions-col">
+                    <button
+                      className="btn-ghost small"
+                      onClick={saveEdit}
+                      disabled={busy}
+                    >
+                      Save
+                    </button>
+                    <button
+                      className="btn-ghost small"
+                      onClick={() => setEditing(null)}
+                    >
+                      Cancel
+                    </button>
+                  </td>
+                </tr>
+              ) : (
+                <tr key={r.id}>
+                  <td>{r.shop_name}</td>
+                  <td>{r.name}</td>
+                  <td>{r.region}</td>
+                  <td className="mono">{r.phone ?? '—'}</td>
+                  <td>
+                    {r.location_source === 'gps' ? (
+                      <span className="loc-badge gps">GPS · exact</span>
+                    ) : r.location_source === 'city' ? (
+                      <span className="loc-badge">city</span>
+                    ) : (
+                      <span className="loc-badge none">pending</span>
+                    )}
+                  </td>
+                  <td className="num">{fmt(r.scans)}</td>
+                  <td className="num">{fmt(r.points)}</td>
+                  <td className="actions-col">
+                    <button
+                      className="btn-ghost small"
+                      onClick={() =>
+                        setEditing({
+                          id: r.id,
+                          name: r.name,
+                          shop_name: r.shop_name,
+                          region: r.region,
+                          phone: r.phone,
+                        })
+                      }
+                    >
+                      Edit
+                    </button>
+                    <button
+                      className="btn-ghost small danger"
+                      onClick={() => remove(r)}
+                    >
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ),
+            )}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan="7" className="empty">
+                <td colSpan="8" className="empty">
                   No customers match.
                 </td>
               </tr>

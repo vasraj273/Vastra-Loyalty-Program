@@ -228,10 +228,81 @@ def create_product(body: ProductIn, user: dict = Depends(current_manufacturer)):
 def list_products(user: dict = Depends(current_manufacturer)):
     with get_db() as db:
         rows = db.execute(
-            "SELECT * FROM products WHERE manufacturer_id = ? ORDER BY id",
+            """SELECT p.*,
+                      (SELECT COUNT(*) FROM points_ledger l
+                       WHERE l.product_id = p.id) AS scans
+               FROM products p WHERE p.manufacturer_id = ? ORDER BY p.id""",
             (user["id"],),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+class ProductUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    sku: str | None = Field(default=None, min_length=1, max_length=100)
+    loyalty_points: int | None = Field(default=None, ge=0)
+
+
+@app.patch("/products/{product_id}")
+def update_product(product_id: int, body: ProductUpdate,
+                   user: dict = Depends(current_manufacturer)):
+    """Demo-only product management; live products will sync from the
+    Vastra ERP. Point changes affect future batches only — already
+    generated batches keep their frozen points_per_code."""
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not fields:
+        raise HTTPException(422, "Nothing to update")
+    with get_db() as db:
+        row = db.execute(
+            "SELECT id FROM products WHERE id = ? AND manufacturer_id = ?",
+            (product_id, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Product not found")
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        try:
+            db.execute(
+                f"UPDATE products SET {sets} WHERE id = ?",
+                [*fields.values(), product_id],
+            )
+        except Exception as exc:
+            if "UNIQUE" in str(exc):
+                raise HTTPException(409, "SKU already exists")
+            raise
+        out = db.execute(
+            "SELECT * FROM products WHERE id = ?", (product_id,)
+        ).fetchone()
+    return dict(out)
+
+
+@app.delete("/products/{product_id}", status_code=204)
+def delete_product(product_id: int,
+                   user: dict = Depends(current_manufacturer)):
+    with get_db() as db:
+        row = db.execute(
+            "SELECT id FROM products WHERE id = ? AND manufacturer_id = ?",
+            (product_id, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Product not found")
+        scans = db.execute(
+            "SELECT COUNT(*) AS n FROM points_ledger WHERE product_id = ?",
+            (product_id,),
+        ).fetchone()["n"]
+        if scans:
+            raise HTTPException(
+                409, "Product has redeemed scans; cannot delete")
+        batches = db.execute(
+            "SELECT COUNT(*) AS n FROM qr_batches WHERE product_id = ?",
+            (product_id,),
+        ).fetchone()["n"]
+        if batches:
+            raise HTTPException(
+                409, "Product has QR batches (possibly printed); "
+                     "discard its batches first")
+        db.execute(
+            "DELETE FROM scheme_products WHERE product_id = ?", (product_id,))
+        db.execute("DELETE FROM products WHERE id = ?", (product_id,))
 
 
 # ---------- retailers (manufacturer-scoped) ----------
@@ -273,6 +344,65 @@ def list_retailers(user: dict = Depends(current_manufacturer)):
             (user["id"],),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+class RetailerUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    shop_name: str | None = Field(default=None, min_length=1, max_length=200)
+    region: str | None = Field(default=None, min_length=1, max_length=100)
+    phone: str | None = Field(default=None, max_length=20)
+
+
+@app.patch("/retailers/{retailer_id}")
+def update_retailer(retailer_id: int, body: RetailerUpdate,
+                    user: dict = Depends(current_manufacturer)):
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not fields:
+        raise HTTPException(422, "Nothing to update")
+    with get_db() as db:
+        row = db.execute(
+            "SELECT * FROM retailers WHERE id = ? AND manufacturer_id = ?",
+            (retailer_id, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Retailer not found")
+        # Region change re-resolves the map position unless an exact GPS
+        # location is already locked.
+        if ("region" in fields and fields["region"] != row["region"]
+                and row["location_source"] != "gps"):
+            coords = coords_for(fields["region"])
+            fields["lat"], fields["lng"] = coords if coords else (None, None)
+            fields["location_source"] = "city" if coords else None
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        db.execute(
+            f"UPDATE retailers SET {sets} WHERE id = ?",
+            [*fields.values(), retailer_id],
+        )
+        out = db.execute(
+            "SELECT * FROM retailers WHERE id = ?", (retailer_id,)
+        ).fetchone()
+    return dict(out)
+
+
+@app.delete("/retailers/{retailer_id}", status_code=204)
+def delete_retailer(retailer_id: int,
+                    user: dict = Depends(current_manufacturer)):
+    with get_db() as db:
+        row = db.execute(
+            "SELECT id FROM retailers WHERE id = ? AND manufacturer_id = ?",
+            (retailer_id, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Retailer not found")
+        scans = db.execute(
+            "SELECT COUNT(*) AS n FROM points_ledger WHERE retailer_id = ?",
+            (retailer_id,),
+        ).fetchone()["n"]
+        if scans:
+            raise HTTPException(
+                409, "Retailer has scan history; cannot delete "
+                     "(claims would lose their owner)")
+        db.execute("DELETE FROM retailers WHERE id = ?", (retailer_id,))
 
 
 @app.get("/retailers/{retailer_id}/points")
