@@ -1,0 +1,17 @@
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# node
+panel/node_modules/
+panel/dist/
+
+# local data
+qr_api.db
+*.pdf
+
+# tooling
+.claude-flow/
+.swarm/
+ruvector.db

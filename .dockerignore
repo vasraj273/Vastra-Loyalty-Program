@@ -1,0 +1,9 @@
+.venv/
+panel/node_modules/
+panel/dist/
+qr_api.db
+__pycache__/
+*.pyc
+.claude-flow/
+.swarm/
+ruvector.db

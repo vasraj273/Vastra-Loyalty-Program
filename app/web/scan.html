@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Scan Loyalty QR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet" />
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<style>
+  :root {
+    --paper:#f6f1e6; --card:#fbf8f1; --ink:#22294f; --soft:#4c5170;
+    --line:#ddd2bb; --indigo:#2b3468; --madder:#c8472b; --leaf:#3e6b4f;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:'IBM Plex Sans',sans-serif; background:var(--paper); color:var(--ink);
+         display:flex; justify-content:center; min-height:100vh; }
+  .wrap { width:100%; max-width:430px; padding:22px 18px 40px; }
+  h1 { font-family:'Fraunces',serif; font-size:22px; margin:0 0 2px; }
+  .sub { font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--madder); font-weight:600; margin-bottom:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:14px;
+          box-shadow:0 1px 2px rgba(34,41,79,.08),0 8px 24px rgba(34,41,79,.07); }
+  label { display:block; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:1px; color:var(--soft); margin:12px 0 5px; }
+  input, select { width:100%; font:inherit; font-size:15px; padding:11px 12px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); }
+  input:focus, select:focus { outline:2px solid var(--indigo); outline-offset:-1px; }
+  button { width:100%; font:inherit; font-weight:600; font-size:15px; padding:13px; margin-top:14px; border:none; border-radius:9px;
+           background:var(--madder); color:var(--paper); cursor:pointer; box-shadow:2px 2px 0 var(--indigo); }
+  button:active { transform:translate(1px,1px); box-shadow:1px 1px 0 var(--indigo); }
+  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); box-shadow:none; }
+  .error { background:#f7e3dd; border:1px solid var(--madder); color:#a83a22; padding:10px 13px; border-radius:8px; margin-top:12px; font-size:14px; display:none; }
+  .hidden { display:none; }
+  #reader { border-radius:10px; overflow:hidden; border:1px solid var(--line); }
+  .divider { text-align:center; color:var(--soft); font-size:12px; letter-spacing:2px; text-transform:uppercase; margin:16px 0 2px; }
+  .manual input { font-family:'IBM Plex Mono',monospace; font-size:20px; text-align:center; letter-spacing:5px; text-transform:uppercase; }
+  .points-hero { font-family:'Fraunces',serif; font-size:54px; line-height:1; color:var(--leaf); margin:6px 0 2px; }
+  .result h2 { font-family:'Fraunces',serif; font-size:19px; margin:0; color:var(--leaf); }
+  .result p { margin:5px 0; font-size:14px; }
+  .breakdown { font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--soft); }
+  .scheme-tag { display:inline-block; background:rgba(62,107,79,.12); color:var(--leaf); border:1px solid rgba(62,107,79,.35);
+                border-radius:999px; padding:2px 12px; font-size:12px; margin-top:4px; }
+  .balance { border-top:1px dashed var(--line); margin-top:12px; padding-top:10px; font-size:14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Scan Loyalty QR</h1>
+  <div class="sub">Retailer · YourApp webview</div>
+
+  <div class="card" id="scanCard">
+    <label>Scanning as (demo — comes from retailer login later)</label>
+    <select id="retailer"></select>
+
+    <div class="divider">scan with camera</div>
+    <div id="reader"></div>
+    <button class="ghost" id="camBtn" onclick="toggleCamera()">Start camera</button>
+
+    <div class="divider">or enter code by hand</div>
+    <div class="manual">
+      <input id="manual" maxlength="8" placeholder="XXX-XXX" autocomplete="off" />
+    </div>
+    <button onclick="redeemManual()">Redeem code</button>
+    <div class="error" id="scanError"></div>
+  </div>
+
+  <div class="card result hidden" id="resultCard">
+    <h2>Points earned!</h2>
+    <div class="points-hero" id="resPoints"></div>
+    <p><strong id="resProduct"></strong> <span class="breakdown" id="resSku"></span></p>
+    <p class="breakdown" id="resSplit"></p>
+    <div id="resScheme"></div>
+    <p class="balance">Shop: <strong id="resShop"></strong><br/>
+       New balance: <strong id="resBalance"></strong> points</p>
+    <button class="ghost" onclick="again()">Scan another</button>
+  </div>
+</div>
+
+<script>
+const API = '';
+let scanner = null, scanning = false, busy = false;
+const $ = (id) => document.getElementById(id);
+const err = (msg) => { const e = $('scanError'); e.textContent = msg || ''; e.style.display = msg ? 'block' : 'none'; };
+
+async function api(path, opts = {}) {
+  opts.headers = { 'Content-Type': 'application/json' };
+  const res = await fetch(API + path, opts);
+  const body = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) throw new Error((body && body.detail) || res.statusText);
+  return body;
+}
+
+async function loadRetailers() {
+  const rs = await api('/public/retailers');
+  $('retailer').innerHTML = rs.map(r =>
+    `<option value="${r.id}">${r.shop_name} (${r.region}) — ${r.manufacturer}</option>`).join('');
+}
+
+function extractToken(text) {
+  // Accept raw token, full scan-page URL, or manual code
+  const m = text.trim().match(/\/([A-Za-z0-9_-]+)\/?$/);
+  return m ? m[1] : text.trim();
+}
+
+async function redeem(code) {
+  if (busy) return;
+  busy = true;
+  err('');
+  try {
+    const out = await api('/scan', { method: 'POST', body: JSON.stringify({
+      code, retailer_id: Number($('retailer').value) }) });
+    stopCamera();
+    $('resPoints').textContent = '+' + out.points_awarded;
+    $('resProduct').textContent = out.product.name;
+    $('resSku').textContent = out.product.sku;
+    $('resSplit').textContent = out.bonus_points > 0
+      ? `${out.base_points} base + ${out.bonus_points} scheme bonus`
+      : `${out.base_points} base points`;
+    $('resScheme').innerHTML = out.scheme
+      ? `<span class="scheme-tag">${out.scheme.name}</span>` : '';
+    $('resShop').textContent = out.retailer.shop_name;
+    $('resBalance').textContent = out.new_balance;
+    $('scanCard').classList.add('hidden');
+    $('resultCard').classList.remove('hidden');
+  } catch (e) {
+    err(e.message);
+  } finally {
+    busy = false;
+  }
+}
+
+function redeemManual() {
+  const v = $('manual').value.trim();
+  if (!v) { err('Enter the 6-character code printed under the QR'); return; }
+  redeem(v);
+}
+
+function toggleCamera() { scanning ? stopCamera() : startCamera(); }
+
+function startCamera() {
+  err('');
+  scanner = new Html5Qrcode('reader');
+  scanner.start(
+    { facingMode: 'environment' },
+    { fps: 10, qrbox: { width: 230, height: 230 } },
+    (text) => redeem(extractToken(text)),
+    () => {}
+  ).then(() => { scanning = true; $('camBtn').textContent = 'Stop camera'; })
+   .catch((e) => err('Camera unavailable: ' + e + '. Use the manual code instead.'));
+}
+
+function stopCamera() {
+  if (scanner && scanning) { scanner.stop().catch(() => {}); }
+  scanning = false; $('camBtn').textContent = 'Start camera';
+}
+
+function again() {
+  $('manual').value = '';
+  $('resultCard').classList.add('hidden');
+  $('scanCard').classList.remove('hidden');
+}
+
+// If opened from a printed QR (URL /web/scan/<token>), redeem immediately
+// once a retailer is chosen.
+const pathToken = (() => {
+  const parts = location.pathname.split('/').filter(Boolean);
+  return (parts.length === 3 && parts[0] === 'web' && parts[1] === 'scan')
+    ? parts[2] : null;
+})();
+
+loadRetailers().then(() => {
+  if (pathToken) {
+    err('Code detected from QR link. Pick your shop, then tap Redeem below.');
+    $('manual').value = '';
+    const btn = document.createElement('button');
+    btn.textContent = 'Redeem scanned code';
+    btn.onclick = () => redeem(pathToken);
+    $('scanCard').insertBefore(btn, $('scanError'));
+  }
+}).catch((e) => err(e.message));
+</script>
+</body>
+</html>

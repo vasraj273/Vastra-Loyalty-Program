@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Generate Loyalty QR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper:#f6f1e6; --card:#fbf8f1; --ink:#22294f; --soft:#4c5170;
+    --line:#ddd2bb; --indigo:#2b3468; --madder:#c8472b; --leaf:#3e6b4f;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:'IBM Plex Sans',sans-serif; background:var(--paper); color:var(--ink);
+         display:flex; justify-content:center; min-height:100vh; }
+  .wrap { width:100%; max-width:430px; padding:22px 18px 40px; }
+  h1 { font-family:'Fraunces',serif; font-size:22px; margin:0 0 2px; }
+  .sub { font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--madder); font-weight:600; margin-bottom:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:14px;
+          box-shadow:0 1px 2px rgba(34,41,79,.08),0 8px 24px rgba(34,41,79,.07); }
+  label { display:block; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:1px; color:var(--soft); margin:12px 0 5px; }
+  input, select { width:100%; font:inherit; font-size:15px; padding:11px 12px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); }
+  input:focus, select:focus { outline:2px solid var(--indigo); outline-offset:-1px; }
+  button { width:100%; font:inherit; font-weight:600; font-size:15px; padding:13px; margin-top:16px; border:none; border-radius:9px;
+           background:var(--madder); color:var(--paper); cursor:pointer; box-shadow:2px 2px 0 var(--indigo); }
+  button:active { transform:translate(1px,1px); box-shadow:1px 1px 0 var(--indigo); }
+  button.secondary { background:var(--indigo); box-shadow:2px 2px 0 var(--madder); }
+  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); box-shadow:none; }
+  .error { background:#f7e3dd; border:1px solid var(--madder); color:#a83a22; padding:10px 13px; border-radius:8px; margin-top:12px; font-size:14px; display:none; }
+  .hidden { display:none; }
+  .result h2 { font-family:'Fraunces',serif; font-size:19px; margin:0 0 4px; color:var(--leaf); }
+  .result p { margin:4px 0; font-size:14px; }
+  .mono { font-family:'IBM Plex Mono',monospace; }
+  .who { font-size:13px; color:var(--soft); display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+  .who a { color:var(--madder); cursor:pointer; text-decoration:underline; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Generate Loyalty QR</h1>
+  <div class="sub">Manufacturer · Vastra webview</div>
+
+  <!-- login -->
+  <div class="card" id="loginCard">
+    <label>Username</label>
+    <input id="username" autocomplete="username" placeholder="surya" />
+    <label>Password</label>
+    <input id="password" type="password" autocomplete="current-password" />
+    <button onclick="login()">Log in</button>
+    <div class="error" id="loginError"></div>
+  </div>
+
+  <!-- generate form -->
+  <div class="card hidden" id="genCard">
+    <div class="who"><span id="whoami"></span><a onclick="logout()">log out</a></div>
+    <label>Product</label>
+    <select id="product"></select>
+    <label>Quantity</label>
+    <input id="quantity" type="number" min="1" max="10000" value="10" />
+    <button onclick="generate()">Generate QR codes</button>
+    <div class="error" id="genError"></div>
+  </div>
+
+  <!-- result -->
+  <div class="card result hidden" id="resultCard">
+    <h2>Batch ready</h2>
+    <p><span id="resQty"></span> codes for <strong id="resProduct"></strong></p>
+    <p><span id="resPoints"></span> points per scan</p>
+    <p class="mono" style="font-size:12px" id="resBatch"></p>
+    <button onclick="printPdf()">Print stickers (PDF)</button>
+    <button class="secondary" onclick="saveBatch()" id="saveBtn">Save for later</button>
+    <button class="ghost" onclick="reset()">New batch</button>
+    <div class="error" id="resError"></div>
+  </div>
+</div>
+
+<script>
+const API = '';  // same origin
+let token = localStorage.getItem('vl_web_token') || '';
+let who = localStorage.getItem('vl_web_who') || '';
+let batch = null;
+
+const $ = (id) => document.getElementById(id);
+const show = (id, on) => $(id).classList.toggle('hidden', !on);
+const err = (id, msg) => { const e = $(id); e.textContent = msg || ''; e.style.display = msg ? 'block' : 'none'; };
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers);
+  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+  const res = await fetch(API + path, opts);
+  if (!res.ok) {
+    let d = res.statusText;
+    try { d = (await res.json()).detail || d; } catch {}
+    if (res.status === 401) { token = ''; localStorage.removeItem('vl_web_token'); render(); }
+    throw new Error(d);
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+async function login() {
+  err('loginError');
+  try {
+    const out = await api('/auth/login', { method: 'POST', body: JSON.stringify({
+      username: $('username').value.trim(), password: $('password').value }) });
+    if (out.is_admin) throw new Error('Super admin cannot generate; log in as a manufacturer');
+    token = out.token; who = out.display_name;
+    localStorage.setItem('vl_web_token', token);
+    localStorage.setItem('vl_web_who', who);
+    render();
+  } catch (e) { err('loginError', e.message); }
+}
+
+async function logout() {
+  try { await api('/auth/logout', { method: 'POST' }); } catch {}
+  token = ''; localStorage.removeItem('vl_web_token'); render();
+}
+
+async function loadProducts() {
+  $('whoami').textContent = who;
+  const products = await api('/products');
+  $('product').innerHTML = products.map(p =>
+    `<option value="${p.id}">${p.name} — ${p.loyalty_points} pts</option>`).join('');
+}
+
+async function generate() {
+  err('genError');
+  try {
+    batch = await api('/qr/generate', { method: 'POST', body: JSON.stringify({
+      product_id: Number($('product').value),
+      quantity: Number($('quantity').value) }) });
+    $('resQty').textContent = batch.quantity;
+    $('resProduct').textContent = batch.product_name;
+    $('resPoints').textContent = batch.points_per_code;
+    $('resBatch').textContent = 'batch #' + batch.batch_id;
+    $('saveBtn').textContent = 'Save for later';
+    show('genCard', false); show('resultCard', true);
+  } catch (e) { err('genError', e.message); }
+}
+
+function printPdf() {
+  window.open(API + batch.actions.print + '?token=' + encodeURIComponent(token), '_blank');
+}
+
+async function saveBatch() {
+  err('resError');
+  try {
+    await api(batch.actions.save, { method: 'POST' });
+    $('saveBtn').textContent = 'Saved ✓';
+  } catch (e) { err('resError', e.message); }
+}
+
+function reset() { show('resultCard', false); show('genCard', true); }
+
+function render() {
+  const authed = !!token;
+  show('loginCard', !authed);
+  show('genCard', authed);
+  show('resultCard', false);
+  if (authed) loadProducts().catch(e => err('genError', e.message));
+}
+render();
+</script>
+</body>
+</html>
