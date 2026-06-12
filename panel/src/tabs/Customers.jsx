@@ -13,11 +13,16 @@ export default function Customers() {
   const [busy, setBusy] = useState(false)
   const [query, setQuery] = useState('')
 
+  const [cities, setCities] = useState([])
+
   const load = useCallback(() => {
     get('/retailers').then(setList).catch((e) => setError(e.message))
   }, [])
 
   useEffect(load, [load])
+  useEffect(() => {
+    get('/public/cities').then(setCities).catch(() => {})
+  }, [])
 
   const submit = async (e) => {
     e.preventDefault()
@@ -97,10 +102,16 @@ export default function Customers() {
               City
               <input
                 required
+                list="city-options"
                 value={form.region}
                 onChange={(e) => setForm({ ...form, region: e.target.value })}
                 placeholder="Jaipur"
               />
+              <datalist id="city-options">
+                {cities.map((c) => (
+                  <option key={c} value={c.replace(/\b\w/g, (m) => m.toUpperCase())} />
+                ))}
+              </datalist>
             </label>
             <label>
               Phone (optional)

@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from .auth import (current_admin, current_manufacturer, current_user,
                    hash_password, issue_token, verify_password)
 from .database import get_db, init_db
-from .geo import coords_for
+from .geo import coords_for, known_places
 from .pdf_service import build_pdf
 from .qr_service import new_manual_code, new_token, payload_for, render_png
 
@@ -33,9 +33,27 @@ WEB_DIR = Path(__file__).resolve().parent / "web"
 PANEL_DIST = Path(__file__).resolve().parent.parent / "panel" / "dist"
 
 
+def _backfill_coords() -> None:
+    """Resolve coordinates for retailers whose region wasn't in the lookup
+    when they were added (e.g. state names supported later)."""
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT id, region FROM retailers WHERE lat IS NULL"
+        ).fetchall()
+        for r in rows:
+            coords = coords_for(r["region"])
+            if coords:
+                db.execute(
+                    """UPDATE retailers SET lat = ?, lng = ?,
+                       location_source = 'city' WHERE id = ?""",
+                    (coords[0], coords[1], r["id"]),
+                )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    _backfill_coords()
     yield
 
 
@@ -302,6 +320,12 @@ def public_retailers():
                ORDER BY m.display_name, r.shop_name"""
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+@app.get("/public/cities")
+def public_cities():
+    """Known place names for the add-customer autocomplete."""
+    return known_places()
 
 
 class LocationIn(BaseModel):
