@@ -164,6 +164,27 @@ body {
 .btn-primary:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--indigo); }
 .btn-primary:disabled { opacity: 0.6; cursor: default; }
 
+.btn-row { display: flex; gap: 10px; align-items: center; }
+
+.btn-secondary {
+  display: inline-block;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--paper);
+  background: var(--indigo);
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  cursor: pointer;
+  text-decoration: none;
+  box-shadow: 2px 2px 0 var(--madder);
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+
+.btn-secondary:hover { transform: translate(-1px, -1px); box-shadow: 3px 3px 0 var(--madder); }
+.btn-secondary:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--madder); }
+
 .btn-ghost {
   background: transparent;
   border: 1px solid var(--line);

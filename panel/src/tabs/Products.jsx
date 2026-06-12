@@ -73,9 +73,24 @@ export default function Products() {
         <h2 className="page-title">
           Products <span className="count">{list.length}</span>
         </h2>
-        <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
-          {showForm ? 'Close' : '+ Add product'}
-        </button>
+        <div className="btn-row">
+          <a
+            className="btn-secondary"
+            href={import.meta.env.DEV
+              ? 'http://127.0.0.1:8000/web/generate'
+              : '/web/generate'}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Generate QR ↗
+          </a>
+          <button
+            className="btn-primary"
+            onClick={() => setShowForm((s) => !s)}
+          >
+            {showForm ? 'Close' : '+ Add product'}
+          </button>
+        </div>
       </div>
       <p className="hint">
         Demo catalog — in the live version products sync from the Vastra ERP.
