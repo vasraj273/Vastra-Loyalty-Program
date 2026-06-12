@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react'
 import Dashboard from './tabs/Dashboard.jsx'
 import Schemes from './tabs/Schemes.jsx'
 import Claims from './tabs/Claims.jsx'
+import Customers from './tabs/Customers.jsx'
 import Manufacturers from './tabs/Manufacturers.jsx'
 import Login from './Login.jsx'
 import { getUser, getToken, clearSession, post } from './api.js'
 
 const MANUF_TABS = [
   { id: 'dashboard', label: 'Dashboard', component: Dashboard },
+  { id: 'customers', label: 'Customers', component: Customers },
   { id: 'schemes', label: 'Schemes', component: Schemes },
   { id: 'claims', label: 'Claims', component: Claims },
 ]

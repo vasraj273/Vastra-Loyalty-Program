@@ -89,10 +89,30 @@ async function api(path, opts = {}) {
   return body;
 }
 
+let retailers = [];
+
 async function loadRetailers() {
-  const rs = await api('/public/retailers');
-  $('retailer').innerHTML = rs.map(r =>
+  retailers = await api('/public/retailers');
+  $('retailer').innerHTML = retailers.map(r =>
     `<option value="${r.id}">${r.shop_name} (${r.region}) — ${r.manufacturer}</option>`).join('');
+}
+
+// First successful scan per retailer: ask for location once and lock the
+// shop's exact position. Server refuses overwrites, so this never re-fires
+// for a retailer that is already pinned; denial just keeps the city dot.
+function captureLocationOnce(retailerId) {
+  const r = retailers.find((x) => x.id === retailerId);
+  if (!r || r.location_source === 'gps' || !navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    try {
+      await api(`/public/retailers/${retailerId}/location`, {
+        method: 'POST',
+        body: JSON.stringify({
+          lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      });
+      r.location_source = 'gps';
+    } catch { /* keep city-level location */ }
+  }, () => {}, { enableHighAccuracy: true, timeout: 8000 });
 }
 
 function extractToken(text) {
@@ -121,6 +141,7 @@ async function redeem(code) {
     $('resBalance').textContent = out.new_balance;
     $('scanCard').classList.add('hidden');
     $('resultCard').classList.remove('hidden');
+    captureLocationOnce(Number($('retailer').value));
   } catch (e) {
     err(e.message);
   } finally {

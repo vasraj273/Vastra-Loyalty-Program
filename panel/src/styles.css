@@ -498,6 +498,52 @@ body {
   font-size: 14px;
 }
 
+/* ── customers ── */
+.page-title .count {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  background: var(--paper-deep);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 10px;
+  vertical-align: middle;
+}
+
+.table-tools { padding: 6px 0 12px; }
+
+.search {
+  width: 100%;
+  max-width: 360px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 14px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.search:focus { outline: 2px solid var(--indigo); outline-offset: -1px; }
+
+.loc-badge {
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 9px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.loc-badge.gps {
+  background: rgba(62, 107, 79, 0.12);
+  border-color: rgba(62, 107, 79, 0.4);
+  color: var(--leaf);
+}
+
+.loc-badge.none { opacity: 0.6; font-style: italic; }
+
 /* ── footer ── */
 .footer {
   margin-top: 36px;

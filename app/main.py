@@ -18,7 +18,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -221,17 +221,20 @@ def list_products(user: dict = Depends(current_manufacturer)):
 @app.post("/retailers", status_code=201)
 def create_retailer(body: RetailerIn, user: dict = Depends(current_manufacturer)):
     lat, lng = body.lat, body.lng
+    source = "gps" if (lat is not None and lng is not None) else None
     if lat is None or lng is None:
         coords = coords_for(body.region)
         if coords:
             lat, lng = coords
+            source = "city"
     with get_db() as db:
         cur = db.execute(
             """INSERT INTO retailers
-               (manufacturer_id, name, shop_name, region, phone, lat, lng)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (manufacturer_id, name, shop_name, region, phone, lat, lng,
+                location_source)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (user["id"], body.name, body.shop_name, body.region, body.phone,
-             lat, lng),
+             lat, lng, source),
         )
         row = db.execute(
             "SELECT * FROM retailers WHERE id = ?", (cur.lastrowid,)
@@ -243,7 +246,12 @@ def create_retailer(body: RetailerIn, user: dict = Depends(current_manufacturer)
 def list_retailers(user: dict = Depends(current_manufacturer)):
     with get_db() as db:
         rows = db.execute(
-            "SELECT * FROM retailers WHERE manufacturer_id = ? ORDER BY id",
+            """SELECT r.*,
+                      (SELECT COUNT(*) FROM points_ledger l
+                       WHERE l.retailer_id = r.id) AS scans,
+                      (SELECT COALESCE(SUM(points), 0) FROM points_ledger l
+                       WHERE l.retailer_id = r.id) AS points
+               FROM retailers r WHERE r.manufacturer_id = ? ORDER BY r.id""",
             (user["id"],),
         ).fetchall()
     return [dict(r) for r in rows]
@@ -287,13 +295,39 @@ def public_retailers():
     the retailer identity comes from YourApp's login session."""
     with get_db() as db:
         rows = db.execute(
-            """SELECT r.id, r.shop_name, r.region,
+            """SELECT r.id, r.shop_name, r.region, r.location_source,
                       m.display_name AS manufacturer
                FROM retailers r
                JOIN manufacturers m ON m.id = r.manufacturer_id
                ORDER BY m.display_name, r.shop_name"""
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+class LocationIn(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+
+
+@app.post("/public/retailers/{retailer_id}/location")
+def set_retailer_location(retailer_id: int, body: LocationIn):
+    """First scan with location permission pins the shop exactly. Once a GPS
+    location is locked it never changes (and the app never asks again)."""
+    with get_db() as db:
+        row = db.execute(
+            "SELECT id, location_source FROM retailers WHERE id = ?",
+            (retailer_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Retailer not found")
+        if row["location_source"] == "gps":
+            return {"updated": False, "reason": "GPS location already locked"}
+        db.execute(
+            """UPDATE retailers SET lat = ?, lng = ?, location_source = 'gps'
+               WHERE id = ?""",
+            (body.lat, body.lng, retailer_id),
+        )
+    return {"updated": True}
 
 
 # ---------- QR generation (manufacturer-scoped) ----------
@@ -755,6 +789,10 @@ def dashboard(user: dict = Depends(current_manufacturer)):
 
 
 # ---------- webview pages + built panel ----------
+
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse("/panel/")
 
 @app.get("/web/generate", include_in_schema=False)
 def web_generate():

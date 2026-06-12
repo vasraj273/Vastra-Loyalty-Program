@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS retailers (
     phone TEXT,
     lat REAL,   -- auto-filled from region city lookup, manual override allowed
     lng REAL,
+    location_source TEXT,  -- 'city' (lookup) | 'gps' (locked from first scan)
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

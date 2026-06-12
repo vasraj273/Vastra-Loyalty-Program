@@ -119,8 +119,9 @@ def main() -> None:
                 lat, lng = coords_for(city)
                 cur = db.execute(
                     """INSERT INTO retailers
-                       (manufacturer_id, name, shop_name, region, phone, lat, lng)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                       (manufacturer_id, name, shop_name, region, phone,
+                        lat, lng, location_source)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'city')""",
                     (mid, name, shop, city,
                      f"98{random.randint(10000000, 99999999)}", lat, lng),
                 )

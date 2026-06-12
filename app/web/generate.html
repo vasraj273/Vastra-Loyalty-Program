@@ -60,7 +60,14 @@
     <label>Quantity</label>
     <input id="quantity" type="number" min="1" max="10000" value="10" />
     <button onclick="generate()">Generate QR codes</button>
+    <button class="ghost" onclick="toggleSaved()">Saved batches</button>
     <div class="error" id="genError"></div>
+  </div>
+
+  <!-- saved batches -->
+  <div class="card hidden" id="savedCard">
+    <strong style="font-family:'Fraunces',serif">Saved batches</strong>
+    <div id="savedList" style="margin-top:10px"></div>
   </div>
 
   <!-- result -->
@@ -152,6 +159,33 @@ async function saveBatch() {
 }
 
 function reset() { show('resultCard', false); show('genCard', true); }
+
+let savedOpen = false;
+async function toggleSaved() {
+  savedOpen = !savedOpen;
+  show('savedCard', savedOpen);
+  if (!savedOpen) return;
+  err('genError');
+  try {
+    const batches = await api('/qr/batches?status=saved');
+    $('savedList').innerHTML = batches.length === 0
+      ? '<p style="color:var(--soft);font-size:14px;margin:0">No saved batches yet.</p>'
+      : batches.map(b => `
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;
+                    padding:10px 0;border-bottom:1px dashed var(--line)">
+          <div>
+            <div style="font-weight:600;font-size:14px">${b.product_name}</div>
+            <div style="font-size:12px;color:var(--soft)">
+              ${b.quantity} codes · ${b.points_per_code} pts · ${b.created_at.slice(0, 10)} · batch #${b.id}
+            </div>
+          </div>
+          <button style="width:auto;margin:0;padding:9px 14px;font-size:13px"
+                  onclick="window.open('/qr/batches/${b.id}/print?token=' + encodeURIComponent(token), '_blank')">
+            Print
+          </button>
+        </div>`).join('');
+  } catch (e) { err('genError', e.message); }
+}
 
 function render() {
   const authed = !!token;
