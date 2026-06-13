@@ -18,6 +18,8 @@ COPY app/ app/
 COPY seed.py .
 COPY --from=panel /panel/dist panel/dist
 
-# Demo data on first boot if the DB doesn't exist yet
+# The app creates tables on startup if missing (CREATE TABLE IF NOT EXISTS)
+# but never seeds automatically, so Postgres data persists across deploys.
+# Seed the database once manually:  python seed.py  (with DATABASE_URL set).
 ENV PORT=8000
-CMD ["sh", "-c", "[ -f qr_api.db ] || python seed.py; uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]

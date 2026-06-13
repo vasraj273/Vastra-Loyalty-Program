@@ -3,3 +3,4 @@ uvicorn[standard]>=0.32
 qrcode[pil]>=8.0
 reportlab>=4.2
 pydantic>=2.9
+psycopg[binary]>=3.2

@@ -36,9 +36,26 @@ Note: free tier sleeps after idle (first request takes ~30s) and the SQLite file
 4. **Scan**: scan a printed QR with the phone camera — it opens `/web/scan/<token>` directly → pick shop → Redeem → points animation with scheme bonus. Or open `/web/scan`, use in-page camera / type the 6-char manual code.
 5. Back in the panel: the scan is already in Claims and on the map.
 
+## Database (Postgres / Neon)
+
+The app uses Postgres when `DATABASE_URL` is set, SQLite otherwise (local dev
+needs no setup). On Render, set `DATABASE_URL` to the Neon **pooled**
+connection string. Data persists across deploys — the container creates
+tables if missing but never auto-seeds.
+
+Seed the demo data **once** (locally, with the env var set):
+
+```powershell
+$env:DATABASE_URL = '<neon pooled connection string>'
+.\.venv\Scripts\python seed.py
+```
+
+Re-running `seed.py` wipes and refills — don't run it against a database
+holding real data.
+
 ## Before real (non-demo) use
 
-- Swap SQLite → Postgres (Render/Railway both offer free Postgres).
 - `/scan` must take retailer identity from YourApp's session, not the request body; remove `/public/retailers`.
 - Rotate the seeded passwords / disable seed.
 - Restrict CORS origins to the real app domains.
+- Rotate the Neon credentials if the connection string was shared.

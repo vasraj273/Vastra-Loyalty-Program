@@ -5,14 +5,16 @@ Logins:
   surya   / surya123     (Surya Textiles)
   heritage/ heritage123  (Heritage Weaves)
 
-Run:  .venv\\Scripts\\python seed.py   (wipes qr_api.db)
+Run:  .venv\\Scripts\\python seed.py
+Wipes and refills the configured database (SQLite locally, or the Postgres
+in DATABASE_URL). Run once against Neon, then the data persists.
 """
 
 import random
 from datetime import date, datetime, timedelta
 
 from app.auth import hash_password
-from app.database import DB_PATH, get_db, init_db
+from app.database import get_db, reset_db
 from app.geo import coords_for
 from app.qr_service import new_manual_code, new_token
 
@@ -86,9 +88,7 @@ SCHEMES = {
 
 
 def main() -> None:
-    if DB_PATH.exists():
-        DB_PATH.unlink()
-    init_db()
+    reset_db()
 
     with get_db() as db:
         manuf_ids = {}
@@ -198,7 +198,9 @@ def main() -> None:
 
         n = db.execute(
             "SELECT COUNT(*) AS n FROM points_ledger").fetchone()["n"]
-    print(f"Seeded 2 manufacturers + super admin, {n} scans -> {DB_PATH}")
+    from app.database import IS_PG
+    target = "Postgres (DATABASE_URL)" if IS_PG else "SQLite (qr_api.db)"
+    print(f"Seeded 2 manufacturers + super admin, {n} scans -> {target}")
     print("Logins: admin/admin123, surya/surya123, heritage/heritage123")
 
 

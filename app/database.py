@@ -1,16 +1,31 @@
-"""SQLite persistence layer for the loyalty QR API."""
+"""Persistence layer for the loyalty QR API.
 
+Dual backend: PostgreSQL when DATABASE_URL is set (production / Neon),
+SQLite otherwise (zero-setup local development). The rest of the app uses
+SQLite-style calls (``?`` placeholders, ``cur.lastrowid``,
+``db.executescript``); a thin adapter translates those to psycopg when
+running on Postgres, so application code stays backend-agnostic.
+"""
+
+import os
+import re
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent.parent / "qr_api.db"
+DATABASE_URL = os.environ.get("DATABASE_URL")
+IS_PG = bool(DATABASE_URL)
+
+if IS_PG:
+    import psycopg
+    from psycopg.rows import dict_row
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS manufacturers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,   -- pbkdf2: salt$hash (hex)
+    password_hash TEXT NOT NULL,   -- pbkdf2 salt$hash (hex)
     display_name TEXT NOT NULL,
     is_admin INTEGER NOT NULL DEFAULT 0,  -- 1 = super admin (creates accounts)
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -105,22 +120,139 @@ CREATE INDEX IF NOT EXISTS idx_products_manuf ON products(manufacturer_id);
 CREATE INDEX IF NOT EXISTS idx_retailers_manuf ON retailers(manufacturer_id);
 """
 
+# Tables with a serial ``id`` column, for which we emulate sqlite's
+# ``cur.lastrowid`` via Postgres ``RETURNING id``.
+_ID_TABLES = {"manufacturers", "products", "retailers", "qr_batches",
+              "schemes"}
+
+# Child-to-parent order, for dropping on reset.
+_DROP_ORDER = ("points_ledger", "qr_codes", "qr_batches", "scheme_products",
+               "schemes", "retailers", "products", "auth_tokens",
+               "manufacturers")
+
+
+# ---------------------------------------------------------------- Postgres
+
+def _pg_schema() -> str:
+    s = SCHEMA
+    s = s.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+    s = re.sub(r"\bREAL\b", "DOUBLE PRECISION", s)
+    s = s.replace("(datetime('now'))",
+                  "(to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))")
+    return s
+
+
+def _translate(sql: str, named: bool) -> str:
+    """Rewrite sqlite SQL fragments to their Postgres equivalents."""
+    sql = sql.replace("datetime('now')",
+                      "to_char(now(), 'YYYY-MM-DD HH24:MI:SS')")
+    sql = sql.replace("date('now')", "to_char(now(), 'YYYY-MM-DD')")
+    if named:
+        # :name -> %(name)s  (only when params is a dict; such queries carry
+        # no time-format literals, so colons here are always placeholders)
+        sql = re.sub(r":([a-zA-Z]\w*)", r"%(\1)s", sql)
+    else:
+        sql = sql.replace("?", "%s")
+    return sql
+
+
+class _Cursor:
+    def __init__(self, cur, lastrowid=None):
+        self._cur = cur
+        self.lastrowid = lastrowid
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+    def __iter__(self):
+        return iter(self._cur)
+
+
+class _PGConn:
+    """Adapter giving a psycopg connection the sqlite-style surface the app
+    expects: ``execute`` returning a cursor with ``lastrowid``,
+    ``executemany`` and ``executescript``."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def execute(self, sql, params=()):
+        named = isinstance(params, dict)
+        psql = _translate(sql, named)
+        m = re.match(r"\s*insert\s+into\s+(\w+)", psql, re.IGNORECASE)
+        want_id = (m and m.group(1).lower() in _ID_TABLES
+                   and "returning" not in psql.lower())
+        if want_id:
+            psql = psql.rstrip().rstrip(";") + " RETURNING id"
+        cur = self._conn.cursor()
+        try:
+            cur.execute(psql, params)
+        except psycopg.errors.UniqueViolation as exc:
+            # Surface as the sqlite-style message the app already checks for.
+            raise Exception(f"UNIQUE constraint failed: {exc}") from exc
+        if want_id:
+            row = cur.fetchone()
+            return _Cursor(cur, lastrowid=row["id"] if row else None)
+        return _Cursor(cur)
+
+    def executemany(self, sql, seq):
+        cur = self._conn.cursor()
+        cur.executemany(_translate(sql, False), list(seq))
+        return _Cursor(cur)
+
+    def executescript(self, script):
+        cur = self._conn.cursor()
+        for stmt in script.split(";"):
+            if stmt.strip():
+                cur.execute(stmt)
+        return _Cursor(cur)
+
+
+# ---------------------------------------------------------------- public API
 
 def init_db() -> None:
     with get_db() as db:
-        db.executescript(SCHEMA)
+        db.executescript(_pg_schema() if IS_PG else SCHEMA)
+
+
+def reset_db() -> None:
+    """Drop everything and recreate the schema. Used by the seed script;
+    never called at app startup, so production data persists across deploys."""
+    if IS_PG:
+        with get_db() as db:
+            db.executescript(
+                "DROP TABLE IF EXISTS "
+                + ", ".join(_DROP_ORDER) + " CASCADE")
+    elif DB_PATH.exists():
+        DB_PATH.unlink()
+    init_db()
 
 
 @contextmanager
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    if IS_PG:
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row,
+                               autocommit=False)
+        try:
+            yield _PGConn(conn)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    else:
+        conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
