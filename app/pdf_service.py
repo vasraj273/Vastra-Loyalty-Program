@@ -1,4 +1,5 @@
-"""Printable PDF sheets: grid of QR codes with product label and token."""
+"""Printable PDF sheets: a grid of item QR codes, plus larger box (parent)
+stickers on their own page when a batch uses parent-child grouping."""
 
 import io
 
@@ -9,45 +10,91 @@ from reportlab.pdfgen import canvas
 
 from .qr_service import render_png
 
-COLS = 4
-ROWS = 6
 PAGE_W, PAGE_H = A4
 MARGIN = 12 * mm
+
+# item sticker grid
+COLS, ROWS = 4, 6
 CELL_W = (PAGE_W - 2 * MARGIN) / COLS
 CELL_H = (PAGE_H - 2 * MARGIN) / ROWS
 QR_SIZE = min(CELL_W, CELL_H) - 14 * mm
 
+# box (parent) sticker grid — fewer, larger
+BCOLS, BROWS = 2, 3
+BCELL_W = (PAGE_W - 2 * MARGIN) / BCOLS
+BCELL_H = (PAGE_H - 2 * MARGIN) / BROWS
+BQR_SIZE = min(BCELL_W, BCELL_H) - 26 * mm
+
+
+def _fmt(code: str) -> str:
+    return f"{code[:3]}-{code[3:]}"
+
 
 def build_pdf(product_name: str, sku: str,
-              codes: list[tuple[str, str]]) -> bytes:
-    """codes: list of (token, manual_code) pairs."""
+              codes: list[tuple]) -> bytes:
+    """codes: list of (token, manual_code, items). items == 0 -> item
+    sticker; items > 0 -> box (parent) sticker covering that many items."""
+    children = [c for c in codes if c[2] == 0]
+    parents = [c for c in codes if c[2] > 0]
+
     buf = io.BytesIO()
     pdf = canvas.Canvas(buf, pagesize=A4)
     pdf.setTitle(f"Loyalty QR - {product_name}")
 
     per_page = COLS * ROWS
-    for i, (token, manual_code) in enumerate(codes):
+    for i, (token, manual_code, _items) in enumerate(children):
         slot = i % per_page
         if i > 0 and slot == 0:
             pdf.showPage()
-        col = slot % COLS
-        row = slot // COLS
-
+        col, rown = slot % COLS, slot // COLS
         cell_x = MARGIN + col * CELL_W
-        cell_y = PAGE_H - MARGIN - (row + 1) * CELL_H
+        cell_y = PAGE_H - MARGIN - (rown + 1) * CELL_H
 
         qr_x = cell_x + (CELL_W - QR_SIZE) / 2
         qr_y = cell_y + (CELL_H - QR_SIZE) / 2 + 4 * mm
-        img = ImageReader(io.BytesIO(render_png(token, box_size=6)))
-        pdf.drawImage(img, qr_x, qr_y, QR_SIZE, QR_SIZE)
-
+        pdf.drawImage(ImageReader(io.BytesIO(render_png(token, box_size=6))),
+                      qr_x, qr_y, QR_SIZE, QR_SIZE)
         pdf.setFont("Helvetica-Bold", 7)
         pdf.drawCentredString(cell_x + CELL_W / 2, qr_y - 3 * mm,
                               f"{product_name} ({sku})")
-        # Manual fallback code, large enough to read off a damaged label
         pdf.setFont("Helvetica-Bold", 10)
         pdf.drawCentredString(cell_x + CELL_W / 2, qr_y - 8 * mm,
-                              f"{manual_code[:3]}-{manual_code[3:]}")
+                              _fmt(manual_code))
+
+    if parents:
+        if children:
+            pdf.showPage()
+        per_page = BCOLS * BROWS
+        for i, (token, manual_code, items) in enumerate(parents):
+            slot = i % per_page
+            if i > 0 and slot == 0:
+                pdf.showPage()
+            col, rown = slot % BCOLS, slot // BCOLS
+            cell_x = MARGIN + col * BCELL_W
+            cell_y = PAGE_H - MARGIN - (rown + 1) * BCELL_H
+
+            # border so a box sticker is unmistakable on the carton
+            pdf.setLineWidth(1.2)
+            pdf.rect(cell_x + 5 * mm, cell_y + 5 * mm,
+                     BCELL_W - 10 * mm, BCELL_H - 10 * mm)
+
+            pdf.setFont("Helvetica-Bold", 13)
+            pdf.drawCentredString(cell_x + BCELL_W / 2,
+                                  cell_y + BCELL_H - 16 * mm,
+                                  f"BOX — {items} items")
+
+            qr_x = cell_x + (BCELL_W - BQR_SIZE) / 2
+            qr_y = cell_y + (BCELL_H - BQR_SIZE) / 2 - 4 * mm
+            pdf.drawImage(
+                ImageReader(io.BytesIO(render_png(token, box_size=8))),
+                qr_x, qr_y, BQR_SIZE, BQR_SIZE)
+
+            pdf.setFont("Helvetica-Bold", 8)
+            pdf.drawCentredString(cell_x + BCELL_W / 2, qr_y - 4 * mm,
+                                  f"{product_name} ({sku})")
+            pdf.setFont("Helvetica-Bold", 12)
+            pdf.drawCentredString(cell_x + BCELL_W / 2, qr_y - 10 * mm,
+                                  _fmt(manual_code))
 
     pdf.showPage()
     pdf.save()

@@ -116,6 +116,11 @@ class GenerateIn(BaseModel):
         default=None, ge=0,
         description="Override product's loyalty_points for this batch",
     )
+    items_per_box: int | None = Field(
+        default=None, ge=2, le=1000,
+        description="If set, group children into box (parent) QR codes; "
+                    "scanning one box registers all its items at once",
+    )
 
 
 class ScanIn(BaseModel):
@@ -337,7 +342,8 @@ def list_retailers(user: dict = Depends(current_manufacturer)):
         rows = db.execute(
             """SELECT r.*,
                       (SELECT COUNT(*) FROM points_ledger l
-                       WHERE l.retailer_id = r.id) AS scans,
+                       WHERE l.retailer_id = r.id AND l.entry_type = 'scan')
+                          AS scans,
                       (SELECT COALESCE(SUM(points), 0) FROM points_ledger l
                        WHERE l.retailer_id = r.id) AS points
                FROM retailers r WHERE r.manufacturer_id = ? ORDER BY r.id""",
@@ -405,6 +411,91 @@ def delete_retailer(retailer_id: int,
         db.execute("DELETE FROM retailers WHERE id = ?", (retailer_id,))
 
 
+def _balance(db, retailer_id: int) -> int:
+    return db.execute(
+        "SELECT COALESCE(SUM(points), 0) AS total FROM points_ledger"
+        " WHERE retailer_id = ?",
+        (retailer_id,),
+    ).fetchone()["total"]
+
+
+class AdjustIn(BaseModel):
+    points: int = Field(description="Positive to add, negative to remove")
+    note: str = Field(min_length=1, max_length=300)
+
+
+@app.post("/retailers/{retailer_id}/adjust")
+def adjust_points(retailer_id: int, body: AdjustIn,
+                  user: dict = Depends(current_manufacturer)):
+    """Manual correction by the manufacturer. Cannot push a wallet below 0."""
+    if body.points == 0:
+        raise HTTPException(422, "points must be non-zero")
+    with get_db() as db:
+        r = db.execute(
+            "SELECT id FROM retailers WHERE id = ? AND manufacturer_id = ?",
+            (retailer_id, user["id"]),
+        ).fetchone()
+        if not r:
+            raise HTTPException(404, "Retailer not found")
+        if _balance(db, retailer_id) + body.points < 0:
+            raise HTTPException(409, "Adjustment would make the wallet negative")
+        db.execute(
+            """INSERT INTO points_ledger
+               (manufacturer_id, retailer_id, entry_type, points, note,
+                created_by)
+               VALUES (?, ?, 'adjustment', ?, ?, ?)""",
+            (user["id"], retailer_id, body.points, body.note, user["id"]),
+        )
+        return {"retailer_id": retailer_id, "balance": _balance(db, retailer_id)}
+
+
+class TransferIn(BaseModel):
+    from_retailer_id: int
+    to_retailer_id: int
+    points: int = Field(gt=0)
+    note: str = Field(min_length=1, max_length=300)
+
+
+@app.post("/retailers/transfer")
+def transfer_points(body: TransferIn,
+                    user: dict = Depends(current_manufacturer)):
+    """Move points between two of the manufacturer's retailers (fixes a scan
+    credited to the wrong shop)."""
+    if body.from_retailer_id == body.to_retailer_id:
+        raise HTTPException(422, "Cannot transfer to the same retailer")
+    with get_db() as db:
+        rows = db.execute(
+            "SELECT id FROM retailers WHERE id IN (?, ?) AND manufacturer_id = ?",
+            (body.from_retailer_id, body.to_retailer_id, user["id"]),
+        ).fetchall()
+        if len(rows) != 2:
+            raise HTTPException(404, "Both retailers must belong to you")
+        if _balance(db, body.from_retailer_id) < body.points:
+            raise HTTPException(409, "Sender has insufficient points")
+        db.execute(
+            """INSERT INTO points_ledger
+               (manufacturer_id, retailer_id, entry_type, points,
+                counterparty_retailer_id, note, created_by)
+               VALUES (?, ?, 'transfer', ?, ?, ?, ?)""",
+            (user["id"], body.from_retailer_id, -body.points,
+             body.to_retailer_id, body.note, user["id"]),
+        )
+        db.execute(
+            """INSERT INTO points_ledger
+               (manufacturer_id, retailer_id, entry_type, points,
+                counterparty_retailer_id, note, created_by)
+               VALUES (?, ?, 'transfer', ?, ?, ?, ?)""",
+            (user["id"], body.to_retailer_id, body.points,
+             body.from_retailer_id, body.note, user["id"]),
+        )
+        return {
+            "from": {"id": body.from_retailer_id,
+                     "balance": _balance(db, body.from_retailer_id)},
+            "to": {"id": body.to_retailer_id,
+                   "balance": _balance(db, body.to_retailer_id)},
+        }
+
+
 @app.get("/retailers/{retailer_id}/points")
 def retailer_points(retailer_id: int):
     """Open: the retailer side (YourApp webview) reads its own balance."""
@@ -421,9 +512,10 @@ def retailer_points(retailer_id: int):
         ).fetchone()["total"]
         history = db.execute(
             """SELECT l.points, l.base_points, l.bonus_points, l.scanned_at,
+                      l.entry_type, l.note,
                       p.name AS product_name, p.sku, s.name AS scheme_name
                FROM points_ledger l
-               JOIN products p ON p.id = l.product_id
+               LEFT JOIN products p ON p.id = l.product_id
                LEFT JOIN schemes s ON s.id = l.scheme_id
                WHERE l.retailer_id = ? ORDER BY l.scanned_at DESC LIMIT 100""",
             (retailer_id,),
@@ -510,17 +602,43 @@ def generate_qr_batch(body: GenerateIn,
             r["manual_code"]
             for r in db.execute("SELECT manual_code FROM qr_codes")
         }
-        codes = []
-        for _ in range(body.quantity):
-            manual = new_manual_code()
-            while manual in existing:
-                manual = new_manual_code()
-            existing.add(manual)
-            codes.append((new_token(), manual))
+
+        def fresh_manual() -> str:
+            m = new_manual_code()
+            while m in existing:
+                m = new_manual_code()
+            existing.add(m)
+            return m
+
+        # Child codes (one per item).
+        children = [(new_token(), fresh_manual()) for _ in range(body.quantity)]
+
+        # Optional box (parent) codes: each parent links a run of children.
+        parents = []  # (token, manual, [child_tokens])
+        if body.items_per_box:
+            for i in range(0, body.quantity, body.items_per_box):
+                group = children[i:i + body.items_per_box]
+                parents.append(
+                    (new_token(), fresh_manual(), [t for t, _ in group]))
+
+        child_to_parent = {}
+        for p_token, _, child_tokens in parents:
+            for ct in child_tokens:
+                child_to_parent[ct] = p_token
+
         db.executemany(
-            "INSERT INTO qr_codes (token, manual_code, batch_id) VALUES (?, ?, ?)",
-            [(t, m, batch_id) for t, m in codes],
+            """INSERT INTO qr_codes
+               (token, manual_code, batch_id, is_parent, parent_token)
+               VALUES (?, ?, ?, 0, ?)""",
+            [(t, m, batch_id, child_to_parent.get(t)) for t, m in children],
         )
+        if parents:
+            db.executemany(
+                """INSERT INTO qr_codes
+                   (token, manual_code, batch_id, is_parent, parent_token)
+                   VALUES (?, ?, ?, 1, NULL)""",
+                [(t, m, batch_id) for t, m, _ in parents],
+            )
 
     return {
         "batch_id": batch_id,
@@ -528,10 +646,17 @@ def generate_qr_batch(body: GenerateIn,
         "product_name": product["name"],
         "quantity": body.quantity,
         "points_per_code": points,
+        "items_per_box": body.items_per_box,
+        "boxes": len(parents),
         "status": "pending",
         "codes": [
             {"token": t, "manual_code": m, "payload": payload_for(t)}
-            for t, m in codes
+            for t, m in children
+        ],
+        "boxes_codes": [
+            {"token": t, "manual_code": m, "payload": payload_for(t),
+             "items": len(ch)}
+            for t, m, ch in parents
         ],
         "actions": {
             "save": f"/qr/batches/{batch_id}/save",
@@ -600,13 +725,24 @@ def print_batch(batch_id: int, user: dict = Depends(current_manufacturer)):
     """Printable A4 PDF. Accepts ?token= auth so it can open in a new tab."""
     with get_db() as db:
         batch = _get_batch(db, batch_id, user["id"])
-        codes = [
-            (r["token"], r["manual_code"])
-            for r in db.execute(
-                "SELECT token, manual_code FROM qr_codes WHERE batch_id = ?",
-                (batch_id,),
-            )
-        ]
+        # Children first, then box (parent) codes; each parent carries its
+        # item count so the sticker can be labelled.
+        child_rows = db.execute(
+            """SELECT token, manual_code FROM qr_codes
+               WHERE batch_id = ? AND is_parent = 0 ORDER BY token""",
+            (batch_id,),
+        ).fetchall()
+        codes = [(r["token"], r["manual_code"], 0) for r in child_rows]
+        parent_rows = db.execute(
+            """SELECT token, manual_code,
+                      (SELECT COUNT(*) FROM qr_codes ch
+                       WHERE ch.parent_token = c.token) AS items
+               FROM qr_codes c
+               WHERE c.batch_id = ? AND c.is_parent = 1 ORDER BY c.token""",
+            (batch_id,),
+        ).fetchall()
+        codes += [(r["token"], r["manual_code"], r["items"])
+                  for r in parent_rows]
     pdf = build_pdf(batch["product_name"], batch["sku"], codes)
     return Response(
         content=pdf,
@@ -654,7 +790,7 @@ def scan(body: ScanIn):
             raise HTTPException(404, "Retailer not found")
 
         row = db.execute(
-            """SELECT c.token, c.redeemed_at, b.points_per_code,
+            """SELECT c.token, c.redeemed_at, c.is_parent, b.points_per_code,
                       p.id AS product_id, p.name AS product_name, p.sku,
                       p.manufacturer_id
                FROM qr_codes c
@@ -665,14 +801,30 @@ def scan(body: ScanIn):
         ).fetchone()
         if not row:
             raise HTTPException(404, "Invalid code")
-        if row["redeemed_at"]:
-            raise HTTPException(409, "Code already redeemed")
         if retailer["manufacturer_id"] != row["manufacturer_id"]:
             raise HTTPException(
                 403, "This code belongs to a different manufacturer")
 
+        # A box (parent) code registers all of its still-unredeemed children;
+        # a plain code registers just itself.
+        if row["is_parent"]:
+            tokens = [
+                c["token"] for c in db.execute(
+                    """SELECT token FROM qr_codes
+                       WHERE parent_token = ? AND redeemed_at IS NULL""",
+                    (row["token"],),
+                )
+            ]
+            if not tokens:
+                raise HTTPException(409, "Box already redeemed")
+        else:
+            if row["redeemed_at"]:
+                raise HTTPException(409, "Code already redeemed")
+            tokens = [row["token"]]
+
         # Base points always apply; the most generous active scheme of this
-        # manufacturer covering the product adds its bonus (no stacking).
+        # manufacturer covering the product adds its bonus (no stacking). All
+        # children of a box share one product, so the per-item value is equal.
         scheme = db.execute(
             """SELECT s.id, s.name, s.bonus_points FROM schemes s
                WHERE s.manufacturer_id = ?
@@ -687,21 +839,31 @@ def scan(body: ScanIn):
         ).fetchone()
         base = row["points_per_code"]
         bonus = scheme["bonus_points"] if scheme else 0
+        per = base + bonus
 
-        db.execute(
-            """UPDATE qr_codes SET redeemed_at = datetime('now'),
-                                   redeemed_by = ? WHERE token = ?""",
-            (body.retailer_id, row["token"]),
-        )
-        db.execute(
-            """INSERT INTO points_ledger
-               (manufacturer_id, retailer_id, token, product_id, points,
-                base_points, bonus_points, scheme_id, region)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (row["manufacturer_id"], body.retailer_id, row["token"],
-             row["product_id"], base + bonus, base, bonus,
-             scheme["id"] if scheme else None, retailer["region"]),
-        )
+        for t in tokens:
+            db.execute(
+                """UPDATE qr_codes SET redeemed_at = datetime('now'),
+                                       redeemed_by = ? WHERE token = ?""",
+                (body.retailer_id, t),
+            )
+            db.execute(
+                """INSERT INTO points_ledger
+                   (manufacturer_id, retailer_id, token, product_id, points,
+                    base_points, bonus_points, scheme_id, region)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (row["manufacturer_id"], body.retailer_id, t,
+                 row["product_id"], per, base, bonus,
+                 scheme["id"] if scheme else None, retailer["region"]),
+            )
+        if row["is_parent"]:
+            db.execute(
+                """UPDATE qr_codes SET redeemed_at = datetime('now'),
+                                       redeemed_by = ? WHERE token = ?""",
+                (body.retailer_id, row["token"]),
+            )
+
+        count = len(tokens)
         balance = db.execute(
             "SELECT COALESCE(SUM(points), 0) AS total FROM points_ledger"
             " WHERE retailer_id = ?",
@@ -710,11 +872,13 @@ def scan(body: ScanIn):
 
     return {
         "redeemed": True,
+        "is_box": bool(row["is_parent"]),
+        "items_registered": count,
         "product": {"id": row["product_id"], "name": row["product_name"],
                     "sku": row["sku"]},
-        "points_awarded": base + bonus,
-        "base_points": base,
-        "bonus_points": bonus,
+        "points_awarded": per * count,
+        "base_points": base * count,
+        "bonus_points": bonus * count,
         "scheme": ({"id": scheme["id"], "name": scheme["name"]}
                    if scheme else None),
         "retailer": {"id": body.retailer_id,
@@ -831,7 +995,7 @@ def list_claims(
     offset: int = Query(0, ge=0),
     user: dict = Depends(current_manufacturer),
 ):
-    where = " WHERE l.manufacturer_id = ?"
+    where = " WHERE l.manufacturer_id = ? AND l.entry_type = 'scan'"
     args: list = [user["id"]]
     if product_id is not None:
         where += " AND l.product_id = ?"
@@ -890,10 +1054,12 @@ def dashboard(user: dict = Depends(current_manufacturer)):
                      AS retailers,
                  (SELECT COUNT(*) FROM products WHERE manufacturer_id = :m)
                      AS products,
-                 (SELECT COUNT(*) FROM points_ledger WHERE manufacturer_id = :m)
+                 (SELECT COUNT(*) FROM points_ledger
+                  WHERE manufacturer_id = :m AND entry_type = 'scan')
                      AS scans,
                  (SELECT COALESCE(SUM(points), 0) FROM points_ledger
-                  WHERE manufacturer_id = :m) AS points_awarded,
+                  WHERE manufacturer_id = :m AND entry_type = 'scan')
+                     AS points_awarded,
                  (SELECT COUNT(*) FROM qr_codes c
                   JOIN qr_batches b ON b.id = c.batch_id
                   JOIN products p ON p.id = b.product_id
@@ -903,6 +1069,7 @@ def dashboard(user: dict = Depends(current_manufacturer)):
         by_region = db.execute(
             """SELECT region, COUNT(*) AS scans, SUM(points) AS points
                FROM points_ledger WHERE manufacturer_id = ?
+                 AND entry_type = 'scan'
                GROUP BY region ORDER BY scans DESC""",
             (mid,),
         ).fetchall()
@@ -910,7 +1077,7 @@ def dashboard(user: dict = Depends(current_manufacturer)):
             """SELECT p.id, p.name, p.sku, COUNT(l.id) AS scans,
                       COALESCE(SUM(l.points), 0) AS points
                FROM products p LEFT JOIN points_ledger l
-                 ON l.product_id = p.id
+                 ON l.product_id = p.id AND l.entry_type = 'scan'
                WHERE p.manufacturer_id = ?
                GROUP BY p.id ORDER BY scans DESC""",
             (mid,),
@@ -919,7 +1086,7 @@ def dashboard(user: dict = Depends(current_manufacturer)):
             """SELECT r.id, r.name, r.shop_name, r.region, COUNT(*) AS scans,
                       SUM(l.points) AS points
                FROM points_ledger l JOIN retailers r ON r.id = l.retailer_id
-               WHERE l.manufacturer_id = ?
+               WHERE l.manufacturer_id = ? AND l.entry_type = 'scan'
                GROUP BY r.id ORDER BY points DESC LIMIT 10""",
             (mid,),
         ).fetchall()
@@ -928,7 +1095,7 @@ def dashboard(user: dict = Depends(current_manufacturer)):
                       COUNT(*) AS scans, SUM(l.points) AS points,
                       MAX(l.scanned_at) AS last_scan
                FROM points_ledger l JOIN retailers r ON r.id = l.retailer_id
-               WHERE l.manufacturer_id = ?
+               WHERE l.manufacturer_id = ? AND l.entry_type = 'scan'
                  AND r.lat IS NOT NULL AND r.lng IS NOT NULL
                GROUP BY r.id""",
             (mid,),
@@ -940,6 +1107,240 @@ def dashboard(user: dict = Depends(current_manufacturer)):
         "top_retailers": [dict(r) for r in top_retailers],
         "map_points": [dict(r) for r in map_points],
     }
+
+
+# ---------- gift catalog (manufacturer-scoped) ----------
+
+class GiftIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=1000)
+    points_cost: int = Field(ge=1)
+    image_url: str | None = Field(default=None, max_length=500)
+
+
+class GiftUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=1000)
+    points_cost: int | None = Field(default=None, ge=1)
+    image_url: str | None = Field(default=None, max_length=500)
+    active: bool | None = None
+
+
+@app.post("/gifts", status_code=201)
+def create_gift(body: GiftIn, user: dict = Depends(current_manufacturer)):
+    with get_db() as db:
+        cur = db.execute(
+            """INSERT INTO gifts
+               (manufacturer_id, name, description, points_cost, image_url)
+               VALUES (?, ?, ?, ?, ?)""",
+            (user["id"], body.name, body.description, body.points_cost,
+             body.image_url),
+        )
+        row = db.execute(
+            "SELECT * FROM gifts WHERE id = ?", (cur.lastrowid,)
+        ).fetchone()
+    return dict(row)
+
+
+@app.get("/gifts")
+def list_gifts(user: dict = Depends(current_manufacturer)):
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT g.*,
+                      (SELECT COUNT(*) FROM gift_claims gc
+                       WHERE gc.gift_id = g.id) AS claims
+               FROM gifts g WHERE g.manufacturer_id = ? ORDER BY g.id""",
+            (user["id"],),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.patch("/gifts/{gift_id}")
+def update_gift(gift_id: int, body: GiftUpdate,
+                user: dict = Depends(current_manufacturer)):
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "active" in fields:
+        fields["active"] = 1 if fields["active"] else 0
+    if not fields:
+        raise HTTPException(422, "Nothing to update")
+    with get_db() as db:
+        row = db.execute(
+            "SELECT id FROM gifts WHERE id = ? AND manufacturer_id = ?",
+            (gift_id, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Gift not found")
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        db.execute(f"UPDATE gifts SET {sets} WHERE id = ?",
+                   [*fields.values(), gift_id])
+        out = db.execute(
+            "SELECT * FROM gifts WHERE id = ?", (gift_id,)).fetchone()
+    return dict(out)
+
+
+@app.delete("/gifts/{gift_id}", status_code=204)
+def delete_gift(gift_id: int, user: dict = Depends(current_manufacturer)):
+    with get_db() as db:
+        row = db.execute(
+            "SELECT id FROM gifts WHERE id = ? AND manufacturer_id = ?",
+            (gift_id, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Gift not found")
+        used = db.execute(
+            "SELECT COUNT(*) AS n FROM gift_claims WHERE gift_id = ?",
+            (gift_id,),
+        ).fetchone()["n"]
+        if used:
+            raise HTTPException(
+                409, "Gift has claims; deactivate it instead of deleting")
+        db.execute("DELETE FROM gifts WHERE id = ?", (gift_id,))
+
+
+# ---------- gift shop + claims (retailer side, open for demo) ----------
+
+@app.get("/public/gifts")
+def public_gifts(retailer_id: int):
+    """Shop view for a retailer: their wallet balance + the active gifts of
+    their manufacturer, flagged affordable or not."""
+    with get_db() as db:
+        retailer = db.execute(
+            "SELECT * FROM retailers WHERE id = ?", (retailer_id,)
+        ).fetchone()
+        if not retailer:
+            raise HTTPException(404, "Retailer not found")
+        balance = _balance(db, retailer_id)
+        gifts = db.execute(
+            """SELECT id, name, description, points_cost, image_url
+               FROM gifts WHERE manufacturer_id = ? AND active = 1
+               ORDER BY points_cost""",
+            (retailer["manufacturer_id"],),
+        ).fetchall()
+    return {
+        "retailer_id": retailer_id,
+        "shop_name": retailer["shop_name"],
+        "balance": balance,
+        "gifts": [
+            {**dict(g), "affordable": balance >= g["points_cost"]}
+            for g in gifts
+        ],
+    }
+
+
+class GiftClaimIn(BaseModel):
+    retailer_id: int
+    gift_id: int
+
+
+@app.post("/public/gift-claims", status_code=201)
+def claim_gift(body: GiftClaimIn):
+    """Retailer claims a gift. Points are deducted immediately; a rejected
+    claim refunds them. The manufacturer fulfils the gift offline."""
+    with get_db() as db:
+        retailer = db.execute(
+            "SELECT * FROM retailers WHERE id = ?", (body.retailer_id,)
+        ).fetchone()
+        if not retailer:
+            raise HTTPException(404, "Retailer not found")
+        gift = db.execute(
+            "SELECT * FROM gifts WHERE id = ? AND active = 1", (body.gift_id,)
+        ).fetchone()
+        if not gift:
+            raise HTTPException(404, "Gift not available")
+        if gift["manufacturer_id"] != retailer["manufacturer_id"]:
+            raise HTTPException(403, "Gift belongs to another manufacturer")
+        if _balance(db, body.retailer_id) < gift["points_cost"]:
+            raise HTTPException(409, "Not enough points")
+
+        debit = db.execute(
+            """INSERT INTO points_ledger
+               (manufacturer_id, retailer_id, entry_type, points, note)
+               VALUES (?, ?, 'gift_redeem', ?, ?)""",
+            (gift["manufacturer_id"], body.retailer_id, -gift["points_cost"],
+             f"Claim: {gift['name']}"),
+        )
+        cur = db.execute(
+            """INSERT INTO gift_claims
+               (manufacturer_id, retailer_id, gift_id, points_spent,
+                ledger_id)
+               VALUES (?, ?, ?, ?, ?)""",
+            (gift["manufacturer_id"], body.retailer_id, body.gift_id,
+             gift["points_cost"], debit.lastrowid),
+        )
+        return {
+            "claim_id": cur.lastrowid,
+            "gift": gift["name"],
+            "points_spent": gift["points_cost"],
+            "status": "pending",
+            "new_balance": _balance(db, body.retailer_id),
+        }
+
+
+@app.get("/gift-claims")
+def list_gift_claims(status: str | None = Query(
+        None, pattern="^(pending|approved|rejected)$"),
+        user: dict = Depends(current_manufacturer)):
+    sql = """SELECT gc.id, gc.points_spent, gc.status, gc.created_at,
+                    gc.decided_at, g.name AS gift_name,
+                    r.id AS retailer_id, r.shop_name, r.name AS retailer_name,
+                    r.region
+             FROM gift_claims gc
+             JOIN gifts g ON g.id = gc.gift_id
+             JOIN retailers r ON r.id = gc.retailer_id
+             WHERE gc.manufacturer_id = ?"""
+    args: list = [user["id"]]
+    if status:
+        sql += " AND gc.status = ?"
+        args.append(status)
+    sql += " ORDER BY gc.id DESC"
+    with get_db() as db:
+        rows = db.execute(sql, args).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _decide_claim(db, claim_id, manufacturer_id):
+    claim = db.execute(
+        "SELECT * FROM gift_claims WHERE id = ? AND manufacturer_id = ?",
+        (claim_id, manufacturer_id),
+    ).fetchone()
+    if not claim:
+        raise HTTPException(404, "Claim not found")
+    if claim["status"] != "pending":
+        raise HTTPException(409, f"Claim already {claim['status']}")
+    return claim
+
+
+@app.post("/gift-claims/{claim_id}/approve")
+def approve_claim(claim_id: int, user: dict = Depends(current_manufacturer)):
+    with get_db() as db:
+        _decide_claim(db, claim_id, user["id"])
+        db.execute(
+            """UPDATE gift_claims SET status = 'approved',
+               decided_at = datetime('now') WHERE id = ?""",
+            (claim_id,),
+        )
+    return {"claim_id": claim_id, "status": "approved"}
+
+
+@app.post("/gift-claims/{claim_id}/reject")
+def reject_claim(claim_id: int, user: dict = Depends(current_manufacturer)):
+    with get_db() as db:
+        claim = _decide_claim(db, claim_id, user["id"])
+        # Refund the points that were deducted at claim time.
+        db.execute(
+            """INSERT INTO points_ledger
+               (manufacturer_id, retailer_id, entry_type, points, note)
+               VALUES (?, ?, 'refund', ?, ?)""",
+            (user["id"], claim["retailer_id"], claim["points_spent"],
+             "Refund: gift claim rejected"),
+        )
+        db.execute(
+            """UPDATE gift_claims SET status = 'rejected',
+               decided_at = datetime('now') WHERE id = ?""",
+            (claim_id,),
+        )
+    return {"claim_id": claim_id, "status": "rejected",
+            "refunded": claim["points_spent"]}
 
 
 # ---------- webview pages + built panel ----------
@@ -957,6 +1358,11 @@ def web_generate():
 @app.get("/web/scan/{token}", include_in_schema=False)
 def web_scan(token: str | None = None):
     return FileResponse(WEB_DIR / "scan.html")
+
+
+@app.get("/web/shop", include_in_schema=False)
+def web_shop():
+    return FileResponse(WEB_DIR / "shop.html")
 
 
 if PANEL_DIST.exists():

@@ -586,6 +586,65 @@ th.actions-col { text-align: right; }
 
 .editing-row { background: var(--paper-deep); }
 
+/* ── modal ── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(34, 41, 79, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 100;
+}
+
+.modal {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 24px 26px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal h3 {
+  font-family: 'Fraunces', serif;
+  font-size: 19px;
+  margin: 0;
+}
+
+.modal label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--ink-soft);
+}
+
+.modal input, .modal select {
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 15px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.modal input:focus, .modal select:focus {
+  outline: 2px solid var(--indigo);
+  outline-offset: -1px;
+}
+
+.modal .btn-row { margin-top: 6px; }
+
 /* ── footer ── */
 .footer {
   margin-top: 36px;

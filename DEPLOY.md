@@ -26,6 +26,7 @@ Note: free tier sleeps after idle (first request takes ~30s) and the SQLite file
 | Admin panel (login) | `https://HOST/panel/` |
 | Generate webview (Vastra) | `https://HOST/web/generate` |
 | Scan webview (YourApp) | `https://HOST/web/scan` |
+| Rewards shop (YourApp) | `https://HOST/web/shop` |
 | API docs | `https://HOST/docs` |
 
 ## Demo script (5 min)

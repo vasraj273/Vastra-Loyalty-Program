@@ -93,26 +93,65 @@ CREATE TABLE IF NOT EXISTS qr_codes (
     token TEXT PRIMARY KEY,
     manual_code TEXT NOT NULL UNIQUE,  -- 6-char fallback if QR damaged
     batch_id INTEGER NOT NULL REFERENCES qr_batches(id) ON DELETE CASCADE,
+    is_parent INTEGER NOT NULL DEFAULT 0,  -- 1 = box code aggregating children
+    parent_token TEXT,                     -- child -> its box code
     redeemed_at TEXT,
     redeemed_by INTEGER REFERENCES retailers(id),
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Wallet ledger. entry_type:
+--   scan        +points  earned by scanning a code (token/product set)
+--   gift_redeem -points  spent claiming a gift
+--   refund      +points  gift claim rejected
+--   adjustment  +/-      manual correction by manufacturer (note set)
+--   transfer    +/-      points moved between retailers (counterparty set)
+-- Balance for a retailer = SUM(points). Scan analytics filter entry_type='scan'.
 CREATE TABLE IF NOT EXISTS points_ledger (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     manufacturer_id INTEGER NOT NULL REFERENCES manufacturers(id),
     retailer_id INTEGER NOT NULL REFERENCES retailers(id),
-    token TEXT NOT NULL REFERENCES qr_codes(token),
-    product_id INTEGER NOT NULL REFERENCES products(id),
-    points INTEGER NOT NULL,          -- total = base + bonus
+    entry_type TEXT NOT NULL DEFAULT 'scan',
+    token TEXT REFERENCES qr_codes(token),
+    product_id INTEGER REFERENCES products(id),
+    points INTEGER NOT NULL,          -- total = base + bonus for scans
     base_points INTEGER NOT NULL DEFAULT 0,
     bonus_points INTEGER NOT NULL DEFAULT 0,
     scheme_id INTEGER REFERENCES schemes(id),  -- scheme that paid the bonus
-    region TEXT NOT NULL,
+    counterparty_retailer_id INTEGER REFERENCES retailers(id),  -- transfers
+    note TEXT,                          -- reason for adjustments/transfers/gifts
+    created_by INTEGER REFERENCES manufacturers(id),  -- who made a manual entry
+    region TEXT,
     scanned_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS gifts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    manufacturer_id INTEGER NOT NULL REFERENCES manufacturers(id),
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    points_cost INTEGER NOT NULL,
+    image_url TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS gift_claims (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    manufacturer_id INTEGER NOT NULL REFERENCES manufacturers(id),
+    retailer_id INTEGER NOT NULL REFERENCES retailers(id),
+    gift_id INTEGER NOT NULL REFERENCES gifts(id),
+    points_spent INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected
+    ledger_id INTEGER REFERENCES points_ledger(id),  -- the debit row
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    decided_at TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_qr_codes_batch ON qr_codes(batch_id);
+CREATE INDEX IF NOT EXISTS idx_qr_codes_parent ON qr_codes(parent_token);
+CREATE INDEX IF NOT EXISTS idx_ledger_type ON points_ledger(entry_type);
+CREATE INDEX IF NOT EXISTS idx_gift_claims_manuf ON gift_claims(manufacturer_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_retailer ON points_ledger(retailer_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_product ON points_ledger(product_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_manuf ON points_ledger(manufacturer_id);
@@ -123,12 +162,12 @@ CREATE INDEX IF NOT EXISTS idx_retailers_manuf ON retailers(manufacturer_id);
 # Tables with a serial ``id`` column, for which we emulate sqlite's
 # ``cur.lastrowid`` via Postgres ``RETURNING id``.
 _ID_TABLES = {"manufacturers", "products", "retailers", "qr_batches",
-              "schemes"}
+              "schemes", "gifts", "gift_claims", "points_ledger"}
 
-# Child-to-parent order, for dropping on reset.
-_DROP_ORDER = ("points_ledger", "qr_codes", "qr_batches", "scheme_products",
-               "schemes", "retailers", "products", "auth_tokens",
-               "manufacturers")
+# All tables, dropped with CASCADE on reset (order irrelevant).
+_DROP_ORDER = ("gift_claims", "gifts", "points_ledger", "qr_codes",
+               "qr_batches", "scheme_products", "schemes", "retailers",
+               "products", "auth_tokens", "manufacturers")
 
 
 # ---------------------------------------------------------------- Postgres

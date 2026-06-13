@@ -59,6 +59,8 @@
     <select id="product"></select>
     <label>Quantity</label>
     <input id="quantity" type="number" min="1" max="10000" value="10" />
+    <label>Items per box <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional — makes box QR codes)</span></label>
+    <input id="itemsPerBox" type="number" min="2" max="1000" placeholder="leave blank for none" />
     <button onclick="generate()">Generate QR codes</button>
     <button class="ghost" onclick="toggleSaved()">Saved batches</button>
     <div class="error" id="genError"></div>
@@ -75,6 +77,7 @@
     <h2>Batch ready</h2>
     <p><span id="resQty"></span> codes for <strong id="resProduct"></strong></p>
     <p><span id="resPoints"></span> points per scan</p>
+    <p id="resBoxes" style="font-size:13px;color:var(--leaf)"></p>
     <p class="mono" style="font-size:12px" id="resBatch"></p>
     <button onclick="printPdf()">Print stickers (PDF)</button>
     <button class="secondary" onclick="saveBatch()" id="saveBtn">Save for later</button>
@@ -134,12 +137,20 @@ async function loadProducts() {
 async function generate() {
   err('genError');
   try {
-    batch = await api('/qr/generate', { method: 'POST', body: JSON.stringify({
+    const ipb = Number($('itemsPerBox').value);
+    const payload = {
       product_id: Number($('product').value),
-      quantity: Number($('quantity').value) }) });
+      quantity: Number($('quantity').value),
+    };
+    if (ipb >= 2) payload.items_per_box = ipb;
+    batch = await api('/qr/generate', { method: 'POST',
+      body: JSON.stringify(payload) });
     $('resQty').textContent = batch.quantity;
     $('resProduct').textContent = batch.product_name;
     $('resPoints').textContent = batch.points_per_code;
+    $('resBoxes').textContent = batch.boxes
+      ? `+ ${batch.boxes} box QR codes (${batch.items_per_box} items each) — print includes them`
+      : '';
     $('resBatch').textContent = 'batch #' + batch.batch_id;
     $('saveBtn').textContent = 'Save for later';
     show('genCard', false); show('resultCard', true);

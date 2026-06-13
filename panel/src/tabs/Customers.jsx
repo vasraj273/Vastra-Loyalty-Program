@@ -13,6 +13,11 @@ export default function Customers() {
   const [busy, setBusy] = useState(false)
   const [query, setQuery] = useState('')
   const [editing, setEditing] = useState(null)
+  const [modal, setModal] = useState(null) // {type:'adjust', r} | {type:'transfer'}
+  const [pts, setPts] = useState('')
+  const [note, setNote] = useState('')
+  const [fromId, setFromId] = useState('')
+  const [toId, setToId] = useState('')
 
   const [cities, setCities] = useState([])
 
@@ -82,6 +87,42 @@ export default function Customers() {
     }
   }
 
+  const doAdjust = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await post(`/retailers/${modal.r.id}/adjust`, {
+        points: Number(pts),
+        note,
+      })
+      setModal(null)
+      load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const doTransfer = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      await post('/retailers/transfer', {
+        from_retailer_id: Number(fromId),
+        to_retailer_id: Number(toId),
+        points: Number(pts),
+        note,
+      })
+      setModal(null)
+      load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (!list) return <p className="loading">Loading…</p>
 
   const q = query.trim().toLowerCase()
@@ -100,9 +141,23 @@ export default function Customers() {
         <h2 className="page-title">
           Customers <span className="count">{list.length}</span>
         </h2>
-        <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
-          {showForm ? 'Close' : '+ Add customer'}
-        </button>
+        <div className="btn-row">
+          <button
+            className="btn-secondary"
+            onClick={() => {
+              setPts('')
+              setNote('')
+              setFromId('')
+              setToId('')
+              setModal({ type: 'transfer' })
+            }}
+          >
+            Transfer points
+          </button>
+          <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
+            {showForm ? 'Close' : '+ Add customer'}
+          </button>
+        </div>
       </div>
       {error && <p className="error">{error}</p>}
       {notice && <p className="created-note">{notice}</p>}
@@ -283,6 +338,16 @@ export default function Customers() {
                       Edit
                     </button>
                     <button
+                      className="btn-ghost small"
+                      onClick={() => {
+                        setPts('')
+                        setNote('')
+                        setModal({ type: 'adjust', r })
+                      }}
+                    >
+                      Points
+                    </button>
+                    <button
                       className="btn-ghost small danger"
                       onClick={() => remove(r)}
                     >
@@ -302,6 +367,113 @@ export default function Customers() {
           </tbody>
         </table>
       </div>
+
+      {modal?.type === 'adjust' && (
+        <div className="modal-backdrop" onClick={() => setModal(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Adjust points — {modal.r.shop_name}</h3>
+            <p className="hint" style={{ margin: 0 }}>
+              Current balance {fmt(modal.r.points)}. Use a negative number to
+              remove points. Cannot go below zero.
+            </p>
+            <label>
+              Points (+ add / − remove)
+              <input
+                type="number"
+                value={pts}
+                onChange={(e) => setPts(e.target.value)}
+                placeholder="e.g. 50 or -50"
+              />
+            </label>
+            <label>
+              Reason
+              <input
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Why this correction?"
+              />
+            </label>
+            <div className="btn-row">
+              <button
+                className="btn-primary"
+                disabled={busy || !pts || !note.trim()}
+                onClick={doAdjust}
+              >
+                Apply
+              </button>
+              <button className="btn-ghost" onClick={() => setModal(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal?.type === 'transfer' && (
+        <div className="modal-backdrop" onClick={() => setModal(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Transfer points</h3>
+            <p className="hint" style={{ margin: 0 }}>
+              Move points from one shop to another (e.g. a scan credited to the
+              wrong retailer).
+            </p>
+            <label>
+              From
+              <select value={fromId} onChange={(e) => setFromId(e.target.value)}>
+                <option value="">Select shop…</option>
+                {list.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.shop_name} ({fmt(r.points)} pts)
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              To
+              <select value={toId} onChange={(e) => setToId(e.target.value)}>
+                <option value="">Select shop…</option>
+                {list.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.shop_name} ({fmt(r.points)} pts)
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Points
+              <input
+                type="number"
+                min="1"
+                value={pts}
+                onChange={(e) => setPts(e.target.value)}
+              />
+            </label>
+            <label>
+              Reason
+              <input
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Why this transfer?"
+              />
+            </label>
+            <div className="btn-row">
+              <button
+                className="btn-primary"
+                disabled={
+                  busy || !fromId || !toId || fromId === toId ||
+                  !pts || !note.trim()
+                }
+                onClick={doTransfer}
+              >
+                Transfer
+              </button>
+              <button className="btn-ghost" onClick={() => setModal(null)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

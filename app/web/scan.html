@@ -66,12 +66,14 @@
   <div class="card result hidden" id="resultCard">
     <h2>Points earned!</h2>
     <div class="points-hero" id="resPoints"></div>
+    <p id="resBox" class="scheme-tag" style="display:none"></p>
     <p><strong id="resProduct"></strong> <span class="breakdown" id="resSku"></span></p>
     <p class="breakdown" id="resSplit"></p>
     <div id="resScheme"></div>
     <p class="balance">Shop: <strong id="resShop"></strong><br/>
        New balance: <strong id="resBalance"></strong> points</p>
     <button class="ghost" onclick="again()">Scan another</button>
+    <button class="ghost" onclick="openShop()">Open rewards shop →</button>
   </div>
 </div>
 
@@ -130,6 +132,13 @@ async function redeem(code) {
       code, retailer_id: Number($('retailer').value) }) });
     stopCamera();
     $('resPoints').textContent = '+' + out.points_awarded;
+    const boxEl = $('resBox');
+    if (out.is_box) {
+      boxEl.textContent = `📦 Box scanned — ${out.items_registered} items registered`;
+      boxEl.style.display = 'inline-block';
+    } else {
+      boxEl.style.display = 'none';
+    }
     $('resProduct').textContent = out.product.name;
     $('resSku').textContent = out.product.sku;
     $('resSplit').textContent = out.bonus_points > 0
@@ -172,6 +181,10 @@ function startCamera() {
 function stopCamera() {
   if (scanner && scanning) { scanner.stop().catch(() => {}); }
   scanning = false; $('camBtn').textContent = 'Start camera';
+}
+
+function openShop() {
+  window.location.href = '/web/shop?retailer_id=' + Number($('retailer').value);
 }
 
 function again() {

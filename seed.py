@@ -63,6 +63,19 @@ RETAILERS = {
     ],
 }
 
+GIFTS = {
+    "surya": [
+        ("Cotton Tote Bag", "Sturdy branded shopping tote.", 300),
+        ("Branded Umbrella", "Large two-fold umbrella.", 500),
+        ("Premium Gift Hamper", "Assorted festive hamper.", 1500),
+    ],
+    "heritage": [
+        ("Steel Water Bottle", "1L insulated bottle.", 250),
+        ("Designer Wall Clock", "Handloom-motif wall clock.", 400),
+        ("Weekend Getaway Voucher", "2-night stay voucher.", 3000),
+    ],
+}
+
 today = date.today()
 
 SCHEMES = {
@@ -194,6 +207,40 @@ def main() -> None:
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (mid, rid, token, pid, base + bonus, base, bonus,
                      scheme_id, city, ts),
+                )
+
+            # Gift catalog for this manufacturer.
+            gift_ids = []
+            for gname, gdesc, gcost in GIFTS[brand]:
+                cur = db.execute(
+                    """INSERT INTO gifts
+                       (manufacturer_id, name, description, points_cost)
+                       VALUES (?, ?, ?, ?)""",
+                    (mid, gname, gdesc, gcost),
+                )
+                gift_ids.append((cur.lastrowid, gcost, gname))
+
+            # One pending demo claim from the first retailer for the cheapest
+            # gift (debit the wallet, leave it awaiting approval).
+            rid0 = retailer_rows[0][0]
+            bal = db.execute(
+                "SELECT COALESCE(SUM(points), 0) AS t FROM points_ledger"
+                " WHERE retailer_id = ?", (rid0,),
+            ).fetchone()["t"]
+            gid, gcost, gname = gift_ids[0]
+            if bal >= gcost:
+                debit = db.execute(
+                    """INSERT INTO points_ledger
+                       (manufacturer_id, retailer_id, entry_type, points, note)
+                       VALUES (?, ?, 'gift_redeem', ?, ?)""",
+                    (mid, rid0, -gcost, f"Claim: {gname}"),
+                )
+                db.execute(
+                    """INSERT INTO gift_claims
+                       (manufacturer_id, retailer_id, gift_id, points_spent,
+                        ledger_id)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (mid, rid0, gid, gcost, debit.lastrowid),
                 )
 
         n = db.execute(

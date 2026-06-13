@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Rewards Shop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper:#f6f1e6; --card:#fbf8f1; --ink:#22294f; --soft:#4c5170;
+    --line:#ddd2bb; --indigo:#2b3468; --madder:#c8472b; --leaf:#3e6b4f;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:'IBM Plex Sans',sans-serif; background:var(--paper); color:var(--ink);
+         display:flex; justify-content:center; min-height:100vh; }
+  .wrap { width:100%; max-width:460px; padding:22px 18px 40px; }
+  h1 { font-family:'Fraunces',serif; font-size:22px; margin:0 0 2px; }
+  .sub { font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--madder); font-weight:600; margin-bottom:18px; }
+  .wallet { background:var(--indigo); color:var(--paper); border-radius:14px; padding:18px 20px; margin-bottom:18px;
+            display:flex; justify-content:space-between; align-items:center; box-shadow:3px 3px 0 var(--madder); }
+  .wallet .label { font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:#c9cfeb; }
+  .wallet .bal { font-family:'Fraunces',serif; font-size:34px; line-height:1; }
+  label { display:block; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:1px; color:var(--soft); margin:0 0 5px; }
+  select { width:100%; font:inherit; font-size:15px; padding:11px 12px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); margin-bottom:16px; }
+  .gift { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-bottom:12px;
+          display:flex; justify-content:space-between; align-items:center; gap:12px;
+          box-shadow:0 1px 2px rgba(34,41,79,.08),0 6px 18px rgba(34,41,79,.06); }
+  .gift .info h3 { font-family:'Fraunces',serif; font-size:16px; margin:0 0 3px; }
+  .gift .info p { margin:0; font-size:13px; color:var(--soft); }
+  .gift .cost { font-family:'IBM Plex Mono',monospace; font-weight:500; color:var(--madder); font-size:13px; margin-top:4px; }
+  button { font:inherit; font-weight:600; font-size:14px; padding:10px 16px; border:none; border-radius:8px;
+           background:var(--madder); color:var(--paper); cursor:pointer; box-shadow:2px 2px 0 var(--indigo); white-space:nowrap; }
+  button:disabled { opacity:.45; cursor:default; box-shadow:none; }
+  button:active:not(:disabled) { transform:translate(1px,1px); box-shadow:1px 1px 0 var(--indigo); }
+  .error { background:#f7e3dd; border:1px solid var(--madder); color:#a83a22; padding:10px 13px; border-radius:8px; margin-bottom:12px; font-size:14px; display:none; }
+  .ok { background:rgba(62,107,79,.12); border:1px solid rgba(62,107,79,.4); color:var(--leaf); padding:10px 13px; border-radius:8px; margin-bottom:12px; font-size:14px; display:none; }
+  .empty { color:var(--soft); font-style:italic; }
+  .links { margin-top:18px; font-size:13px; }
+  .links a { color:var(--madder); cursor:pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Rewards Shop</h1>
+  <div class="sub">Retailer · YourApp webview</div>
+
+  <label>Shop (demo — comes from retailer login later)</label>
+  <select id="retailer" onchange="onPick()"></select>
+
+  <div class="wallet">
+    <div><div class="label">Wallet balance</div><div class="bal" id="bal">—</div></div>
+    <div style="font-size:30px">🎁</div>
+  </div>
+
+  <div class="ok" id="ok"></div>
+  <div class="error" id="err"></div>
+
+  <div id="gifts"></div>
+
+  <div class="links"><a onclick="goScan()">← Back to scan</a></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let retailers = [];
+
+function flash(id, msg) { const e = $(id); e.textContent = msg; e.style.display = msg ? 'block' : 'none'; }
+
+async function api(path, opts = {}) {
+  opts.headers = { 'Content-Type': 'application/json' };
+  const res = await fetch(path, opts);
+  const body = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) throw new Error((body && body.detail) || res.statusText);
+  return body;
+}
+
+function currentId() { return Number($('retailer').value); }
+
+async function loadRetailers() {
+  retailers = await api('/public/retailers');
+  $('retailer').innerHTML = retailers.map(r =>
+    `<option value="${r.id}">${r.shop_name} (${r.region}) — ${r.manufacturer}</option>`).join('');
+  const pre = new URLSearchParams(location.search).get('retailer_id');
+  if (pre && retailers.some(r => String(r.id) === pre)) $('retailer').value = pre;
+}
+
+async function loadShop() {
+  flash('err', ''); flash('ok', '');
+  try {
+    const shop = await api('/public/gifts?retailer_id=' + currentId());
+    $('bal').textContent = shop.balance;
+    if (shop.gifts.length === 0) {
+      $('gifts').innerHTML = '<p class="empty">No rewards available yet.</p>';
+      return;
+    }
+    $('gifts').innerHTML = shop.gifts.map(g => `
+      <div class="gift">
+        <div class="info">
+          <h3>${g.name}</h3>
+          ${g.description ? `<p>${g.description}</p>` : ''}
+          <div class="cost">${g.points_cost} points</div>
+        </div>
+        <button ${g.affordable ? '' : 'disabled'} onclick="claim(${g.id}, '${g.name.replace(/'/g, "\\'")}', ${g.points_cost})">
+          ${g.affordable ? 'Claim' : 'Need more'}
+        </button>
+      </div>`).join('');
+  } catch (e) { flash('err', e.message); }
+}
+
+async function claim(giftId, name, cost) {
+  if (!confirm(`Claim "${name}" for ${cost} points?\n\nThis is final — the points will be deducted now and the request sent to the manufacturer for approval.`))
+    return;
+  flash('err', ''); flash('ok', '');
+  try {
+    const out = await api('/public/gift-claims', { method: 'POST',
+      body: JSON.stringify({ retailer_id: currentId(), gift_id: giftId }) });
+    flash('ok', `Claimed ${out.gift}. Request sent for approval. New balance: ${out.new_balance}.`);
+    loadShop();
+  } catch (e) { flash('err', e.message); }
+}
+
+function onPick() { loadShop(); }
+function goScan() { window.location.href = '/web/scan'; }
+
+loadRetailers().then(loadShop).catch(e => flash('err', e.message));
+</script>
+</body>
+</html>

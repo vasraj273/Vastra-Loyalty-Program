@@ -4,6 +4,8 @@ import Schemes from './tabs/Schemes.jsx'
 import Claims from './tabs/Claims.jsx'
 import Customers from './tabs/Customers.jsx'
 import Products from './tabs/Products.jsx'
+import Gifts from './tabs/Gifts.jsx'
+import Redemptions from './tabs/Redemptions.jsx'
 import Manufacturers from './tabs/Manufacturers.jsx'
 import Login from './Login.jsx'
 import { getUser, getToken, clearSession, post } from './api.js'
@@ -13,7 +15,9 @@ const MANUF_TABS = [
   { id: 'customers', label: 'Customers', component: Customers },
   { id: 'products', label: 'Products', component: Products },
   { id: 'schemes', label: 'Schemes', component: Schemes },
+  { id: 'gifts', label: 'Gifts', component: Gifts },
   { id: 'claims', label: 'Claims', component: Claims },
+  { id: 'redemptions', label: 'Redemptions', component: Redemptions },
 ]
 
 const ADMIN_TABS = [
