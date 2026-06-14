@@ -1,12 +1,18 @@
 import { useCallback, useEffect, useState } from 'react'
 import { get, post, patch, del } from '../api.js'
 
-const EMPTY = { name: '', description: '', points_cost: 100, image_url: '' }
+const EMPTY = {
+  name: '',
+  description: '',
+  points_cost: 1000,
+  image_url: '',
+}
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
 
 export default function Gifts() {
   const [list, setList] = useState(null)
   const [form, setForm] = useState(EMPTY)
+  const [editingId, setEditingId] = useState(null) // null = creating new
   const [showForm, setShowForm] = useState(false)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -17,17 +23,42 @@ export default function Gifts() {
 
   useEffect(load, [load])
 
-  const add = async (e) => {
+  const openAdd = () => {
+    setEditingId(null)
+    setForm(EMPTY)
+    setShowForm(true)
+  }
+
+  const openEdit = (g) => {
+    setEditingId(g.id)
+    setForm({
+      name: g.name,
+      description: g.description ?? '',
+      points_cost: g.points_cost,
+      image_url: g.image_url ?? '',
+    })
+    setShowForm(true)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const submit = async (e) => {
     e.preventDefault()
     setBusy(true)
     setError(null)
     try {
-      await post('/gifts', {
-        ...form,
+      const payload = {
+        name: form.name,
+        description: form.description,
         points_cost: Number(form.points_cost),
         image_url: form.image_url || null,
-      })
+      }
+      if (editingId) {
+        await patch(`/gifts/${editingId}`, payload)
+      } else {
+        await post('/gifts', payload)
+      }
       setForm(EMPTY)
+      setEditingId(null)
       setShowForm(false)
       load()
     } catch (err) {
@@ -64,32 +95,35 @@ export default function Gifts() {
     <div className="gifts">
       <div className="schemes-head">
         <h2 className="page-title">
-          Gifts <span className="count">{list.length}</span>
+          Reward shop <span className="count">{list.length}</span>
         </h2>
-        <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
-          {showForm ? 'Close' : '+ Add gift'}
+        <button className="btn-primary" onClick={showForm ? () => setShowForm(false) : openAdd}>
+          {showForm ? 'Close' : '+ Add reward'}
         </button>
       </div>
       <p className="hint">
-        Rewards retailers can claim with their points in the shop. Claims land
-        in the <strong>Redemptions</strong> tab for approval.
+        Rewards retailers redeem with their points. Claims arrive in the{' '}
+        <strong>Redemptions</strong> tab for approval.
       </p>
       {error && <p className="error">{error}</p>}
 
       {showForm && (
-        <form className="panel-card scheme-form" onSubmit={add}>
+        <form className="panel-card scheme-form" onSubmit={submit}>
+          <h3 style={{ margin: 0, fontFamily: 'Fraunces, serif' }}>
+            {editingId ? 'Edit reward' : 'New reward'}
+          </h3>
           <div className="form-grid">
             <label>
-              Gift name
+              Product name
               <input
                 required
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="Branded umbrella"
+                placeholder="LED TV (32 Inch)"
               />
             </label>
             <label>
-              Points cost
+              Points to redeem
               <input
                 required
                 type="number"
@@ -101,61 +135,95 @@ export default function Gifts() {
               />
             </label>
             <label>
-              Image URL (optional)
+              Image URL
               <input
                 value={form.image_url}
                 onChange={(e) =>
                   setForm({ ...form, image_url: e.target.value })
                 }
-                placeholder="https://…"
+                placeholder="https://… product photo"
               />
             </label>
             <label>
-              Description (optional)
+              Description
               <input
                 value={form.description}
                 onChange={(e) =>
                   setForm({ ...form, description: e.target.value })
                 }
-                placeholder="Short detail shown in the shop"
+                placeholder="Samsung / Mi / Similar Brand"
               />
             </label>
           </div>
+          {form.image_url && (
+            <img
+              src={form.image_url}
+              alt=""
+              className="img-preview"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none'
+              }}
+            />
+          )}
           <button className="btn-primary" disabled={busy}>
-            {busy ? 'Adding…' : 'Add gift'}
+            {busy ? 'Saving…' : editingId ? 'Save changes' : 'Add reward'}
           </button>
         </form>
       )}
 
-      <div className="scheme-grid">
+      <div className="gift-grid">
         {list.map((g) => (
-          <div
-            key={g.id}
-            className={g.active ? 'scheme-card active' : 'scheme-card previous'}
-          >
-            <header>
+          <div key={g.id} className={g.active ? 'gift-card' : 'gift-card off'}>
+            <div className="gift-badge">
+              <span className="pts">{fmt(g.points_cost)}</span>
+              <span className="lbl">POINTS</span>
+            </div>
+            <div className="gift-thumb">
+              {g.image_url ? (
+                <img
+                  src={g.image_url}
+                  alt=""
+                  onError={(e) => {
+                    e.currentTarget.replaceWith(
+                      Object.assign(document.createElement('div'), {
+                        className: 'ph',
+                        textContent: '🎁',
+                      }),
+                    )
+                  }}
+                />
+              ) : (
+                <div className="ph">🎁</div>
+              )}
+            </div>
+            <div className="gift-body">
               <h4>{g.name}</h4>
-              <span className="bonus">{g.points_cost} pts</span>
-            </header>
-            {g.description && <p className="desc">{g.description}</p>}
-            <p className="coverage">
-              {g.claims} claim{g.claims === 1 ? '' : 's'} ·{' '}
-              {g.active ? 'active in shop' : 'hidden'}
-            </p>
-            <div className="btn-row">
-              <button className="btn-ghost small" onClick={() => toggleActive(g)}>
-                {g.active ? 'Deactivate' : 'Activate'}
-              </button>
-              <button
-                className="btn-ghost small danger"
-                onClick={() => remove(g)}
-              >
-                Delete
-              </button>
+              {g.description && <p className="desc">{g.description}</p>}
+              <p className="meta">
+                {g.claims} claim{g.claims === 1 ? '' : 's'} ·{' '}
+                {g.active ? 'in shop' : 'hidden'}
+              </p>
+              <div className="btn-row">
+                <button className="btn-ghost small" onClick={() => openEdit(g)}>
+                  Edit
+                </button>
+                <button
+                  className="btn-ghost small"
+                  onClick={() => toggleActive(g)}
+                >
+                  {g.active ? 'Hide' : 'Show'}
+                </button>
+                <button
+                  className="btn-ghost small danger"
+                  onClick={() => remove(g)}
+                >
+                  Delete
+                </button>
+              </div>
             </div>
           </div>
         ))}
-        {list.length === 0 && <p className="empty">No gifts yet.</p>}
+        {list.length === 0 && <p className="empty">No rewards yet.</p>}
       </div>
     </div>
   )

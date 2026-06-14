@@ -63,18 +63,40 @@ RETAILERS = {
     ],
 }
 
-GIFTS = {
-    "surya": [
-        ("Cotton Tote Bag", "Sturdy branded shopping tote.", 300),
-        ("Branded Umbrella", "Large two-fold umbrella.", 500),
-        ("Premium Gift Hamper", "Assorted festive hamper.", 1500),
-    ],
-    "heritage": [
-        ("Steel Water Bottle", "1L insulated bottle.", 250),
-        ("Designer Wall Clock", "Handloom-motif wall clock.", 400),
-        ("Weekend Getaway Voucher", "2-night stay voucher.", 3000),
-    ],
-}
+def _img(name: str) -> str:
+    """Placeholder product image in the panel's colours. Manufacturers
+    replace these with real product photo URLs when the program goes live."""
+    from urllib.parse import quote_plus
+    return f"https://placehold.co/400x400/f6f1e6/2b3468?text={quote_plus(name)}"
+
+
+# Reward catalog (name, description, points_cost), cheapest first. Same list
+# for every demo manufacturer; real catalogs are entered in the Gifts tab.
+CATALOG = [
+    ("Comforter", "Double 90\"x100\"", 1499),
+    ("Earbuds", "Boat / Similar Brands", 2199),
+    ("Trolley Suitcase", "American Tourister / Similar Brand", 3599),
+    ("Smart Watch", "Fastrack / Boat / Similar Brand", 4399),
+    ("Mixer Blender", "Boss / Sujata / Similar Brand", 6399),
+    ("Desk Jet Printer", "HP / Canon / Epson / Similar Brand", 9999),
+    ("Microwave", "LG / Bajaj / Similar Brand", 12999),
+    ("Mixer Grinder", "Boss / Sujata / Similar Brand", 14999),
+    ("Water Dispenser", "Voltas / Bluestar / Similar Brand", 15999),
+    ("Smart Phone", "MI / Realme / Vivo / Similar Brand", 19999),
+    ("Silver Biscuit", "150 Grams", 25999),
+    ("RO Water Purifier", "Kent / Eureka Forbes / Similar Brand", 29999),
+    ("LED TV (32 Inch)", "Samsung / Mi / Similar Brand", 32999),
+    ("Washing Machine", "LG / Whirlpool / Similar Brand", 39999),
+    ("Refrigerator", "Whirlpool / Similar Brand", 49999),
+    ("Laptop", "12th Generation with Windows", 59999),
+    ("AC (1.5 Ton)", "Voltas / Similar Brand", 81999),
+    ("LED TV (55 Inch)", "Samsung / Mi / Similar Brand", 84999),
+    ("Thailand Trip (Bangkok)",
+     "1 Pax | 3N-4D | Ex. Ahmedabad, Delhi, Mumbai & Kolkata", 99000),
+    ("iPhone 15", "128 GB", 124999),
+    ("Scooty", "Activa / Jupiter Ex-Showroom", 169999),
+    ("Honda SP 125 Bike", "Ex-Showroom", 179999),
+]
 
 today = date.today()
 
@@ -211,37 +233,44 @@ def main() -> None:
 
             # Gift catalog for this manufacturer.
             gift_ids = []
-            for gname, gdesc, gcost in GIFTS[brand]:
+            for gname, gdesc, gcost in CATALOG:
                 cur = db.execute(
                     """INSERT INTO gifts
-                       (manufacturer_id, name, description, points_cost)
-                       VALUES (?, ?, ?, ?)""",
-                    (mid, gname, gdesc, gcost),
+                       (manufacturer_id, name, description, points_cost,
+                        image_url)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (mid, gname, gdesc, gcost, _img(gname)),
                 )
                 gift_ids.append((cur.lastrowid, gcost, gname))
 
-            # One pending demo claim from the first retailer for the cheapest
-            # gift (debit the wallet, leave it awaiting approval).
+            # Demo: top the lead retailer up so the shop shows affordable
+            # high-value rewards during the walkthrough.
             rid0 = retailer_rows[0][0]
-            bal = db.execute(
-                "SELECT COALESCE(SUM(points), 0) AS t FROM points_ledger"
-                " WHERE retailer_id = ?", (rid0,),
-            ).fetchone()["t"]
-            gid, gcost, gname = gift_ids[0]
-            if bal >= gcost:
-                debit = db.execute(
-                    """INSERT INTO points_ledger
-                       (manufacturer_id, retailer_id, entry_type, points, note)
-                       VALUES (?, ?, 'gift_redeem', ?, ?)""",
-                    (mid, rid0, -gcost, f"Claim: {gname}"),
-                )
-                db.execute(
-                    """INSERT INTO gift_claims
-                       (manufacturer_id, retailer_id, gift_id, points_spent,
-                        ledger_id)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (mid, rid0, gid, gcost, debit.lastrowid),
-                )
+            db.execute(
+                """INSERT INTO points_ledger
+                   (manufacturer_id, retailer_id, entry_type, points, note,
+                    created_by)
+                   VALUES (?, ?, 'adjustment', ?, ?, ?)""",
+                (mid, rid0, 150000, "Demo balance top-up", mid),
+            )
+            # One pending claim awaiting approval (a mid-tier reward).
+            demo_gift = next(
+                (g for g in gift_ids if g[2] == "LED TV (32 Inch)"),
+                gift_ids[0])
+            gid, gcost, gname = demo_gift
+            debit = db.execute(
+                """INSERT INTO points_ledger
+                   (manufacturer_id, retailer_id, entry_type, points, note)
+                   VALUES (?, ?, 'gift_redeem', ?, ?)""",
+                (mid, rid0, -gcost, f"Claim: {gname}"),
+            )
+            db.execute(
+                """INSERT INTO gift_claims
+                   (manufacturer_id, retailer_id, gift_id, points_spent,
+                    ledger_id)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (mid, rid0, gid, gcost, debit.lastrowid),
+            )
 
         n = db.execute(
             "SELECT COUNT(*) AS n FROM points_ledger").fetchone()["n"]
