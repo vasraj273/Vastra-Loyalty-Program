@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import { get, post, patch, del } from '../api.js'
 
+// Shows the image, or a clean emoji fallback if it fails to load. Uses React
+// state instead of DOM surgery so one broken image never affects other cards.
+function GiftImg({ src }) {
+  const [failed, setFailed] = useState(false)
+  useEffect(() => setFailed(false), [src])
+  if (!src || failed) return <div className="ph">🎁</div>
+  return <img src={src} alt="" onError={() => setFailed(true)} />
+}
+
 const EMPTY = {
   name: '',
   description: '',
@@ -232,22 +241,7 @@ export default function Gifts() {
               <span className="lbl">POINTS</span>
             </div>
             <div className="gift-thumb">
-              {g.image_url ? (
-                <img
-                  src={g.image_url}
-                  alt=""
-                  onError={(e) => {
-                    e.currentTarget.replaceWith(
-                      Object.assign(document.createElement('div'), {
-                        className: 'ph',
-                        textContent: '🎁',
-                      }),
-                    )
-                  }}
-                />
-              ) : (
-                <div className="ph">🎁</div>
-              )}
+              <GiftImg src={g.image_url} />
             </div>
             <div className="gift-body">
               <h4>{g.name}</h4>
