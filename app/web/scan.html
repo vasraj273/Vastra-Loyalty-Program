@@ -18,12 +18,12 @@
          display:flex; justify-content:center; min-height:100vh; }
   .wrap { width:100%; max-width:430px; padding:22px 18px 40px; }
   h1 { font-family:'Fraunces',serif; font-size:22px; margin:0 0 2px; }
-  .sub { font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--madder); font-weight:600; margin-bottom:20px; }
+  .sub { font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--madder); font-weight:600; margin-bottom:18px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:14px;
           box-shadow:0 1px 2px rgba(34,41,79,.08),0 8px 24px rgba(34,41,79,.07); }
-  label { display:block; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:1px; color:var(--soft); margin:12px 0 5px; }
-  input, select { width:100%; font:inherit; font-size:15px; padding:11px 12px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); }
-  input:focus, select:focus { outline:2px solid var(--indigo); outline-offset:-1px; }
+  .who { font-size:13px; color:var(--soft); display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+  .who strong { color:var(--ink); }
+  .who a { color:var(--madder); cursor:pointer; }
   button { width:100%; font:inherit; font-weight:600; font-size:15px; padding:13px; margin-top:14px; border:none; border-radius:9px;
            background:var(--madder); color:var(--paper); cursor:pointer; box-shadow:2px 2px 0 var(--indigo); }
   button:active { transform:translate(1px,1px); box-shadow:1px 1px 0 var(--indigo); }
@@ -32,7 +32,8 @@
   .hidden { display:none; }
   #reader { border-radius:10px; overflow:hidden; border:1px solid var(--line); }
   .divider { text-align:center; color:var(--soft); font-size:12px; letter-spacing:2px; text-transform:uppercase; margin:16px 0 2px; }
-  .manual input { font-family:'IBM Plex Mono',monospace; font-size:20px; text-align:center; letter-spacing:5px; text-transform:uppercase; }
+  .manual input { width:100%; font-family:'IBM Plex Mono',monospace; font-size:20px; text-align:center; letter-spacing:5px;
+                  text-transform:uppercase; padding:11px 12px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); }
   .points-hero { font-family:'Fraunces',serif; font-size:54px; line-height:1; color:var(--leaf); margin:6px 0 2px; }
   .result h2 { font-family:'Fraunces',serif; font-size:19px; margin:0; color:var(--leaf); }
   .result p { margin:5px 0; font-size:14px; }
@@ -45,20 +46,17 @@
 <body>
 <div class="wrap">
   <h1>Scan Loyalty QR</h1>
-  <div class="sub">Retailer · YourApp webview</div>
+  <div class="sub">Retailer · YourApp</div>
 
   <div class="card" id="scanCard">
-    <label>Scanning as (demo — comes from retailer login later)</label>
-    <select id="retailer"></select>
+    <div class="who"><span>Scanning as <strong id="whoShop">…</strong></span><a onclick="goHome()">home</a></div>
 
     <div class="divider">scan with camera</div>
     <div id="reader"></div>
     <button class="ghost" id="camBtn" onclick="toggleCamera()">Start camera</button>
 
     <div class="divider">or enter code by hand</div>
-    <div class="manual">
-      <input id="manual" maxlength="8" placeholder="XXX-XXX" autocomplete="off" />
-    </div>
+    <div class="manual"><input id="manual" maxlength="8" placeholder="XXX-XXX" autocomplete="off" /></div>
     <button onclick="redeemManual()">Redeem code</button>
     <div class="error" id="scanError"></div>
   </div>
@@ -70,92 +68,80 @@
     <p><strong id="resProduct"></strong> <span class="breakdown" id="resSku"></span></p>
     <p class="breakdown" id="resSplit"></p>
     <div id="resScheme"></div>
-    <p class="balance">Shop: <strong id="resShop"></strong><br/>
-       New balance: <strong id="resBalance"></strong> points</p>
+    <p class="balance">New balance: <strong id="resBalance"></strong> points</p>
     <button class="ghost" onclick="again()">Scan another</button>
-    <button class="ghost" onclick="openShop()">Open rewards shop →</button>
+    <button class="ghost" onclick="go('/web/shop')">Open rewards shop →</button>
   </div>
 </div>
 
 <script>
-const API = '';
-let scanner = null, scanning = false, busy = false;
+let token = localStorage.getItem('vl_rtoken') || '';
+let scanner = null, scanning = false, busy = false, me = null;
 const $ = (id) => document.getElementById(id);
 const err = (msg) => { const e = $('scanError'); e.textContent = msg || ''; e.style.display = msg ? 'block' : 'none'; };
 
+// Preserve where the user wanted to go (a scanned QR deep link) across login.
+const pathToken = (() => {
+  const parts = location.pathname.split('/').filter(Boolean);
+  return (parts.length === 3 && parts[0] === 'web' && parts[1] === 'scan') ? parts[2] : null;
+})();
+
+function gotoLogin() {
+  const next = encodeURIComponent(location.pathname);
+  window.location.href = '/web?next=' + next;
+}
+function goHome() { window.location.href = '/web'; }
+function go(p) { window.location.href = p; }
+
 async function api(path, opts = {}) {
-  opts.headers = { 'Content-Type': 'application/json' };
-  const res = await fetch(API + path, opts);
+  opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers);
+  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+  const res = await fetch(path, opts);
   const body = res.status === 204 ? null : await res.json().catch(() => null);
-  if (!res.ok) throw new Error((body && body.detail) || res.statusText);
+  if (!res.ok) {
+    if (res.status === 401) { localStorage.removeItem('vl_rtoken'); gotoLogin(); }
+    throw new Error((body && body.detail) || res.statusText);
+  }
   return body;
 }
 
-let retailers = [];
-
-async function loadRetailers() {
-  retailers = await api('/public/retailers');
-  $('retailer').innerHTML = retailers.map(r =>
-    `<option value="${r.id}">${r.shop_name} (${r.region}) — ${r.manufacturer}</option>`).join('');
-}
-
-// First successful scan per retailer: ask for location once and lock the
-// shop's exact position. Server refuses overwrites, so this never re-fires
-// for a retailer that is already pinned; denial just keeps the city dot.
-function captureLocationOnce(retailerId) {
-  const r = retailers.find((x) => x.id === retailerId);
-  if (!r || r.location_source === 'gps' || !navigator.geolocation) return;
-  navigator.geolocation.getCurrentPosition(async (pos) => {
-    try {
-      await api(`/public/retailers/${retailerId}/location`, {
-        method: 'POST',
-        body: JSON.stringify({
-          lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      });
-      r.location_source = 'gps';
-    } catch { /* keep city-level location */ }
-  }, () => {}, { enableHighAccuracy: true, timeout: 8000 });
-}
-
 function extractToken(text) {
-  // Accept raw token, full scan-page URL, or manual code
   const m = text.trim().match(/\/([A-Za-z0-9_-]+)\/?$/);
   return m ? m[1] : text.trim();
 }
 
+function captureLocationOnce() {
+  if (!me || me.location_source === 'gps' || !navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    try {
+      await api('/retailer/location', { method: 'POST', body: JSON.stringify({
+        lat: pos.coords.latitude, lng: pos.coords.longitude }) });
+      me.location_source = 'gps';
+    } catch {}
+  }, () => {}, { enableHighAccuracy: true, timeout: 8000 });
+}
+
 async function redeem(code) {
   if (busy) return;
-  busy = true;
-  err('');
+  busy = true; err('');
   try {
-    const out = await api('/scan', { method: 'POST', body: JSON.stringify({
-      code, retailer_id: Number($('retailer').value) }) });
+    const out = await api('/scan', { method: 'POST', body: JSON.stringify({ code }) });
     stopCamera();
     $('resPoints').textContent = '+' + out.points_awarded;
     const boxEl = $('resBox');
-    if (out.is_box) {
-      boxEl.textContent = `📦 Box scanned — ${out.items_registered} items registered`;
-      boxEl.style.display = 'inline-block';
-    } else {
-      boxEl.style.display = 'none';
-    }
+    if (out.is_box) { boxEl.textContent = `📦 Box scanned — ${out.items_registered} items registered`; boxEl.style.display = 'inline-block'; }
+    else { boxEl.style.display = 'none'; }
     $('resProduct').textContent = out.product.name;
     $('resSku').textContent = out.product.sku;
     $('resSplit').textContent = out.bonus_points > 0
       ? `${out.base_points} base + ${out.bonus_points} scheme bonus`
       : `${out.base_points} base points`;
-    $('resScheme').innerHTML = out.scheme
-      ? `<span class="scheme-tag">${out.scheme.name}</span>` : '';
-    $('resShop').textContent = out.retailer.shop_name;
+    $('resScheme').innerHTML = out.scheme ? `<span class="scheme-tag">${out.scheme.name}</span>` : '';
     $('resBalance').textContent = out.new_balance;
     $('scanCard').classList.add('hidden');
     $('resultCard').classList.remove('hidden');
-    captureLocationOnce(Number($('retailer').value));
-  } catch (e) {
-    err(e.message);
-  } finally {
-    busy = false;
-  }
+    captureLocationOnce();
+  } catch (e) { err(e.message); } finally { busy = false; }
 }
 
 function redeemManual() {
@@ -165,52 +151,26 @@ function redeemManual() {
 }
 
 function toggleCamera() { scanning ? stopCamera() : startCamera(); }
-
 function startCamera() {
   err('');
   scanner = new Html5Qrcode('reader');
-  scanner.start(
-    { facingMode: 'environment' },
-    { fps: 10, qrbox: { width: 230, height: 230 } },
-    (text) => redeem(extractToken(text)),
-    () => {}
-  ).then(() => { scanning = true; $('camBtn').textContent = 'Stop camera'; })
+  scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 230, height: 230 } },
+    (text) => redeem(extractToken(text)), () => {})
+   .then(() => { scanning = true; $('camBtn').textContent = 'Stop camera'; })
    .catch((e) => err('Camera unavailable: ' + e + '. Use the manual code instead.'));
 }
+function stopCamera() { if (scanner && scanning) scanner.stop().catch(() => {}); scanning = false; $('camBtn').textContent = 'Start camera'; }
+function again() { $('manual').value = ''; $('resultCard').classList.add('hidden'); $('scanCard').classList.remove('hidden'); }
 
-function stopCamera() {
-  if (scanner && scanning) { scanner.stop().catch(() => {}); }
-  scanning = false; $('camBtn').textContent = 'Start camera';
+if (!token) {
+  gotoLogin();
+} else {
+  api('/retailer/me').then((m) => {
+    me = m;
+    $('whoShop').textContent = m.shop_name;
+    if (pathToken) redeem(pathToken);  // opened from a printed QR deep link
+  }).catch(() => {});
 }
-
-function openShop() {
-  window.location.href = '/web/shop?retailer_id=' + Number($('retailer').value);
-}
-
-function again() {
-  $('manual').value = '';
-  $('resultCard').classList.add('hidden');
-  $('scanCard').classList.remove('hidden');
-}
-
-// If opened from a printed QR (URL /web/scan/<token>), redeem immediately
-// once a retailer is chosen.
-const pathToken = (() => {
-  const parts = location.pathname.split('/').filter(Boolean);
-  return (parts.length === 3 && parts[0] === 'web' && parts[1] === 'scan')
-    ? parts[2] : null;
-})();
-
-loadRetailers().then(() => {
-  if (pathToken) {
-    err('Code detected from QR link. Pick your shop, then tap Redeem below.');
-    $('manual').value = '';
-    const btn = document.createElement('button');
-    btn.textContent = 'Redeem scanned code';
-    btn.onclick = () => redeem(pathToken);
-    $('scanCard').insertBefore(btn, $('scanError'));
-  }
-}).catch((e) => err(e.message));
 </script>
 </body>
 </html>

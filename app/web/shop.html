@@ -25,20 +25,15 @@
   .wallet .label { font-size:9px; letter-spacing:1.5px; text-transform:uppercase; color:var(--soft); }
   .wallet .bal { font-family:'Fraunces',serif; font-size:24px; line-height:1; color:var(--indigo); }
   .wrap { max-width:1100px; margin:0 auto; padding:16px 18px 50px; }
-  .picker { margin:6px 0 18px; }
-  label { display:block; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:1px; color:var(--soft); margin-bottom:5px; }
-  select { width:100%; max-width:420px; font:inherit; font-size:15px; padding:11px 12px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); }
   .ok { background:rgba(62,107,79,.12); border:1px solid rgba(62,107,79,.4); color:var(--leaf); padding:10px 13px; border-radius:8px; margin-bottom:14px; font-size:14px; display:none; }
   .error { background:#f7e3dd; border:1px solid var(--madder); color:#a83a22; padding:10px 13px; border-radius:8px; margin-bottom:14px; font-size:14px; display:none; }
-
   .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:16px; }
   .gift { background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden;
-          display:flex; flex-direction:column; box-shadow:0 1px 2px rgba(34,41,79,.07),0 8px 22px rgba(34,41,79,.06);
-          position:relative; }
+          display:flex; flex-direction:column; box-shadow:0 1px 2px rgba(34,41,79,.07),0 8px 22px rgba(34,41,79,.06); position:relative; }
   .gift.locked { opacity:.62; }
   .badge { position:absolute; top:12px; left:12px; background:var(--madder); color:#fff; border-radius:6px;
            padding:5px 9px; line-height:1.05; box-shadow:2px 2px 0 rgba(34,41,79,.25); }
-  .badge .pts { font-family:'IBM Plex Sans',sans-serif; font-weight:700; font-size:15px; }
+  .badge .pts { font-weight:700; font-size:15px; }
   .badge .lbl { display:block; font-size:8px; letter-spacing:1.5px; font-weight:600; }
   .thumb { height:170px; background:#fff; display:flex; align-items:center; justify-content:center; border-bottom:1px solid var(--line); }
   .thumb img { max-width:100%; max-height:100%; object-fit:contain; }
@@ -59,62 +54,46 @@
   <div class="topbar">
     <div class="brand">
       <span class="brand-mark">वस्त्र</span>
-      <div><h1 id="brandName">Rewards Shop</h1><div class="sub">Loyalty rewards</div></div>
+      <div><h1 id="shopTitle">Rewards Shop</h1><div class="sub">Loyalty rewards</div></div>
     </div>
     <div class="wallet"><div class="label">Your points</div><div class="bal" id="bal">—</div></div>
   </div>
 
   <div class="wrap">
-    <div class="picker">
-      <label>Shop (demo — comes from retailer login later)</label>
-      <select id="retailer" onchange="onPick()"></select>
-    </div>
-
     <div class="ok" id="ok"></div>
     <div class="error" id="err"></div>
-
     <div class="grid" id="gifts"></div>
-
-    <div class="links"><a onclick="goScan()">← Back to scan</a></div>
+    <div class="links"><a onclick="go('/web')">← Home</a> &nbsp;·&nbsp; <a onclick="go('/web/scan')">Scan a code</a></div>
   </div>
 
 <script>
+let token = localStorage.getItem('vl_rtoken') || '';
 const $ = (id) => document.getElementById(id);
-let retailers = [];
-
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const nf = (n) => Number(n).toLocaleString('en-IN');
 function flash(id, msg) { const e = $(id); e.textContent = msg; e.style.display = msg ? 'block' : 'none'; }
-function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-function nf(n) { return Number(n).toLocaleString('en-IN'); }
+function go(p) { window.location.href = p; }
+function gotoLogin() { window.location.href = '/web?next=' + encodeURIComponent('/web/shop'); }
 
 async function api(path, opts = {}) {
-  opts.headers = { 'Content-Type': 'application/json' };
+  opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers);
+  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
   const res = await fetch(path, opts);
   const body = res.status === 204 ? null : await res.json().catch(() => null);
-  if (!res.ok) throw new Error((body && body.detail) || res.statusText);
+  if (!res.ok) {
+    if (res.status === 401) { localStorage.removeItem('vl_rtoken'); gotoLogin(); }
+    throw new Error((body && body.detail) || res.statusText);
+  }
   return body;
-}
-
-function currentId() { return Number($('retailer').value); }
-
-async function loadRetailers() {
-  retailers = await api('/public/retailers');
-  $('retailer').innerHTML = retailers.map(r =>
-    `<option value="${r.id}">${esc(r.shop_name)} (${esc(r.region)}) — ${esc(r.manufacturer)}</option>`).join('');
-  const pre = new URLSearchParams(location.search).get('retailer_id');
-  if (pre && retailers.some(r => String(r.id) === pre)) $('retailer').value = pre;
 }
 
 async function loadShop() {
   flash('err', ''); flash('ok', '');
   try {
-    const shop = await api('/public/gifts?retailer_id=' + currentId());
+    const shop = await api('/retailer/shop');
     $('bal').textContent = nf(shop.balance);
-    const r = retailers.find(x => x.id === currentId());
-    $('brandName').textContent = r ? r.manufacturer + ' Rewards' : 'Rewards Shop';
-    if (shop.gifts.length === 0) {
-      $('gifts').innerHTML = '<p class="empty">No rewards available yet.</p>';
-      return;
-    }
+    $('shopTitle').textContent = shop.shop_name + ' — Rewards';
+    if (shop.gifts.length === 0) { $('gifts').innerHTML = '<p class="empty">No rewards available yet.</p>'; return; }
     $('gifts').innerHTML = shop.gifts.map(g => `
       <div class="gift ${g.affordable ? '' : 'locked'}">
         <div class="badge"><span class="pts">${nf(g.points_cost)}</span><span class="lbl">POINTS</span></div>
@@ -125,7 +104,7 @@ async function loadShop() {
         </div>
         <div class="body">
           <h3 class="name">${esc(g.name)}</h3>
-          ${g.description ? `<p class="desc">${esc(g.description)}</p>` : '<p class="desc"></p>'}
+          <p class="desc">${g.description ? esc(g.description) : ''}</p>
           <button class="claim" ${g.affordable ? '' : 'disabled'}
             onclick="claim(${g.id}, ${JSON.stringify(g.name).replace(/"/g, '&quot;')}, ${g.points_cost})">
             ${g.affordable ? 'Claim reward' : `Need ${nf(g.points_cost - shop.balance)} more`}
@@ -136,21 +115,16 @@ async function loadShop() {
 }
 
 async function claim(giftId, name, cost) {
-  if (!confirm(`Claim "${name}" for ${nf(cost)} points?\n\nThis is final — the points will be deducted now and the request sent to the manufacturer for approval.`))
-    return;
+  if (!confirm(`Claim "${name}" for ${nf(cost)} points?\n\nThis is final — the points will be deducted now and the request sent to the manufacturer for approval.`)) return;
   flash('err', ''); flash('ok', '');
   try {
-    const out = await api('/public/gift-claims', { method: 'POST',
-      body: JSON.stringify({ retailer_id: currentId(), gift_id: giftId }) });
+    const out = await api('/retailer/claim', { method: 'POST', body: JSON.stringify({ gift_id: giftId }) });
     flash('ok', `Claimed ${out.gift}. Request sent for approval. New balance: ${nf(out.new_balance)}.`);
     loadShop();
   } catch (e) { flash('err', e.message); }
 }
 
-function onPick() { loadShop(); }
-function goScan() { window.location.href = '/web/scan'; }
-
-loadRetailers().then(loadShop).catch(e => flash('err', e.message));
+if (!token) gotoLogin(); else loadShop();
 </script>
 </body>
 </html>

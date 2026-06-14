@@ -25,8 +25,9 @@ Note: free tier sleeps after idle (first request takes ~30s) and the SQLite file
 |---|---|
 | Admin panel (login) | `https://HOST/panel/` |
 | Generate webview (Vastra) | `https://HOST/web/generate` |
-| Scan webview (YourApp) | `https://HOST/web/scan` |
-| Rewards shop (YourApp) | `https://HOST/web/shop` |
+| Retailer home/login (YourApp) | `https://HOST/web` |
+| Scan webview (YourApp) | `https://HOST/web/scan` (login required) |
+| Rewards shop (YourApp) | `https://HOST/web/shop` (login required) |
 | API docs | `https://HOST/docs` |
 
 ## Demo script (5 min)
@@ -54,9 +55,26 @@ $env:DATABASE_URL = '<neon pooled connection string>'
 Re-running `seed.py` wipes and refills — don't run it against a database
 holding real data.
 
+## Retailer logins (YourApp side)
+
+Retailers log in at `/web` (the retailer home), then Scan or Rewards Shop.
+Points always go to the logged-in retailer — a code can't be credited to
+another shop. Demo logins are seeded (e.g. `kumar/kumar123` under Surya,
+`nair/nair123` under Heritage).
+
+Bulk-onboard real retailers from the terminal (no website button):
+
+```powershell
+$env:DATABASE_URL = '<neon pooled connection string>'
+.\.venv\Scripts\python import_retailers.py sample_retailers.csv
+```
+
+CSV columns: `manufacturer_username, name, shop_name, region, phone,
+username, password`. To give existing (login-less) retailers a login,
+run `python backfill_retailer_logins.py`.
+
 ## Before real (non-demo) use
 
-- `/scan` must take retailer identity from YourApp's session, not the request body; remove `/public/retailers`.
 - Rotate the seeded passwords / disable seed.
 - Restrict CORS origins to the real app domains.
 - Rotate the Neon credentials if the connection string was shared.

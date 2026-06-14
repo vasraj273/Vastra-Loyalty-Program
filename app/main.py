@@ -22,8 +22,9 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .auth import (current_admin, current_manufacturer, current_user,
-                   hash_password, issue_token, verify_password)
+from .auth import (current_admin, current_manufacturer, current_retailer,
+                   current_user, hash_password, issue_retailer_token,
+                   issue_token, verify_password)
 from .database import get_db, init_db, migrate
 from .geo import coords_for, known_places
 from .pdf_service import build_pdf
@@ -129,7 +130,10 @@ class ScanIn(BaseModel):
         min_length=1, max_length=64,
         description="QR token or 6-char manual code (dashes/spaces ok)",
     )
-    retailer_id: int
+
+
+class GiftClaimIn(BaseModel):
+    gift_id: int
 
 
 # ---------- auth ----------
@@ -160,6 +164,64 @@ def logout(request: Request, user: dict = Depends(current_user)):
         if token:
             db.execute("DELETE FROM auth_tokens WHERE token = ?", (token,))
     return {"ok": True}
+
+
+# ---------- retailer auth (YourApp side) ----------
+
+@app.post("/auth/retailer/login")
+def retailer_login(body: LoginIn):
+    with get_db() as db:
+        row = db.execute(
+            "SELECT * FROM retailers WHERE username = ?",
+            (body.username.strip().lower(),),
+        ).fetchone()
+        if (not row or not row["password_hash"]
+                or not verify_password(body.password, row["password_hash"])):
+            raise HTTPException(401, "Invalid username or password")
+        token = issue_retailer_token(db, row["id"])
+        manufacturer = db.execute(
+            "SELECT display_name FROM manufacturers WHERE id = ?",
+            (row["manufacturer_id"],),
+        ).fetchone()
+    return {
+        "token": token,
+        "retailer_id": row["id"],
+        "shop_name": row["shop_name"],
+        "name": row["name"],
+        "region": row["region"],
+        "manufacturer": manufacturer["display_name"] if manufacturer else None,
+    }
+
+
+@app.post("/auth/retailer/logout")
+def retailer_logout(request: Request,
+                    retailer: dict = Depends(current_retailer)):
+    auth = request.headers.get("authorization", "")
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else None
+    with get_db() as db:
+        if token:
+            db.execute(
+                "DELETE FROM retailer_tokens WHERE token = ?", (token,))
+    return {"ok": True}
+
+
+@app.get("/retailer/me")
+def retailer_me(retailer: dict = Depends(current_retailer)):
+    with get_db() as db:
+        balance = _balance(db, retailer["id"])
+        manufacturer = db.execute(
+            "SELECT display_name FROM manufacturers WHERE id = ?",
+            (retailer["manufacturer_id"],),
+        ).fetchone()
+    return {
+        "retailer_id": retailer["id"],
+        "shop_name": retailer["shop_name"],
+        "name": retailer["name"],
+        "region": retailer["region"],
+        "manufacturer": manufacturer["display_name"] if manufacturer else None,
+        "location_source": retailer["location_source"],
+        "balance": balance,
+    }
 
 
 @app.get("/auth/me")
@@ -334,7 +396,15 @@ def create_retailer(body: RetailerIn, user: dict = Depends(current_manufacturer)
         row = db.execute(
             "SELECT * FROM retailers WHERE id = ?", (cur.lastrowid,)
         ).fetchone()
-    return dict(row)
+    return _clean_retailer(row)
+
+
+def _clean_retailer(row) -> dict:
+    """Drop the password hash before returning a retailer to the panel."""
+    d = dict(row)
+    d.pop("password_hash", None)
+    d["has_login"] = bool(d.get("username"))
+    return d
 
 
 @app.get("/retailers")
@@ -350,7 +420,7 @@ def list_retailers(user: dict = Depends(current_manufacturer)):
                FROM retailers r WHERE r.manufacturer_id = ? ORDER BY r.id""",
             (user["id"],),
         ).fetchall()
-    return [dict(r) for r in rows]
+    return [_clean_retailer(r) for r in rows]
 
 
 class RetailerUpdate(BaseModel):
@@ -388,7 +458,7 @@ def update_retailer(retailer_id: int, body: RetailerUpdate,
         out = db.execute(
             "SELECT * FROM retailers WHERE id = ?", (retailer_id,)
         ).fetchone()
-    return dict(out)
+    return _clean_retailer(out)
 
 
 @app.delete("/retailers/{retailer_id}", status_code=204)
@@ -497,20 +567,12 @@ def transfer_points(body: TransferIn,
         }
 
 
-@app.get("/retailers/{retailer_id}/points")
-def retailer_points(retailer_id: int):
-    """Open: the retailer side (YourApp webview) reads its own balance."""
+@app.get("/retailer/wallet")
+def retailer_wallet(retailer: dict = Depends(current_retailer)):
+    """The logged-in retailer's balance and transaction history."""
+    rid = retailer["id"]
     with get_db() as db:
-        retailer = db.execute(
-            "SELECT * FROM retailers WHERE id = ?", (retailer_id,)
-        ).fetchone()
-        if not retailer:
-            raise HTTPException(404, "Retailer not found")
-        balance = db.execute(
-            "SELECT COALESCE(SUM(points), 0) AS total FROM points_ledger"
-            " WHERE retailer_id = ?",
-            (retailer_id,),
-        ).fetchone()["total"]
+        balance = _balance(db, rid)
         history = db.execute(
             """SELECT l.points, l.base_points, l.bonus_points, l.scanned_at,
                       l.entry_type, l.note,
@@ -519,30 +581,15 @@ def retailer_points(retailer_id: int):
                LEFT JOIN products p ON p.id = l.product_id
                LEFT JOIN schemes s ON s.id = l.scheme_id
                WHERE l.retailer_id = ? ORDER BY l.scanned_at DESC LIMIT 100""",
-            (retailer_id,),
+            (rid,),
         ).fetchall()
     return {
-        "retailer_id": retailer_id,
+        "retailer_id": rid,
         "shop_name": retailer["shop_name"],
         "region": retailer["region"],
         "balance": balance,
         "history": [dict(h) for h in history],
     }
-
-
-@app.get("/public/retailers")
-def public_retailers():
-    """DEMO ONLY: lets the scan webview pick 'who is scanning'. In production
-    the retailer identity comes from YourApp's login session."""
-    with get_db() as db:
-        rows = db.execute(
-            """SELECT r.id, r.shop_name, r.region, r.location_source,
-                      m.display_name AS manufacturer
-               FROM retailers r
-               JOIN manufacturers m ON m.id = r.manufacturer_id
-               ORDER BY m.display_name, r.shop_name"""
-        ).fetchall()
-    return [dict(r) for r in rows]
 
 
 @app.get("/public/cities")
@@ -556,23 +603,19 @@ class LocationIn(BaseModel):
     lng: float = Field(ge=-180, le=180)
 
 
-@app.post("/public/retailers/{retailer_id}/location")
-def set_retailer_location(retailer_id: int, body: LocationIn):
+@app.post("/retailer/location")
+def set_retailer_location(body: LocationIn,
+                          retailer: dict = Depends(current_retailer)):
     """First scan with location permission pins the shop exactly. Once a GPS
     location is locked it never changes (and the app never asks again)."""
+    rid = retailer["id"]
     with get_db() as db:
-        row = db.execute(
-            "SELECT id, location_source FROM retailers WHERE id = ?",
-            (retailer_id,),
-        ).fetchone()
-        if not row:
-            raise HTTPException(404, "Retailer not found")
-        if row["location_source"] == "gps":
+        if retailer["location_source"] == "gps":
             return {"updated": False, "reason": "GPS location already locked"}
         db.execute(
             """UPDATE retailers SET lat = ?, lng = ?, location_source = 'gps'
                WHERE id = ?""",
-            (body.lat, body.lng, retailer_id),
+            (body.lat, body.lng, rid),
         )
     return {"updated": True}
 
@@ -776,20 +819,16 @@ def code_image(token: str):
     return Response(content=render_png(token), media_type="image/png")
 
 
-# ---------- scan & redeem (retailer side, open for demo) ----------
+# ---------- scan & redeem (retailer side, authenticated) ----------
 
 @app.post("/scan")
-def scan(body: ScanIn):
-    """Redeem a code by QR token or 6-char manual code. Single authority for
-    rewards: base points from the batch + best active scheme bonus."""
+def scan(body: ScanIn, retailer: dict = Depends(current_retailer)):
+    """Redeem a code by QR token or 6-char manual code. Points always go to
+    the logged-in retailer, so a code can't be credited to another account.
+    Single authority for rewards: base points + best active scheme bonus."""
+    rid = retailer["id"]
     code = body.code.strip().replace("-", "").replace(" ", "").upper()
     with get_db() as db:
-        retailer = db.execute(
-            "SELECT * FROM retailers WHERE id = ?", (body.retailer_id,)
-        ).fetchone()
-        if not retailer:
-            raise HTTPException(404, "Retailer not found")
-
         row = db.execute(
             """SELECT c.token, c.redeemed_at, c.is_parent, b.points_per_code,
                       p.id AS product_id, p.name AS product_name, p.sku,
@@ -846,14 +885,14 @@ def scan(body: ScanIn):
             db.execute(
                 """UPDATE qr_codes SET redeemed_at = datetime('now'),
                                        redeemed_by = ? WHERE token = ?""",
-                (body.retailer_id, t),
+                (rid, t),
             )
             db.execute(
                 """INSERT INTO points_ledger
                    (manufacturer_id, retailer_id, token, product_id, points,
                     base_points, bonus_points, scheme_id, region)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (row["manufacturer_id"], body.retailer_id, t,
+                (row["manufacturer_id"], rid, t,
                  row["product_id"], per, base, bonus,
                  scheme["id"] if scheme else None, retailer["region"]),
             )
@@ -861,14 +900,14 @@ def scan(body: ScanIn):
             db.execute(
                 """UPDATE qr_codes SET redeemed_at = datetime('now'),
                                        redeemed_by = ? WHERE token = ?""",
-                (body.retailer_id, row["token"]),
+                (rid, row["token"]),
             )
 
         count = len(tokens)
         balance = db.execute(
             "SELECT COALESCE(SUM(points), 0) AS total FROM points_ledger"
             " WHERE retailer_id = ?",
-            (body.retailer_id,),
+            (rid,),
         ).fetchone()["total"]
 
     return {
@@ -882,7 +921,7 @@ def scan(body: ScanIn):
         "bonus_points": bonus * count,
         "scheme": ({"id": scheme["id"], "name": scheme["name"]}
                    if scheme else None),
-        "retailer": {"id": body.retailer_id,
+        "retailer": {"id": rid,
                      "shop_name": retailer["shop_name"],
                      "region": retailer["region"]},
         "new_balance": balance,
@@ -1198,19 +1237,15 @@ def delete_gift(gift_id: int, user: dict = Depends(current_manufacturer)):
         db.execute("DELETE FROM gifts WHERE id = ?", (gift_id,))
 
 
-# ---------- gift shop + claims (retailer side, open for demo) ----------
+# ---------- gift shop + claims (retailer side, authenticated) ----------
 
-@app.get("/public/gifts")
-def public_gifts(retailer_id: int):
-    """Shop view for a retailer: their wallet balance + the active gifts of
-    their manufacturer, flagged affordable or not."""
+@app.get("/retailer/shop")
+def retailer_shop(retailer: dict = Depends(current_retailer)):
+    """Shop view for the logged-in retailer: wallet balance + the active
+    gifts of their manufacturer, flagged affordable or not."""
+    rid = retailer["id"]
     with get_db() as db:
-        retailer = db.execute(
-            "SELECT * FROM retailers WHERE id = ?", (retailer_id,)
-        ).fetchone()
-        if not retailer:
-            raise HTTPException(404, "Retailer not found")
-        balance = _balance(db, retailer_id)
+        balance = _balance(db, rid)
         gifts = db.execute(
             """SELECT id, name, description, points_cost, image_url
                FROM gifts WHERE manufacturer_id = ? AND active = 1
@@ -1218,7 +1253,7 @@ def public_gifts(retailer_id: int):
             (retailer["manufacturer_id"],),
         ).fetchall()
     return {
-        "retailer_id": retailer_id,
+        "retailer_id": rid,
         "shop_name": retailer["shop_name"],
         "balance": balance,
         "gifts": [
@@ -1228,21 +1263,12 @@ def public_gifts(retailer_id: int):
     }
 
 
-class GiftClaimIn(BaseModel):
-    retailer_id: int
-    gift_id: int
-
-
-@app.post("/public/gift-claims", status_code=201)
-def claim_gift(body: GiftClaimIn):
-    """Retailer claims a gift. Points are deducted immediately; a rejected
-    claim refunds them. The manufacturer fulfils the gift offline."""
+@app.post("/retailer/claim", status_code=201)
+def claim_gift(body: GiftClaimIn, retailer: dict = Depends(current_retailer)):
+    """Logged-in retailer claims a gift. Points are deducted immediately; a
+    rejected claim refunds them. The manufacturer fulfils the gift offline."""
+    rid = retailer["id"]
     with get_db() as db:
-        retailer = db.execute(
-            "SELECT * FROM retailers WHERE id = ?", (body.retailer_id,)
-        ).fetchone()
-        if not retailer:
-            raise HTTPException(404, "Retailer not found")
         gift = db.execute(
             "SELECT * FROM gifts WHERE id = ? AND active = 1", (body.gift_id,)
         ).fetchone()
@@ -1250,14 +1276,14 @@ def claim_gift(body: GiftClaimIn):
             raise HTTPException(404, "Gift not available")
         if gift["manufacturer_id"] != retailer["manufacturer_id"]:
             raise HTTPException(403, "Gift belongs to another manufacturer")
-        if _balance(db, body.retailer_id) < gift["points_cost"]:
+        if _balance(db, rid) < gift["points_cost"]:
             raise HTTPException(409, "Not enough points")
 
         debit = db.execute(
             """INSERT INTO points_ledger
                (manufacturer_id, retailer_id, entry_type, points, note)
                VALUES (?, ?, 'gift_redeem', ?, ?)""",
-            (gift["manufacturer_id"], body.retailer_id, -gift["points_cost"],
+            (gift["manufacturer_id"], rid, -gift["points_cost"],
              f"Claim: {gift['name']}"),
         )
         cur = db.execute(
@@ -1265,7 +1291,7 @@ def claim_gift(body: GiftClaimIn):
                (manufacturer_id, retailer_id, gift_id, points_spent,
                 ledger_id)
                VALUES (?, ?, ?, ?, ?)""",
-            (gift["manufacturer_id"], body.retailer_id, body.gift_id,
+            (gift["manufacturer_id"], rid, body.gift_id,
              gift["points_cost"], debit.lastrowid),
         )
         return {
@@ -1273,7 +1299,7 @@ def claim_gift(body: GiftClaimIn):
             "gift": gift["name"],
             "points_spent": gift["points_cost"],
             "status": "pending",
-            "new_balance": _balance(db, body.retailer_id),
+            "new_balance": _balance(db, rid),
         }
 
 
@@ -1349,6 +1375,11 @@ def reject_claim(claim_id: int, user: dict = Depends(current_manufacturer)):
 @app.get("/", include_in_schema=False)
 def root():
     return RedirectResponse("/panel/")
+
+@app.get("/web", include_in_schema=False)
+def web_home():
+    return FileResponse(WEB_DIR / "home.html")
+
 
 @app.get("/web/generate", include_in_schema=False)
 def web_generate():

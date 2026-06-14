@@ -152,13 +152,16 @@ def main() -> None:
             retailer_rows = []
             for name, shop, city in RETAILERS[brand]:
                 lat, lng = coords_for(city)
+                # Demo login: first word of the shop name, password +123.
+                uname = shop.split()[0].lower()
                 cur = db.execute(
                     """INSERT INTO retailers
                        (manufacturer_id, name, shop_name, region, phone,
-                        lat, lng, location_source)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 'city')""",
+                        username, password_hash, lat, lng, location_source)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'city')""",
                     (mid, name, shop, city,
-                     f"98{random.randint(10000000, 99999999)}", lat, lng),
+                     f"98{random.randint(10000000, 99999999)}",
+                     uname, hash_password(uname + "123"), lat, lng),
                 )
                 retailer_rows.append((cur.lastrowid, city))
 
@@ -277,7 +280,10 @@ def main() -> None:
     from app.database import IS_PG
     target = "Postgres (DATABASE_URL)" if IS_PG else "SQLite (qr_api.db)"
     print(f"Seeded 2 manufacturers + super admin, {n} scans -> {target}")
-    print("Logins: admin/admin123, surya/surya123, heritage/heritage123")
+    print("Manufacturer logins: admin/admin123, surya/surya123, "
+          "heritage/heritage123")
+    print("Sample retailer logins (YourApp /web): kumar/kumar123 (Surya), "
+          "nair/nair123 (Heritage)")
 
 
 if __name__ == "__main__":

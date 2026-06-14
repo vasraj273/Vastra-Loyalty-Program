@@ -54,9 +54,17 @@ CREATE TABLE IF NOT EXISTS retailers (
     shop_name TEXT NOT NULL,
     region TEXT NOT NULL,
     phone TEXT,
+    username TEXT UNIQUE,    -- retailer login (null = no login yet)
+    password_hash TEXT,
     lat REAL,   -- auto-filled from region city lookup, manual override allowed
     lng REAL,
     location_source TEXT,  -- 'city' (lookup) | 'gps' (locked from first scan)
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS retailer_tokens (
+    token TEXT PRIMARY KEY,
+    retailer_id INTEGER NOT NULL REFERENCES retailers(id) ON DELETE CASCADE,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -166,8 +174,8 @@ _ID_TABLES = {"manufacturers", "products", "retailers", "qr_batches",
 
 # All tables, dropped with CASCADE on reset (order irrelevant).
 _DROP_ORDER = ("gift_claims", "gifts", "points_ledger", "qr_codes",
-               "qr_batches", "scheme_products", "schemes", "retailers",
-               "products", "auth_tokens", "manufacturers")
+               "qr_batches", "scheme_products", "schemes", "retailer_tokens",
+               "retailers", "products", "auth_tokens", "manufacturers")
 
 
 # ---------------------------------------------------------------- Postgres
@@ -270,6 +278,8 @@ _MIGRATIONS = [
     ("points_ledger", "counterparty_retailer_id", "INTEGER"),
     ("points_ledger", "note", "TEXT"),
     ("points_ledger", "created_by", "INTEGER"),
+    ("retailers", "username", "TEXT"),
+    ("retailers", "password_hash", "TEXT"),
 ]
 
 

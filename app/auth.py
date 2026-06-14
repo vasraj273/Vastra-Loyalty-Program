@@ -43,6 +43,15 @@ def issue_token(db, manufacturer_id: int) -> str:
     return token
 
 
+def issue_retailer_token(db, retailer_id: int) -> str:
+    token = secrets.token_urlsafe(32)
+    db.execute(
+        "INSERT INTO retailer_tokens (token, retailer_id) VALUES (?, ?)",
+        (token, retailer_id),
+    )
+    return token
+
+
 def _token_from_request(request: Request) -> str | None:
     header = request.headers.get("authorization", "")
     if header.lower().startswith("bearer "):
@@ -82,3 +91,20 @@ def current_admin(request: Request) -> dict:
     if not user["is_admin"]:
         raise HTTPException(403, "Super admin only")
     return user
+
+
+def current_retailer(request: Request) -> dict:
+    """Resolve the authenticated retailer (YourApp side)."""
+    token = _token_from_request(request)
+    if not token:
+        raise HTTPException(401, "Not authenticated")
+    with get_db() as db:
+        row = db.execute(
+            """SELECT r.* FROM retailer_tokens t
+               JOIN retailers r ON r.id = t.retailer_id
+               WHERE t.token = ?""",
+            (token,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(401, "Invalid or expired token")
+    return dict(row)

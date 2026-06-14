@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Loyalty — YourApp</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper:#f6f1e6; --card:#fbf8f1; --ink:#22294f; --soft:#4c5170;
+    --line:#ddd2bb; --indigo:#2b3468; --madder:#c8472b; --leaf:#3e6b4f;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:'IBM Plex Sans',sans-serif; background:var(--paper); color:var(--ink);
+         display:flex; justify-content:center; min-height:100vh; }
+  .wrap { width:100%; max-width:430px; padding:30px 18px 40px; }
+  .brand { display:flex; align-items:center; gap:12px; margin-bottom:6px; }
+  .brand-mark { font-family:'Fraunces',serif; font-size:26px; color:var(--paper); background:var(--indigo);
+                padding:8px 10px 11px; border-radius:4px 12px 4px 12px; box-shadow:3px 3px 0 var(--madder); }
+  h1 { font-family:'Fraunces',serif; font-size:23px; margin:0; }
+  .sub { font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--madder); font-weight:600; margin:2px 0 22px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px;
+          box-shadow:0 1px 2px rgba(34,41,79,.08),0 8px 24px rgba(34,41,79,.07); margin-bottom:14px; }
+  label { display:block; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:1px; color:var(--soft); margin:12px 0 5px; }
+  input { width:100%; font:inherit; font-size:15px; padding:11px 12px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); }
+  input:focus { outline:2px solid var(--indigo); outline-offset:-1px; }
+  button { width:100%; font:inherit; font-weight:600; font-size:15px; padding:14px; margin-top:14px; border:none; border-radius:10px;
+           background:var(--madder); color:var(--paper); cursor:pointer; box-shadow:2px 2px 0 var(--indigo); }
+  button:active { transform:translate(1px,1px); box-shadow:1px 1px 0 var(--indigo); }
+  button.secondary { background:var(--indigo); box-shadow:2px 2px 0 var(--madder); }
+  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); box-shadow:none; }
+  .error { background:#f7e3dd; border:1px solid var(--madder); color:#a83a22; padding:10px 13px; border-radius:8px; margin-top:12px; font-size:14px; display:none; }
+  .hidden { display:none; }
+  .wallet { text-align:center; padding:6px 0 4px; }
+  .wallet .label { font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--soft); }
+  .wallet .bal { font-family:'Fraunces',serif; font-size:48px; line-height:1; color:var(--indigo); }
+  .who { font-size:13px; color:var(--soft); text-align:center; margin-bottom:6px; }
+  .who strong { color:var(--ink); }
+  .big-actions button { font-size:17px; padding:18px; }
+  .logout { margin-top:6px; font-size:13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">
+    <span class="brand-mark">वस्त्र</span>
+    <div><h1>Loyalty Rewards</h1><div class="sub" style="margin:0">Retailer · YourApp</div></div>
+  </div>
+
+  <!-- login -->
+  <div class="card hidden" id="loginCard">
+    <label>Username</label>
+    <input id="username" autocomplete="username" placeholder="your shop login" />
+    <label>Password</label>
+    <input id="password" type="password" autocomplete="current-password" />
+    <button onclick="login()">Log in</button>
+    <div class="error" id="loginError"></div>
+  </div>
+
+  <!-- dashboard -->
+  <div class="hidden" id="dash">
+    <div class="card">
+      <p class="who">Signed in as <strong id="whoShop"></strong><br/><span id="whoManuf" class="sub" style="letter-spacing:1px"></span></p>
+      <div class="wallet"><div class="label">Your points</div><div class="bal" id="bal">—</div></div>
+    </div>
+    <div class="card big-actions">
+      <button onclick="go('/web/scan')">📷 Scan QR code</button>
+      <button class="secondary" onclick="go('/web/shop')">🎁 Rewards shop</button>
+      <button class="ghost logout" onclick="logout()">Log out</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let token = localStorage.getItem('vl_rtoken') || '';
+const $ = (id) => document.getElementById(id);
+const show = (id, on) => $(id).classList.toggle('hidden', !on);
+const err = (m) => { const e = $('loginError'); e.textContent = m || ''; e.style.display = m ? 'block' : 'none'; };
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers);
+  if (token) opts.headers['Authorization'] = 'Bearer ' + token;
+  const res = await fetch(path, opts);
+  const body = res.status === 204 ? null : await res.json().catch(() => null);
+  if (!res.ok) {
+    if (res.status === 401) { token = ''; localStorage.removeItem('vl_rtoken'); render(); }
+    throw new Error((body && body.detail) || res.statusText);
+  }
+  return body;
+}
+
+async function login() {
+  err('');
+  try {
+    const out = await api('/auth/retailer/login', { method: 'POST', body: JSON.stringify({
+      username: $('username').value.trim(), password: $('password').value }) });
+    token = out.token;
+    localStorage.setItem('vl_rtoken', token);
+    const next = new URLSearchParams(location.search).get('next');
+    if (next && next.startsWith('/web')) { window.location.href = next; return; }
+    render();
+  } catch (e) { err(e.message); }
+}
+
+async function logout() {
+  try { await api('/auth/retailer/logout', { method: 'POST' }); } catch {}
+  token = ''; localStorage.removeItem('vl_rtoken'); render();
+}
+
+function go(path) { window.location.href = path; }
+
+async function render() {
+  if (!token) { show('loginCard', true); show('dash', false); return; }
+  try {
+    const me = await api('/retailer/me');
+    $('whoShop').textContent = me.shop_name;
+    $('whoManuf').textContent = me.manufacturer || '';
+    $('bal').textContent = Number(me.balance).toLocaleString('en-IN');
+    show('loginCard', false); show('dash', true);
+  } catch { show('loginCard', true); show('dash', false); }
+}
+render();
+</script>
+</body>
+</html>
