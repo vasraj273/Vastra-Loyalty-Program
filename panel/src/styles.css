@@ -597,6 +597,35 @@ th.actions-col { text-align: right; }
   padding: 4px;
 }
 
+.image-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.image-row > label { flex: 1; min-width: 200px; }
+
+.image-row .or-sep {
+  padding-bottom: 11px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--ink-soft);
+}
+
+.image-row input[type='file'] {
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 13px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 7px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.preview-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
 .gift-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));

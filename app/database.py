@@ -257,6 +257,45 @@ def init_db() -> None:
         db.executescript(_pg_schema() if IS_PG else SCHEMA)
 
 
+# Columns added after the first schema version. Applied idempotently on every
+# startup so deploying new code never requires wiping the database.
+_MIGRATIONS = [
+    ("retailers", "location_source", "TEXT"),
+    ("qr_codes", "is_parent", "INTEGER NOT NULL DEFAULT 0"),
+    ("qr_codes", "parent_token", "TEXT"),
+    ("points_ledger", "entry_type", "TEXT NOT NULL DEFAULT 'scan'"),
+    ("points_ledger", "base_points", "INTEGER NOT NULL DEFAULT 0"),
+    ("points_ledger", "bonus_points", "INTEGER NOT NULL DEFAULT 0"),
+    ("points_ledger", "scheme_id", "INTEGER"),
+    ("points_ledger", "counterparty_retailer_id", "INTEGER"),
+    ("points_ledger", "note", "TEXT"),
+    ("points_ledger", "created_by", "INTEGER"),
+]
+
+
+def migrate() -> None:
+    """Add any missing columns to existing tables (new tables are handled by
+    CREATE TABLE IF NOT EXISTS in init_db). Safe to run repeatedly. Each
+    statement runs in its own transaction so one no-op never blocks the rest."""
+    for table, col, decl in _MIGRATIONS:
+        try:
+            with get_db() as db:
+                if IS_PG:
+                    db.execute(
+                        f"ALTER TABLE {table} "
+                        f"ADD COLUMN IF NOT EXISTS {col} {decl}")
+                else:
+                    have = {
+                        r["name"] for r in db.execute(
+                            f"PRAGMA table_info({table})")
+                    }
+                    if col not in have:
+                        db.execute(
+                            f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        except Exception:
+            pass
+
+
 def reset_db() -> None:
     """Drop everything and recreate the schema. Used by the seed script;
     never called at app startup, so production data persists across deploys."""

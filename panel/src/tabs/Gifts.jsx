@@ -78,6 +78,38 @@ export default function Gifts() {
     }
   }
 
+  // Read a chosen file, downscale it, and store it inline as a data URI so
+  // the image survives without depending on an external URL.
+  const onFile = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setError(null)
+    const reader = new FileReader()
+    reader.onload = () => {
+      const img = new Image()
+      img.onload = () => {
+        const max = 600
+        let { width, height } = img
+        if (width > max || height > max) {
+          const s = Math.min(max / width, max / height)
+          width = Math.round(width * s)
+          height = Math.round(height * s)
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height)
+        setForm((f) => ({
+          ...f,
+          image_url: canvas.toDataURL('image/jpeg', 0.82),
+        }))
+      }
+      img.onerror = () => setError('Could not read that image file')
+      img.src = reader.result
+    }
+    reader.readAsDataURL(file)
+  }
+
   const remove = async (g) => {
     if (!window.confirm(`Delete "${g.name}"?`)) return
     setError(null)
@@ -135,16 +167,6 @@ export default function Gifts() {
               />
             </label>
             <label>
-              Image URL
-              <input
-                value={form.image_url}
-                onChange={(e) =>
-                  setForm({ ...form, image_url: e.target.value })
-                }
-                placeholder="https://… product photo"
-              />
-            </label>
-            <label>
               Description
               <input
                 value={form.description}
@@ -155,15 +177,46 @@ export default function Gifts() {
               />
             </label>
           </div>
+
+          <div className="image-row">
+            <label>
+              Image URL
+              <input
+                value={form.image_url?.startsWith('data:') ? '' : form.image_url}
+                onChange={(e) =>
+                  setForm({ ...form, image_url: e.target.value })
+                }
+                placeholder="https://… product photo"
+              />
+            </label>
+            <span className="or-sep">or</span>
+            <label>
+              Upload from device
+              <input type="file" accept="image/*" onChange={onFile} />
+            </label>
+          </div>
+
           {form.image_url && (
-            <img
-              src={form.image_url}
-              alt=""
-              className="img-preview"
-              onError={(e) => {
-                e.currentTarget.style.display = 'none'
-              }}
-            />
+            <div className="preview-row">
+              <img
+                src={form.image_url}
+                alt=""
+                className="img-preview"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none'
+                }}
+              />
+              <button
+                type="button"
+                className="btn-ghost small"
+                onClick={() => setForm({ ...form, image_url: '' })}
+              >
+                Remove image
+              </button>
+              {form.image_url.startsWith('data:') && (
+                <span className="sub">Uploaded photo (stored with the reward)</span>
+              )}
+            </div>
           )}
           <button className="btn-primary" disabled={busy}>
             {busy ? 'Saving…' : editingId ? 'Save changes' : 'Add reward'}

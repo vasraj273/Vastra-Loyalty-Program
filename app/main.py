@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 
 from .auth import (current_admin, current_manufacturer, current_user,
                    hash_password, issue_token, verify_password)
-from .database import get_db, init_db
+from .database import get_db, init_db, migrate
 from .geo import coords_for, known_places
 from .pdf_service import build_pdf
 from .qr_service import new_manual_code, new_token, payload_for, render_png
@@ -53,6 +53,7 @@ def _backfill_coords() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    migrate()
     _backfill_coords()
     yield
 
@@ -1115,14 +1116,14 @@ class GiftIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str = Field(default="", max_length=1000)
     points_cost: int = Field(ge=1)
-    image_url: str | None = Field(default=None, max_length=500)
+    image_url: str | None = None  # URL or data: URI (uploaded photo)
 
 
 class GiftUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, max_length=1000)
     points_cost: int | None = Field(default=None, ge=1)
-    image_url: str | None = Field(default=None, max_length=500)
+    image_url: str | None = None  # URL or data: URI (uploaded photo)
     active: bool | None = None
 
 
