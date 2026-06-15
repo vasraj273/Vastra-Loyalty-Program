@@ -58,6 +58,7 @@ export default function Redemptions() {
             <thead>
               <tr>
                 <th>When</th>
+                <th>Reference</th>
                 <th>Retailer</th>
                 <th>Region</th>
                 <th>Gift</th>
@@ -70,6 +71,7 @@ export default function Redemptions() {
               {list.map((c) => (
                 <tr key={c.id}>
                   <td className="mono nowrap">{c.created_at}</td>
+                  <td className="mono">{c.reference || `CLM-${c.id}`}</td>
                   <td>
                     {c.shop_name}
                     <span className="sub"> · {c.retailer_name}</span>
@@ -105,7 +107,7 @@ export default function Redemptions() {
               ))}
               {list.length === 0 && (
                 <tr>
-                  <td colSpan={filter === 'pending' ? 7 : 6} className="empty">
+                  <td colSpan={filter === 'pending' ? 8 : 7} className="empty">
                     No {filter} redemptions.
                   </td>
                 </tr>

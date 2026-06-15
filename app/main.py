@@ -28,7 +28,8 @@ from .auth import (current_admin, current_manufacturer, current_retailer,
 from .database import get_db, init_db, migrate
 from .geo import coords_for, known_places
 from .pdf_service import build_pdf
-from .qr_service import new_manual_code, new_token, payload_for, render_png
+from .qr_service import (new_manual_code, new_reference, new_token,
+                         payload_for, render_png)
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 PANEL_DIST = Path(__file__).resolve().parent.parent / "panel" / "dist"
@@ -1286,16 +1287,24 @@ def claim_gift(body: GiftClaimIn, retailer: dict = Depends(current_retailer)):
             (gift["manufacturer_id"], rid, -gift["points_cost"],
              f"Claim: {gift['name']}"),
         )
+        existing = {
+            r["reference"] for r in db.execute(
+                "SELECT reference FROM gift_claims WHERE reference IS NOT NULL")
+        }
+        reference = new_reference()
+        while reference in existing:
+            reference = new_reference()
         cur = db.execute(
             """INSERT INTO gift_claims
-               (manufacturer_id, retailer_id, gift_id, points_spent,
+               (manufacturer_id, retailer_id, gift_id, reference, points_spent,
                 ledger_id)
-               VALUES (?, ?, ?, ?, ?)""",
-            (gift["manufacturer_id"], rid, body.gift_id,
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (gift["manufacturer_id"], rid, body.gift_id, reference,
              gift["points_cost"], debit.lastrowid),
         )
         return {
             "claim_id": cur.lastrowid,
+            "reference": reference,
             "gift": gift["name"],
             "points_spent": gift["points_cost"],
             "status": "pending",
@@ -1303,12 +1312,32 @@ def claim_gift(body: GiftClaimIn, retailer: dict = Depends(current_retailer)):
         }
 
 
+@app.get("/retailer/claims")
+def retailer_claims(retailer: dict = Depends(current_retailer)):
+    """The logged-in retailer's gift claim history (order-history style)."""
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT gc.id, gc.reference, gc.points_spent, gc.status,
+                      gc.created_at, gc.decided_at,
+                      g.name AS gift_name, g.image_url, g.description
+               FROM gift_claims gc JOIN gifts g ON g.id = gc.gift_id
+               WHERE gc.retailer_id = ? ORDER BY gc.id DESC""",
+            (retailer["id"],),
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["reference"] = d["reference"] or f"CLM-{d['id']}"
+        out.append(d)
+    return out
+
+
 @app.get("/gift-claims")
 def list_gift_claims(status: str | None = Query(
         None, pattern="^(pending|approved|rejected)$"),
         user: dict = Depends(current_manufacturer)):
-    sql = """SELECT gc.id, gc.points_spent, gc.status, gc.created_at,
-                    gc.decided_at, g.name AS gift_name,
+    sql = """SELECT gc.id, gc.reference, gc.points_spent, gc.status,
+                    gc.created_at, gc.decided_at, g.name AS gift_name,
                     r.id AS retailer_id, r.shop_name, r.name AS retailer_name,
                     r.region
              FROM gift_claims gc
@@ -1395,6 +1424,11 @@ def web_scan(token: str | None = None):
 @app.get("/web/shop", include_in_schema=False)
 def web_shop():
     return FileResponse(WEB_DIR / "shop.html")
+
+
+@app.get("/web/claims", include_in_schema=False)
+def web_claims():
+    return FileResponse(WEB_DIR / "claims.html")
 
 
 if PANEL_DIST.exists():

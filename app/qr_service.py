@@ -28,6 +28,12 @@ def new_manual_code() -> str:
     return "".join(secrets.choice(MANUAL_ALPHABET) for _ in range(6))
 
 
+def new_reference() -> str:
+    """Human-readable proof code for a gift claim, e.g. RDM-7K2QABC."""
+    body = "".join(secrets.choice(MANUAL_ALPHABET) for _ in range(7))
+    return f"RDM-{body}"
+
+
 def payload_for(token: str) -> str:
     return f"{QR_BASE_URL}/{token}"
 

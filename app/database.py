@@ -149,6 +149,7 @@ CREATE TABLE IF NOT EXISTS gift_claims (
     manufacturer_id INTEGER NOT NULL REFERENCES manufacturers(id),
     retailer_id INTEGER NOT NULL REFERENCES retailers(id),
     gift_id INTEGER NOT NULL REFERENCES gifts(id),
+    reference TEXT,                          -- proof code shown to retailer
     points_spent INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected
     ledger_id INTEGER REFERENCES points_ledger(id),  -- the debit row
@@ -280,6 +281,7 @@ _MIGRATIONS = [
     ("points_ledger", "created_by", "INTEGER"),
     ("retailers", "username", "TEXT"),
     ("retailers", "password_hash", "TEXT"),
+    ("gift_claims", "reference", "TEXT"),
 ]
 
 

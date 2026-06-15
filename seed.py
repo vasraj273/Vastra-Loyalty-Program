@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 from app.auth import hash_password
 from app.database import get_db, reset_db
 from app.geo import coords_for
-from app.qr_service import new_manual_code, new_token
+from app.qr_service import new_manual_code, new_reference, new_token
 
 random.seed(7)
 
@@ -269,10 +269,10 @@ def main() -> None:
             )
             db.execute(
                 """INSERT INTO gift_claims
-                   (manufacturer_id, retailer_id, gift_id, points_spent,
-                    ledger_id)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (mid, rid0, gid, gcost, debit.lastrowid),
+                   (manufacturer_id, retailer_id, gift_id, reference,
+                    points_spent, ledger_id)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (mid, rid0, gid, new_reference(), gcost, debit.lastrowid),
             )
 
         n = db.execute(

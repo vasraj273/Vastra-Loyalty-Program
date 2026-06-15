@@ -63,7 +63,7 @@
     <div class="ok" id="ok"></div>
     <div class="error" id="err"></div>
     <div class="grid" id="gifts"></div>
-    <div class="links"><a onclick="go('/web')">← Home</a> &nbsp;·&nbsp; <a onclick="go('/web/scan')">Scan a code</a></div>
+    <div class="links"><a onclick="go('/web')">← Home</a> &nbsp;·&nbsp; <a onclick="go('/web/claims')">My claims</a> &nbsp;·&nbsp; <a onclick="go('/web/scan')">Scan a code</a></div>
   </div>
 
 <script>
@@ -119,7 +119,7 @@ async function claim(giftId, name, cost) {
   flash('err', ''); flash('ok', '');
   try {
     const out = await api('/retailer/claim', { method: 'POST', body: JSON.stringify({ gift_id: giftId }) });
-    flash('ok', `Claimed ${out.gift}. Request sent for approval. New balance: ${nf(out.new_balance)}.`);
+    flash('ok', `Claimed ${out.gift} · proof ${out.reference} (keep this). Sent for approval. New balance: ${nf(out.new_balance)}. See "My claims" for status.`);
     loadShop();
   } catch (e) { flash('err', e.message); }
 }
