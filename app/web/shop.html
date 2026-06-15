@@ -48,6 +48,24 @@
   .empty { color:var(--soft); font-style:italic; }
   .links { margin-top:20px; font-size:13px; }
   .links a { color:var(--madder); cursor:pointer; }
+
+  .backdrop { position:fixed; inset:0; background:rgba(34,41,79,.5); display:flex;
+              align-items:center; justify-content:center; padding:20px; z-index:50; }
+  .modal { background:var(--card); border:1px solid var(--line); border-radius:16px;
+           padding:28px 24px 22px; width:100%; max-width:380px; text-align:center;
+           box-shadow:0 20px 60px rgba(34,41,79,.3); }
+  .modal .tick { width:62px; height:62px; border-radius:50%; background:var(--leaf); color:#fff;
+                 font-size:34px; line-height:62px; margin:0 auto 12px; }
+  .modal h2 { font-family:'Fraunces',serif; font-size:22px; margin:0 0 4px; color:var(--leaf); }
+  .modal p { margin:4px 0; font-size:14px; color:var(--soft); }
+  .modal .gift-name { color:var(--ink); font-weight:600; }
+  .id-box { margin:16px 0 6px; border:1px dashed var(--line); border-radius:10px; padding:12px;
+            background:var(--paper); }
+  .id-box .lbl { font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:var(--soft); }
+  .id-box .ref { font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:26px; color:var(--indigo); margin-top:3px; }
+  .id-box .hint { font-size:11px; color:var(--soft); margin-top:4px; }
+  .modal button { width:100%; margin-top:10px; }
+  .modal .copy { background:transparent; color:var(--ink); border:1px solid var(--line); box-shadow:none; padding:9px; font-size:13px; }
 </style>
 </head>
 <body>
@@ -64,6 +82,23 @@
     <div class="error" id="err"></div>
     <div class="grid" id="gifts"></div>
     <div class="links"><a onclick="go('/web')">← Home</a> &nbsp;·&nbsp; <a onclick="go('/web/claims')">My claims</a> &nbsp;·&nbsp; <a onclick="go('/web/scan')">Scan a code</a></div>
+  </div>
+
+  <div class="backdrop" id="successModal" style="display:none">
+    <div class="modal">
+      <div class="tick">✓</div>
+      <h2>Claim Successful!</h2>
+      <p>You claimed <span class="gift-name" id="mGift"></span>.</p>
+      <div class="id-box">
+        <div class="lbl">Your Claim ID</div>
+        <div class="ref" id="mRef"></div>
+        <div class="hint">Keep this as proof of your claim</div>
+      </div>
+      <p id="mBal"></p>
+      <button class="copy" onclick="copyRef(this)">Copy Claim ID</button>
+      <button onclick="go('/web/claims')">View my claims</button>
+      <button class="copy" onclick="closeModal()">Done</button>
+    </div>
   </div>
 
 <script>
@@ -119,10 +154,21 @@ async function claim(giftId, name, cost) {
   flash('err', ''); flash('ok', '');
   try {
     const out = await api('/retailer/claim', { method: 'POST', body: JSON.stringify({ gift_id: giftId }) });
-    flash('ok', `Claimed ${out.gift} · proof ${out.reference} (keep this). Sent for approval. New balance: ${nf(out.new_balance)}. See "My claims" for status.`);
+    $('mGift').textContent = out.gift;
+    $('mRef').textContent = out.reference;
+    $('mBal').textContent = `Sent to the manufacturer for approval. New balance: ${nf(out.new_balance)} points.`;
+    $('successModal').style.display = 'flex';
     loadShop();
   } catch (e) { flash('err', e.message); }
 }
+
+function copyRef(btn) {
+  const ref = $('mRef').textContent;
+  navigator.clipboard?.writeText(ref).then(
+    () => { const t = btn.textContent; btn.textContent = 'Copied ✓'; setTimeout(() => { btn.textContent = t; }, 1500); },
+    () => {});
+}
+function closeModal() { $('successModal').style.display = 'none'; }
 
 if (!token) gotoLogin(); else loadShop();
 </script>
