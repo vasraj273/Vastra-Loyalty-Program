@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>QR API — Codebase Map</title>
+<style>
+  body { font-family: 'Segoe UI', Arial, sans-serif; max-width: 960px; margin: 40px auto; padding: 0 32px 80px; color: #1a1a2e; line-height: 1.6; }
+  h1 { font-size: 28px; border-bottom: 3px solid #c8472b; padding-bottom: 8px; color: #22294f; }
+  h2 { font-size: 20px; color: #2b3468; border-bottom: 1px solid #ddd; padding-bottom: 4px; margin-top: 36px; }
+  h3 { font-size: 16px; color: #3e6b4f; margin-top: 24px; }
+  h4 { font-size: 14px; color: #c8472b; margin-bottom: 4px; }
+  code { font-family: 'Consolas', 'Courier New', monospace; background: #f0ede6; padding: 2px 6px; border-radius: 4px; font-size: 13px; color: #c8472b; }
+  pre { background: #f6f1e6; border: 1px solid #ddd2bb; border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-size: 13px; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 20px; font-size: 13px; }
+  th { background: #2b3468; color: #fff; padding: 7px 10px; text-align: left; }
+  td { padding: 6px 10px; border-bottom: 1px solid #eee; vertical-align: top; }
+  tr:nth-child(even) td { background: #fafaf6; }
+  .file-link { font-family: monospace; background: #e8f4ec; border: 1px solid #b2d8bc; border-radius: 4px; padding: 1px 6px; color: #2a5c3a; font-size: 13px; }
+  .section { background: #fbf8f1; border: 1px solid #ddd2bb; border-radius: 10px; padding: 18px 20px; margin: 20px 0; }
+  .flow-step { display: flex; gap: 12px; align-items: flex-start; margin: 8px 0; }
+  .step-num { background: #c8472b; color: #fff; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
+  .sub-label { font-size: 11px; color: #888; font-weight: 400; }
+  @media print {
+    body { margin: 20px; padding: 0 20px; }
+    h2 { page-break-before: auto; }
+    table { page-break-inside: avoid; }
+    .section { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<h1>QR API — Complete Codebase Map</h1>
+<p><strong>Project:</strong> Multi-tenant loyalty program backend for the VastraApp ecosystem.<br/>
+<strong>Vastra</strong> (manufacturer app) generates QR codes for product stickers.<br/>
+<strong>YourApp</strong> (retailer app) retailers scan codes to earn points and redeem gifts.<br/>
+One FastAPI backend serves both.</p>
+
+<hr/>
+
+<h2>Files and What They Do</h2>
+
+<h3>Backend Python Files <span class="sub-label">(app/)</span></h3>
+
+<div class="section">
+<h4>app/main.py</h4>
+<p>The entire API. Every button tap on the frontend calls a function here. Contains all route handlers, business logic, and data validation schemas.</p>
+</div>
+
+<div class="section">
+<h4>app/auth.py</h4>
+<p>Handles login, passwords, tokens. 7 functions:</p>
+<table>
+<tr><th>Function</th><th>What it does</th></tr>
+<tr><td><code>hash_password(password)</code></td><td>Encrypts a password before storing in DB</td></tr>
+<tr><td><code>verify_password(password, stored)</code></td><td>Checks a typed password against the stored hash</td></tr>
+<tr><td><code>issue_token(db, manufacturer_id)</code></td><td>Creates a session token for a manufacturer login</td></tr>
+<tr><td><code>issue_retailer_token(db, retailer_id)</code></td><td>Creates a session token for a retailer login</td></tr>
+<tr><td><code>current_user(request)</code></td><td>Checks "who is this manufacturer request from?" — used on every protected endpoint</td></tr>
+<tr><td><code>current_manufacturer(request)</code></td><td>Like current_user but rejects super admin</td></tr>
+<tr><td><code>current_admin(request)</code></td><td>Like current_user but rejects non-admins</td></tr>
+<tr><td><code>current_retailer(request)</code></td><td>Checks who a retailer request is from (different token table)</td></tr>
+</table>
+</div>
+
+<div class="section">
+<h4>app/database.py</h4>
+<p>Manages the database. Works with both SQLite (local/dev) and PostgreSQL (production). Key functions:</p>
+<table>
+<tr><th>Function</th><th>What it does</th></tr>
+<tr><td><code>init_db()</code></td><td>Creates all tables on first boot</td></tr>
+<tr><td><code>migrate()</code></td><td>Adds new columns when the app updates — never destroys data</td></tr>
+<tr><td><code>reset_db()</code></td><td><strong>DANGER: wipes everything.</strong> Only for local dev/seed script</td></tr>
+<tr><td><code>get_db()</code></td><td>Opens and closes a database connection for each request</td></tr>
+</table>
+</div>
+
+<div class="section">
+<h4>app/qr_service.py</h4>
+<p>QR code generation helpers:</p>
+<table>
+<tr><th>Function</th><th>What it does</th></tr>
+<tr><td><code>new_token()</code></td><td>Generates the long random token inside each QR (a UUID hex)</td></tr>
+<tr><td><code>new_manual_code()</code></td><td>Generates the 6-char typed fallback code (e.g. <code>ABC-XY2</code>)</td></tr>
+<tr><td><code>new_reference()</code></td><td>Generates a <code>RDM-XXXXXXX</code> claim proof code shown to retailer after claiming a gift</td></tr>
+<tr><td><code>payload_for(token)</code></td><td>Builds the full URL encoded in the QR image (e.g. <code>https://host/web/scan/TOKEN</code>)</td></tr>
+<tr><td><code>render_png(token)</code></td><td>Actually draws and returns the QR image as PNG bytes</td></tr>
+</table>
+</div>
+
+<div class="section">
+<h4>app/geo.py</h4>
+<p>City name → map coordinates lookup. Has ~100 Indian cities plus all states hardcoded.</p>
+<table>
+<tr><th>Function</th><th>What it does</th></tr>
+<tr><td><code>coords_for("jaipur")</code></td><td>Returns <code>(26.91, 75.78)</code> — used when adding a retailer to auto-place them on the map</td></tr>
+<tr><td><code>known_places()</code></td><td>Returns all supported city names — used for the "Add customer" city autocomplete dropdown in the panel</td></tr>
+</table>
+</div>
+
+<div class="section">
+<h4>app/pdf_service.py</h4>
+<p>Builds the printable PDF of QR stickers. Called by <code>print_batch()</code> in main.py when manufacturer clicks "Print stickers (PDF)".</p>
+</div>
+
+<hr/>
+
+<h2>Database Tables</h2>
+<p>All defined in <code>app/database.py</code> and created automatically on server startup.</p>
+<table>
+<tr><th>Table</th><th>What it stores</th></tr>
+<tr><td><code>manufacturers</code></td><td>Vastra accounts (surya, heritage, admin)</td></tr>
+<tr><td><code>auth_tokens</code></td><td>Manufacturer login sessions</td></tr>
+<tr><td><code>retailers</code></td><td>Shop owner records (each belongs to one manufacturer)</td></tr>
+<tr><td><code>retailer_tokens</code></td><td>Retailer login sessions</td></tr>
+<tr><td><code>products</code></td><td>Product catalog per manufacturer</td></tr>
+<tr><td><code>schemes</code></td><td>Bonus point campaigns (e.g. "Diwali Dhamaka")</td></tr>
+<tr><td><code>scheme_products</code></td><td>Which products a scheme applies to (empty = all products)</td></tr>
+<tr><td><code>qr_batches</code></td><td>One row per "generate QR" run — records quantity and frozen points_per_code</td></tr>
+<tr><td><code>qr_codes</code></td><td>Individual QR codes — each has a token + 6-char manual code + redeemed_at (null = not yet scanned)</td></tr>
+<tr><td><code>points_ledger</code></td><td>Every points transaction ever: scan earned, gift spent, refund, adjustment, transfer</td></tr>
+<tr><td><code>gifts</code></td><td>Reward items in the shop (e.g. "LED TV") — can be hidden/shown</td></tr>
+<tr><td><code>gift_claims</code></td><td>When a retailer claims a gift — has status: pending / approved / rejected</td></tr>
+</table>
+
+<hr/>
+
+<h2>API Endpoints (all in app/main.py)</h2>
+
+<h3>Authentication</h3>
+<table>
+<tr><th>Endpoint</th><th>Function name</th><th>What it does</th></tr>
+<tr><td><code>POST /auth/login</code></td><td><code>login</code></td><td>Manufacturer / admin login</td></tr>
+<tr><td><code>POST /auth/logout</code></td><td><code>logout</code></td><td>Kills manufacturer session</td></tr>
+<tr><td><code>POST /auth/retailer/login</code></td><td><code>retailer_login</code></td><td>Retailer login</td></tr>
+<tr><td><code>POST /auth/retailer/logout</code></td><td><code>retailer_logout</code></td><td>Kills retailer session</td></tr>
+<tr><td><code>GET /auth/me</code></td><td><code>me</code></td><td>Returns who is logged in (manufacturer)</td></tr>
+<tr><td><code>GET /retailer/me</code></td><td><code>retailer_me</code></td><td>Returns retailer profile + balance</td></tr>
+</table>
+
+<h3>Manufacturer: Products</h3>
+<table>
+<tr><th>Endpoint</th><th>Function</th><th>What</th></tr>
+<tr><td><code>POST /products</code></td><td><code>create_product</code></td><td>Add a product</td></tr>
+<tr><td><code>GET /products</code></td><td><code>list_products</code></td><td>List all products with scan counts</td></tr>
+<tr><td><code>PATCH /products/{id}</code></td><td><code>update_product</code></td><td>Edit name or points (affects future batches only)</td></tr>
+<tr><td><code>DELETE /products/{id}</code></td><td><code>delete_product</code></td><td>Delete (blocked if QR batches exist for this product)</td></tr>
+</table>
+
+<h3>Manufacturer: Retailers (called "Customers" in panel)</h3>
+<table>
+<tr><th>Endpoint</th><th>Function</th><th>What</th></tr>
+<tr><td><code>POST /retailers</code></td><td><code>create_retailer</code></td><td>Add a retailer — auto-looks up city coordinates for map</td></tr>
+<tr><td><code>GET /retailers</code></td><td><code>list_retailers</code></td><td>List all retailers with scan counts and points</td></tr>
+<tr><td><code>PATCH /retailers/{id}</code></td><td><code>update_retailer</code></td><td>Edit retailer info</td></tr>
+<tr><td><code>DELETE /retailers/{id}</code></td><td><code>delete_retailer</code></td><td>Delete (blocked if they have scan history)</td></tr>
+<tr><td><code>POST /retailers/{id}/adjust</code></td><td><code>adjust_points</code></td><td>Manually add/remove points with a reason note</td></tr>
+<tr><td><code>POST /retailers/transfer</code></td><td><code>transfer_points</code></td><td>Move points from one shop to another (e.g. to fix a wrong scan)</td></tr>
+</table>
+
+<h3>Manufacturer: QR Generation</h3>
+<table>
+<tr><th>Endpoint</th><th>Function</th><th>What</th></tr>
+<tr><td><code>POST /qr/generate</code></td><td><code>generate_qr_batch</code></td><td><strong>Main generation call</strong> — creates all tokens, manual codes, optionally box codes</td></tr>
+<tr><td><code>POST /qr/batches/{id}/save</code></td><td><code>save_batch</code></td><td>Mark batch as "saved" (vs pending)</td></tr>
+<tr><td><code>GET /qr/batches</code></td><td><code>list_batches</code></td><td>List all batches (can filter by status)</td></tr>
+<tr><td><code>GET /qr/batches/{id}</code></td><td><code>get_batch</code></td><td>Get batch details + all its codes</td></tr>
+<tr><td><code>GET /qr/batches/{id}/print</code></td><td><code>print_batch</code></td><td>Download printable PDF of stickers</td></tr>
+<tr><td><code>DELETE /qr/batches/{id}</code></td><td><code>discard_batch</code></td><td>Delete an unsaved batch</td></tr>
+</table>
+
+<h3>Retailer Side: Scan &amp; Wallet</h3>
+<table>
+<tr><th>Endpoint</th><th>Function</th><th>What</th></tr>
+<tr><td><code>POST /scan</code></td><td><code>scan</code></td><td><strong>THE scan call</strong> — validates code, checks not redeemed, credits points, writes ledger row</td></tr>
+<tr><td><code>GET /retailer/wallet</code></td><td><code>retailer_wallet</code></td><td>Returns balance + last 100 transactions</td></tr>
+<tr><td><code>POST /retailer/location</code></td><td><code>set_retailer_location</code></td><td>Pins GPS location — only runs on first scan, never changes after</td></tr>
+</table>
+
+<h3>Retailer Side: Gifts / Shop</h3>
+<table>
+<tr><th>Endpoint</th><th>Function</th><th>What</th></tr>
+<tr><td><code>GET /retailer/shop</code></td><td><code>retailer_shop</code></td><td>Returns gift list + which ones are affordable based on current balance</td></tr>
+<tr><td><code>POST /retailer/claim</code></td><td><code>claim_gift</code></td><td>Retailer claims a gift — deducts points immediately, creates a pending claim</td></tr>
+<tr><td><code>GET /retailer/claims</code></td><td><code>retailer_claims</code></td><td>Retailer's own claim history (like an order history page)</td></tr>
+</table>
+
+<h3>Manufacturer: Gifts &amp; Redemptions</h3>
+<table>
+<tr><th>Endpoint</th><th>Function</th><th>What</th></tr>
+<tr><td><code>POST /gifts</code></td><td><code>create_gift</code></td><td>Add a reward to the shop</td></tr>
+<tr><td><code>GET /gifts</code></td><td><code>list_gifts</code></td><td>List all rewards with claim counts</td></tr>
+<tr><td><code>PATCH /gifts/{id}</code></td><td><code>update_gift</code></td><td>Edit gift details or hide/show it</td></tr>
+<tr><td><code>DELETE /gifts/{id}</code></td><td><code>delete_gift</code></td><td>Delete (blocked if anyone has claimed it)</td></tr>
+<tr><td><code>GET /gift-claims</code></td><td><code>list_gift_claims</code></td><td>See all retailer claims (filterable by pending/approved/rejected)</td></tr>
+<tr><td><code>POST /gift-claims/{id}/approve</code></td><td><code>approve_claim</code></td><td>Approve a claim — just marks it done, no points change</td></tr>
+<tr><td><code>POST /gift-claims/{id}/reject</code></td><td><code>reject_claim</code></td><td>Reject a claim — automatically refunds points to retailer</td></tr>
+</table>
+
+<h3>Manufacturer: Analytics &amp; Schemes</h3>
+<table>
+<tr><th>Endpoint</th><th>Function</th><th>What</th></tr>
+<tr><td><code>GET /analytics/dashboard</code></td><td><code>dashboard</code></td><td>Returns all stats: total scans, by region, by product, top retailers, map dots</td></tr>
+<tr><td><code>POST /schemes</code></td><td><code>create_scheme</code></td><td>Create a bonus point campaign</td></tr>
+<tr><td><code>GET /schemes</code></td><td><code>list_schemes</code></td><td>List all schemes grouped as active/upcoming/previous</td></tr>
+<tr><td><code>DELETE /schemes/{id}</code></td><td><code>delete_scheme</code></td><td>Delete (blocked if any scans used it)</td></tr>
+</table>
+
+<h3>Internal Helper Functions (app/main.py)</h3>
+<table>
+<tr><th>Function</th><th>What it does</th></tr>
+<tr><td><code>_balance(db, retailer_id)</code></td><td>Sums points_ledger to get a retailer's current balance</td></tr>
+<tr><td><code>_scheme_out(db, row)</code></td><td>Formats a scheme row for the API response (adds product list)</td></tr>
+<tr><td><code>_scheme_status(start, end)</code></td><td>Returns "active", "upcoming", or "previous" based on today's date</td></tr>
+<tr><td><code>_get_batch(db, batch_id, manufacturer_id)</code></td><td>Fetches a batch and raises 404 if not found or wrong owner</td></tr>
+<tr><td><code>_clean_retailer(row)</code></td><td>Strips the password hash before returning retailer data to the panel</td></tr>
+<tr><td><code>_decide_claim(db, claim_id, manufacturer_id)</code></td><td>Validates a claim before approve/reject (checks ownership and pending status)</td></tr>
+</table>
+
+<hr/>
+
+<h2>Webview Pages (Mobile HTML, app/web/)</h2>
+<p>Simple HTML files served at <code>/web/*</code>. No build step — JavaScript runs inline in the page. All use <code>localStorage</code> key <code>vl_rtoken</code> for the retailer token.</p>
+
+<h3>app/web/home.html — Retailer Home / Login at <code>/web</code></h3>
+<table>
+<tr><th>Button / Element</th><th>What it does</th></tr>
+<tr><td>Login form → <code>login()</code> function</td><td>Calls <code>POST /auth/retailer/login</code>, saves token to localStorage as <code>vl_rtoken</code></td></tr>
+<tr><td>"Scan QR code" button</td><td>Navigates to <code>/web/scan</code></td></tr>
+<tr><td>"Rewards shop" button</td><td>Navigates to <code>/web/shop</code></td></tr>
+<tr><td>"My claims" button</td><td>Navigates to <code>/web/claims</code></td></tr>
+<tr><td>"Log out" button → <code>logout()</code></td><td>Calls <code>POST /auth/retailer/logout</code>, clears <code>vl_rtoken</code></td></tr>
+<tr><td><code>render()</code> function (on page load)</td><td>If token exists: calls <code>GET /retailer/me</code> to show balance and shop name</td></tr>
+</table>
+
+<h3>app/web/scan.html — QR Scanner at <code>/web/scan</code></h3>
+<table>
+<tr><th>Button / Element</th><th>What it does</th></tr>
+<tr><td>"Start camera" button → <code>toggleCamera()</code></td><td>Opens phone camera using the html5-qrcode library</td></tr>
+<tr><td>Camera scan detection</td><td>When QR detected, extracts token from URL, calls <code>redeem(token)</code></td></tr>
+<tr><td>Manual code input + "Redeem code" button → <code>redeemManual()</code></td><td>Takes the 6-char typed code, calls <code>redeem(code)</code></td></tr>
+<tr><td><code>redeem(code)</code></td><td>THE scan function — posts to <code>POST /scan</code>, shows points card on success</td></tr>
+<tr><td><code>captureLocationOnce()</code></td><td>After first successful scan, calls <code>POST /retailer/location</code> with GPS coords</td></tr>
+<tr><td>Result card</td><td>Shows points_awarded, product name, scheme bonus breakdown, new balance</td></tr>
+<tr><td>"Scan another" button → <code>again()</code></td><td>Hides result card, shows scanner again</td></tr>
+<tr><td>"Open rewards shop" link</td><td>Goes to <code>/web/shop</code></td></tr>
+<tr><td>"My claims" link</td><td>Goes to <code>/web/claims</code></td></tr>
+<tr><td>Page load with deep link</td><td>If opened from a printed QR (has token in URL path), immediately calls <code>redeem(pathToken)</code></td></tr>
+</table>
+
+<h3>app/web/shop.html — Rewards Shop at <code>/web/shop</code></h3>
+<table>
+<tr><th>Button / Element</th><th>What it does</th></tr>
+<tr><td><code>loadShop()</code> on page load</td><td>Calls <code>GET /retailer/shop</code> — gets balance + full gift list</td></tr>
+<tr><td>Balance display (top bar)</td><td>Shows <code>shop.balance</code></td></tr>
+<tr><td>Gift cards</td><td>Each shows points cost, image, name, description</td></tr>
+<tr><td>"Claim reward" button → <code>claim(giftId, name, cost)</code></td><td>Asks for confirmation, then calls <code>POST /retailer/claim</code>, shows success popup</td></tr>
+<tr><td>"Need X more" (disabled button)</td><td>Shown when retailer cannot afford the gift (<code>affordable: false</code>)</td></tr>
+<tr><td>Success popup / modal</td><td>Shows "Claim Successful!" with the reference code (e.g. <code>RDM-7K2QABC</code>)</td></tr>
+<tr><td>"Copy Claim ID" button → <code>copyRef()</code></td><td>Copies the reference code to clipboard</td></tr>
+<tr><td>"View my claims" button</td><td>Goes to <code>/web/claims</code></td></tr>
+<tr><td>"Done" button → <code>closeModal()</code></td><td>Closes the popup</td></tr>
+</table>
+
+<h3>app/web/claims.html — Retailer Order History at <code>/web/claims</code></h3>
+<table>
+<tr><th>Element</th><th>What it does</th></tr>
+<tr><td><code>load()</code> on page load</td><td>Calls <code>GET /retailer/claims</code></td></tr>
+<tr><td>Claim cards</td><td>Shows gift name, reference code (<code>RDM-...</code>), date, points spent, status badge</td></tr>
+<tr><td>Status badge colours</td><td>Pending (gold), Approved (green), Rejected (red)</td></tr>
+</table>
+
+<h3>app/web/generate.html — QR Generation for Manufacturers at <code>/web/generate</code></h3>
+<table>
+<tr><th>Button / Element</th><th>What it does</th></tr>
+<tr><td>Login form → <code>login()</code></td><td>Calls <code>POST /auth/login</code> with manufacturer credentials, saves as <code>vl_web_token</code></td></tr>
+<tr><td>Product dropdown</td><td>Populated by <code>loadProducts()</code> → <code>GET /products</code></td></tr>
+<tr><td>Quantity input</td><td>How many QR codes to generate</td></tr>
+<tr><td>"Items per box" input</td><td>Optional — when filled, creates box/parent QR codes that scan all children at once</td></tr>
+<tr><td>"Generate QR codes" button → <code>generate()</code></td><td>Calls <code>POST /qr/generate</code>, shows batch result card</td></tr>
+<tr><td>"Print stickers (PDF)" button → <code>printPdf()</code></td><td>Opens <code>/qr/batches/{id}/print?token=...</code> in new tab</td></tr>
+<tr><td>"Save for later" button → <code>saveBatch()</code></td><td>Calls <code>POST /qr/batches/{id}/save</code></td></tr>
+<tr><td>"New batch" button → <code>reset()</code></td><td>Hides result, shows generate form again</td></tr>
+<tr><td>"Saved batches" toggle → <code>toggleSaved()</code></td><td>Calls <code>GET /qr/batches?status=saved</code>, shows list with Print buttons</td></tr>
+</table>
+
+<hr/>
+
+<h2>React Admin Panel (panel/src/)</h2>
+<p>Token stored in localStorage as <code>vl_token</code>. All API calls go through <code>panel/src/api.js</code>.</p>
+
+<h3>panel/src/api.js — Single Fetch Layer</h3>
+<table>
+<tr><th>Export</th><th>What it does</th></tr>
+<tr><td><code>get(path)</code> / <code>post(path, body)</code> / <code>patch(path, body)</code> / <code>del(path)</code></td><td>All HTTP requests, adds auth token automatically</td></tr>
+<tr><td><code>setSession(token, user)</code></td><td>Saves token + user info to localStorage after login</td></tr>
+<tr><td><code>clearSession()</code></td><td>Clears token + user on logout or 401</td></tr>
+<tr><td><code>getToken()</code> / <code>getUser()</code></td><td>Reads current session from localStorage</td></tr>
+<tr><td><code>printUrl(batchId)</code></td><td>Builds PDF download URL with auth token embedded</td></tr>
+</table>
+
+<h3>panel/src/App.jsx — Shell</h3>
+<p>Renders the tab bar and handles logout. Super admin sees only the "Manufacturers" tab. Regular manufacturer sees 7 tabs: Dashboard, Customers, Products, Schemes, Gifts, Claims, Redemptions.</p>
+
+<h3>panel/src/Login.jsx — Login Screen</h3>
+<p>"Log in" button → <code>POST /auth/login</code> → saves session → switches to main panel.</p>
+
+<h3>Panel Tabs</h3>
+
+<h4>Dashboard.jsx</h4>
+<p>Calls <code>GET /analytics/dashboard</code> on load. Shows: Retailers count, Products count, Scans count, Points awarded, Codes issued, India map (one dot per scanning retailer), Region-wise table, Products table, Top 10 retailers table.</p>
+
+<h4>Products.jsx</h4>
+<table>
+<tr><th>Button</th><th>API call</th></tr>
+<tr><td>"+ Add product" → form submit</td><td><code>POST /products</code></td></tr>
+<tr><td>"Edit" per row → Save</td><td><code>PATCH /products/{id}</code></td></tr>
+<tr><td>"Delete" per row</td><td><code>DELETE /products/{id}</code></td></tr>
+<tr><td>"Generate QR ↗" link</td><td>Opens <code>/web/generate</code> in new tab</td></tr>
+</table>
+
+<h4>Customers.jsx (Retailers)</h4>
+<table>
+<tr><th>Button</th><th>API call</th></tr>
+<tr><td>"+ Add customer" → form submit</td><td><code>POST /retailers</code></td></tr>
+<tr><td>Search box</td><td>Filters table client-side (no API call)</td></tr>
+<tr><td>"Edit" per row → Save</td><td><code>PATCH /retailers/{id}</code></td></tr>
+<tr><td>"Points" per row → Apply</td><td><code>POST /retailers/{id}/adjust</code></td></tr>
+<tr><td>"Remove" per row</td><td><code>DELETE /retailers/{id}</code></td></tr>
+<tr><td>"Transfer points" button → Transfer</td><td><code>POST /retailers/transfer</code></td></tr>
+</table>
+
+<h4>Schemes.jsx</h4>
+<table>
+<tr><th>Button</th><th>API call</th></tr>
+<tr><td>"+ New scheme" → form submit</td><td><code>POST /schemes</code></td></tr>
+<tr><td>"Delete" on upcoming schemes only</td><td><code>DELETE /schemes/{id}</code></td></tr>
+</table>
+<p>Schemes are shown in three sections: Active now / Upcoming / Previous. Active and past schemes cannot be deleted.</p>
+
+<h4>Gifts.jsx</h4>
+<table>
+<tr><th>Button</th><th>API call</th></tr>
+<tr><td>"+ Add reward" → form submit</td><td><code>POST /gifts</code></td></tr>
+<tr><td>"Edit" per card → Save changes</td><td><code>PATCH /gifts/{id}</code></td></tr>
+<tr><td>"Hide" / "Show" per card</td><td><code>PATCH /gifts/{id}</code> with <code>{active: false/true}</code></td></tr>
+<tr><td>"Delete" per card</td><td><code>DELETE /gifts/{id}</code></td></tr>
+<tr><td>Image upload from device</td><td>Resizes to max 600px, stores as base64 data URI in image_url field</td></tr>
+</table>
+
+<h4>Redemptions.jsx (Gift Claims Management)</h4>
+<table>
+<tr><th>Button</th><th>API call</th></tr>
+<tr><td>Pending / Approved / Rejected filter buttons</td><td><code>GET /gift-claims?status=...</code></td></tr>
+<tr><td>"Approve" per row</td><td><code>POST /gift-claims/{id}/approve</code></td></tr>
+<tr><td>"Reject" per row</td><td><code>POST /gift-claims/{id}/reject</code> — automatically refunds retailer's points</td></tr>
+</table>
+
+<h4>Claims.jsx (Scan History — NOT gift claims)</h4>
+<p>Calls <code>GET /claims</code> with filter params on load. Shows every QR scan ever recorded (20 per page) with filters for product, retailer, region, and date range.</p>
+
+<hr/>
+
+<h2>Key Flow: What Happens When a Retailer Scans a QR</h2>
+
+<div class="section">
+<div class="flow-step"><span class="step-num">1</span><div>Retailer opens the printed QR with their phone → URL = <code>https://yourhost.com/web/scan/TOKEN</code></div></div>
+<div class="flow-step"><span class="step-num">2</span><div><code>app/web/scan.html</code> loads → detects <code>pathToken</code> in URL → immediately calls <code>redeem(TOKEN)</code></div></div>
+<div class="flow-step"><span class="step-num">3</span><div><code>redeem()</code> → <code>POST /scan</code> with <code>{ code: TOKEN }</code> and the retailer's auth token in the header</div></div>
+<div class="flow-step"><span class="step-num">4</span><div><strong>In <code>app/main.py</code>, <code>scan()</code> function runs:</strong>
+  <ul>
+    <li>Looks up token in <code>qr_codes</code> table (joined with batch + product)</li>
+    <li>Checks <code>redeemed_at IS NULL</code> — if not null → <strong>"Code already redeemed"</strong> error</li>
+    <li>Checks retailer's <code>manufacturer_id</code> matches the code's manufacturer (cross-manufacturer scan rejected)</li>
+    <li>Finds the best active scheme for this product (highest <code>bonus_points</code>)</li>
+    <li>Calculates total = <code>base_points + bonus_points</code></li>
+    <li>Sets <code>redeemed_at = NOW</code> on the <code>qr_codes</code> row</li>
+    <li>Writes a row to <code>points_ledger</code> with <code>entry_type = 'scan'</code></li>
+  </ul>
+</div></div>
+<div class="flow-step"><span class="step-num">5</span><div>Response sent back to <code>scan.html</code> → shows points earned card with product name, scheme bonus, new balance</div></div>
+<div class="flow-step"><span class="step-num">6</span><div>If this is the retailer's first scan with location permission, <code>captureLocationOnce()</code> sends GPS coords to <code>POST /retailer/location</code> — pins the shop on the map forever</div></div>
+</div>
+
+<hr/>
+
+<h2>Where Session Tokens Are Stored</h2>
+<table>
+<tr><th>Who</th><th>localStorage key</th><th>Set by</th></tr>
+<tr><td>Manufacturer (panel)</td><td><code>vl_token</code></td><td>panel/src/Login.jsx</td></tr>
+<tr><td>Manufacturer (webview generate page)</td><td><code>vl_web_token</code></td><td>app/web/generate.html → <code>login()</code></td></tr>
+<tr><td>Retailer</td><td><code>vl_rtoken</code></td><td>app/web/home.html → <code>login()</code></td></tr>
+</table>
+<p>Tokens are opaque random strings stored in the database. Every protected API call reads the <code>Authorization: Bearer TOKEN</code> header and looks up the token in the DB to know who is making the request.</p>
+
+<hr/>
+
+<p style="color:#888;font-size:12px;margin-top:40px">Generated from qr_api codebase — June 2026</p>
+</body>
+</html>
