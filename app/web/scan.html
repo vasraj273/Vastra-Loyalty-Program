@@ -258,7 +258,13 @@ if (!token) {
   api('/retailer/me').then((m) => {
     me = m;
     $('whoShop').textContent = m.shop_name;
-    if (pathToken) redeem(pathToken);  // opened from a printed QR deep link
+    if (pathToken) {
+      // Cosmetic: drop the long code from the address bar once we've captured
+      // it, so the retailer sees a clean /web/scan URL. The token is already
+      // held in pathToken; this changes only what's displayed, not the scan.
+      history.replaceState({}, '', '/web/scan');
+      redeem(pathToken);  // opened from a printed QR deep link
+    }
   }).catch(() => {});
 }
 </script>
