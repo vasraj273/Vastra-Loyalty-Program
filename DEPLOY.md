@@ -55,6 +55,13 @@ $env:DATABASE_URL = '<neon pooled connection string>'
 Re-running `seed.py` wipes and refills — don't run it against a database
 holding real data.
 
+> **Note:** `seed.py` rebuilds tables from `SCHEMA` only; it does **not** run
+> the column migrations in `_MIGRATIONS`. The app applies them automatically on
+> the next startup (`migrate()`), so a normal deploy self-heals. But if you seed
+> and then query the database directly without restarting the app, newer columns
+> (e.g. `points_ledger.lat/lng`) will be missing — run `migrate()` (or just start
+> the app) after seeding.
+
 ## Retailer logins (YourApp side)
 
 Retailers log in at `/web` (the retailer home), then Scan or Rewards Shop.
