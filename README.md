@@ -6,7 +6,7 @@ Multi-tenant backend for a manufacturer→retailer loyalty program in the Vastra
 - **React admin panel** (`panel/`, built to `panel/dist`, served at `/panel`) — manufacturer + super-admin UI.
 - **Plain-HTML webview pages** (`app/web/`, served at `/web/*`) — the mobile UI loaded inside the Vastra/YourApp webviews.
 
-> For contributor/architecture detail (dual DB backend, SQL conventions, multi-tenancy rules), see **CLAUDE.md**. For deployment, see **DEPLOY.md**. Recent changes are in **CHANGELOG.md**.
+> **Docs:** product spec in [docs/PRD.md](docs/PRD.md), technical design in [docs/TRD.md](docs/TRD.md). Contributor/architecture conventions (dual DB backend, SQL style, multi-tenancy) in **CLAUDE.md**. Deployment in **DEPLOY.md**. Recent changes in **CHANGELOG.md**.
 
 ## What it does
 
