@@ -69,6 +69,8 @@
     <p class="breakdown" id="resSplit"></p>
     <div id="resScheme"></div>
     <p class="balance">New balance: <strong id="resBalance"></strong> points</p>
+    <p class="breakdown" id="resLoc"></p>
+    <button class="ghost" id="resLocBtn" style="display:none" onclick="shareLocationNow(this)">📍 Share shop location</button>
     <button class="ghost" onclick="again()">Scan another</button>
     <button class="ghost" onclick="go('/web/shop')">Open rewards shop →</button>
     <button class="ghost" onclick="go('/web/claims')">My claims →</button>
@@ -116,22 +118,86 @@ function extractToken(text) {
 // isn't re-prompted for each box. A denied/unavailable fix is remembered too,
 // so we don't nag for the rest of the session. The first real fix also pins
 // the shop and backfills the city if none was set at registration.
+let lastLocNote = '';
+
 function ensureSessionLoc() {
   return new Promise((resolve) => {
     let cached = null;
     try { cached = JSON.parse(sessionStorage.getItem('vl_scan_loc') || 'null'); } catch {}
-    if (cached) { resolve(cached.lat == null ? null : cached); return; }
-    if (!navigator.geolocation) { resolve(null); return; }
+    if (cached) {
+      lastLocNote = cached.lat == null ? (cached.note || 'Location not shared this session.') : '';
+      resolve(cached.lat == null ? null : cached);
+      return;
+    }
+    // Geolocation only works in a secure context (HTTPS or localhost). On an
+    // insecure origin (e.g. a phone hitting http://<lan-ip>:8000) the browser
+    // blocks it silently, so report that instead of failing quietly.
+    if (!window.isSecureContext) {
+      lastLocNote = 'Location needs HTTPS (or localhost) — this address is not secure, so the shop can\'t be mapped here.';
+      resolve(null); return;
+    }
+    if (!navigator.geolocation) { lastLocNote = 'This browser has no location support.'; resolve(null); return; }
     navigator.geolocation.getCurrentPosition((pos) => {
       const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       sessionStorage.setItem('vl_scan_loc', JSON.stringify(loc));
+      lastLocNote = '';
       pinShopOnce(loc);
       resolve(loc);
-    }, () => {
-      sessionStorage.setItem('vl_scan_loc', JSON.stringify({ lat: null, lng: null }));
+    }, (e) => {
+      const reason = (e && e.code === 1)
+        ? 'Location permission is blocked — allow it in the browser\'s site settings to map this shop.'
+        : (e && e.code === 3) ? 'Location timed out — try scanning again.'
+        : 'Location unavailable on this device.';
+      // Remember only a hard denial for the session; transient failures
+      // (timeout/unavailable) are retried on the next scan.
+      if (e && e.code === 1) {
+        sessionStorage.setItem('vl_scan_loc', JSON.stringify({ lat: null, lng: null, note: reason }));
+      }
+      lastLocNote = reason;
       resolve(null);
-    }, { enableHighAccuracy: true, timeout: 8000 });
+    }, GEO_OPTS);
   });
+}
+
+// City-level precision is all the map needs (coords are reverse-geocoded to the
+// nearest city and bucketed to ~110m), so skip high-accuracy GPS: it's far
+// slower to fix on a phone and frequently times out. A generous timeout and a
+// cached fix make the prompt actually succeed.
+const GEO_OPTS = { enableHighAccuracy: false, timeout: 20000, maximumAge: 60000 };
+
+// Triggered by a tap on the result card. A user gesture is the most reliable
+// way to surface the location prompt on mobile browsers, and it retries even
+// after an earlier timeout. Clears any cached "no" first.
+function shareLocationNow(btn) {
+  if (!navigator.geolocation) { lastLocNote = 'This browser has no location support.'; renderLoc(null); return; }
+  sessionStorage.removeItem('vl_scan_loc');
+  if (btn) { btn.disabled = true; btn.textContent = 'Getting location…'; }
+  navigator.geolocation.getCurrentPosition((pos) => {
+    const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+    sessionStorage.setItem('vl_scan_loc', JSON.stringify(loc));
+    lastLocNote = '';
+    pinShopOnce(loc);
+    renderLoc(loc);
+  }, (e) => {
+    lastLocNote = (e && e.code === 1)
+      ? 'Permission denied. Enable Location for this site in your browser settings, then tap again.'
+      : (e && e.code === 3) ? 'Still timing out — make sure phone Location/GPS is on, then tap again.'
+      : 'Location unavailable on this device.';
+    if (btn) { btn.disabled = false; btn.textContent = '📍 Share shop location'; }
+    renderLoc(null);
+  }, GEO_OPTS);
+}
+
+// Paint the location status + the manual "share" button on the result card.
+function renderLoc(loc) {
+  const el = $('resLoc'); const btn = $('resLocBtn');
+  if (loc) {
+    el.textContent = '📍 Scan location captured.'; el.style.color = '';
+    if (btn) btn.style.display = 'none';
+  } else {
+    el.textContent = '⚠️ ' + (lastLocNote || 'Location not captured.'); el.style.color = '#b4541f';
+    if (btn) { btn.style.display = 'inline-block'; btn.disabled = false; btn.textContent = '📍 Share shop location'; }
+  }
 }
 
 function pinShopOnce(loc) {
@@ -162,6 +228,7 @@ async function redeem(code) {
       : `${out.base_points} base points`;
     $('resScheme').innerHTML = out.scheme ? `<span class="scheme-tag">${out.scheme.name}</span>` : '';
     $('resBalance').textContent = out.new_balance;
+    renderLoc(loc);
     $('scanCard').classList.add('hidden');
     $('resultCard').classList.remove('hidden');
   } catch (e) { err(e.message); } finally { busy = false; }
