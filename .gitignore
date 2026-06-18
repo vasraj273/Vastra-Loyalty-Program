@@ -15,3 +15,4 @@ qr_api.db
 .claude-flow/
 .swarm/
 ruvector.db
+.claude/settings.local.json
