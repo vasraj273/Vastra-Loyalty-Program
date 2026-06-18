@@ -141,3 +141,25 @@ def known_places() -> list[str]:
 
 def coords_for(region: str) -> tuple[float, float] | None:
     return CITY_COORDS.get(region.strip().lower())
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    from math import radians, sin, cos, asin, sqrt
+    dlat = radians(lat2 - lat1)
+    dlng = radians(lng2 - lng1)
+    a = (sin(dlat / 2) ** 2
+         + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2)
+    return 2 * 6371.0 * asin(sqrt(a))
+
+
+def nearest_city(lat: float, lng: float) -> str | None:
+    """Reverse-geocode coordinates to the closest known place (offline,
+    city-level precision). Used to infer a retailer's region from where they
+    first scan when no city was entered at registration. Returned in Title
+    Case to match how manufacturers type city names."""
+    best, best_d = None, None
+    for name, (clat, clng) in CITY_COORDS.items():
+        d = _haversine_km(lat, lng, clat, clng)
+        if best_d is None or d < best_d:
+            best, best_d = name, d
+    return best.title() if best else None

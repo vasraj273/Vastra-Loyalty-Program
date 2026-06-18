@@ -282,6 +282,10 @@ _MIGRATIONS = [
     ("retailers", "username", "TEXT"),
     ("retailers", "password_hash", "TEXT"),
     ("gift_claims", "reference", "TEXT"),
+    # Per-scan capture location (where the QR was actually scanned), distinct
+    # from the retailer's pinned shop coords. Null when location was denied.
+    ("points_ledger", "lat", "REAL"),
+    ("points_ledger", "lng", "REAL"),
 ]
 
 

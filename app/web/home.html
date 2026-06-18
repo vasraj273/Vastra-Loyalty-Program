@@ -107,7 +107,7 @@ async function login() {
 
 async function logout() {
   try { await api('/auth/retailer/logout', { method: 'POST' }); } catch {}
-  token = ''; localStorage.removeItem('vl_rtoken'); render();
+  token = ''; localStorage.removeItem('vl_rtoken'); sessionStorage.removeItem('vl_scan_loc'); render();
 }
 
 function go(path) { window.location.href = path; }

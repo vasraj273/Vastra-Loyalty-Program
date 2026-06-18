@@ -43,8 +43,11 @@ export default function Customers() {
       setNotice(
         out.lat != null
           ? `${out.shop_name} added — placed on the map at ${out.region}.`
-          : `${out.shop_name} added. City "${out.region}" not in the map ` +
-            'lookup; the shop will be pinned by GPS on its first scan.',
+          : !out.region
+            ? `${out.shop_name} added. No city set — it'll be detected ` +
+              'automatically from the first scan location.'
+            : `${out.shop_name} added. City "${out.region}" not in the map ` +
+              'lookup; the shop will be pinned by GPS on its first scan.',
       )
       setForm(EMPTY)
       setShowForm(false)
@@ -186,13 +189,12 @@ export default function Customers() {
               />
             </label>
             <label>
-              City
+              City <span className="hint">(optional — auto-detected on first scan)</span>
               <input
-                required
                 list="city-options"
                 value={form.region}
                 onChange={(e) => setForm({ ...form, region: e.target.value })}
-                placeholder="Jaipur"
+                placeholder="Leave blank to detect from first scan"
               />
               <datalist id="city-options">
                 {cities.map((c) => (
@@ -309,7 +311,7 @@ export default function Customers() {
                 <tr key={r.id}>
                   <td>{r.shop_name}</td>
                   <td>{r.name}</td>
-                  <td>{r.region}</td>
+                  <td>{r.region || <span style={{ color: 'var(--ink-soft)' }}>Pending first scan</span>}</td>
                   <td className="mono">{r.phone ?? '—'}</td>
                   <td>
                     {r.location_source === 'gps' ? (

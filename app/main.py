@@ -26,7 +26,7 @@ from .auth import (current_admin, current_manufacturer, current_retailer,
                    current_user, hash_password, issue_retailer_token,
                    issue_token, verify_password)
 from .database import get_db, init_db, migrate
-from .geo import coords_for, known_places
+from .geo import coords_for, known_places, nearest_city
 from .pdf_service import build_pdf
 from .qr_service import (new_manual_code, new_reference, new_token,
                          payload_for, render_png)
@@ -93,7 +93,9 @@ class ProductIn(BaseModel):
 class RetailerIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     shop_name: str = Field(min_length=1, max_length=200)
-    region: str = Field(min_length=1, max_length=100)
+    # Optional: when left blank, the city is inferred from the retailer's
+    # first scan location (reverse-geocoded to the nearest known city).
+    region: str = Field(default="", max_length=100)
     phone: str | None = Field(default=None, max_length=20)
     # Manual override; when omitted, resolved from region city name
     lat: float | None = Field(default=None, ge=-90, le=90)
@@ -131,6 +133,10 @@ class ScanIn(BaseModel):
         min_length=1, max_length=64,
         description="QR token or 6-char manual code (dashes/spaces ok)",
     )
+    # Where this scan happened. Captured once per webview session on the
+    # client and sent with every scan; null when location was denied.
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lng: float | None = Field(default=None, ge=-180, le=180)
 
 
 class GiftClaimIn(BaseModel):
@@ -378,10 +384,11 @@ def delete_product(product_id: int,
 
 @app.post("/retailers", status_code=201)
 def create_retailer(body: RetailerIn, user: dict = Depends(current_manufacturer)):
+    region = (body.region or "").strip()
     lat, lng = body.lat, body.lng
     source = "gps" if (lat is not None and lng is not None) else None
-    if lat is None or lng is None:
-        coords = coords_for(body.region)
+    if (lat is None or lng is None) and region:
+        coords = coords_for(region)
         if coords:
             lat, lng = coords
             source = "city"
@@ -391,7 +398,7 @@ def create_retailer(body: RetailerIn, user: dict = Depends(current_manufacturer)
                (manufacturer_id, name, shop_name, region, phone, lat, lng,
                 location_source)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user["id"], body.name, body.shop_name, body.region, body.phone,
+            (user["id"], body.name, body.shop_name, region, body.phone,
              lat, lng, source),
         )
         row = db.execute(
@@ -608,17 +615,29 @@ class LocationIn(BaseModel):
 def set_retailer_location(body: LocationIn,
                           retailer: dict = Depends(current_retailer)):
     """First scan with location permission pins the shop exactly. Once a GPS
-    location is locked it never changes (and the app never asks again)."""
+    location is locked it never changes (and the app never asks again). If the
+    retailer was registered without a city, the region is inferred here from
+    the first scan location (nearest known city)."""
     rid = retailer["id"]
     with get_db() as db:
         if retailer["location_source"] == "gps":
             return {"updated": False, "reason": "GPS location already locked"}
-        db.execute(
-            """UPDATE retailers SET lat = ?, lng = ?, location_source = 'gps'
-               WHERE id = ?""",
-            (body.lat, body.lng, rid),
-        )
-    return {"updated": True}
+        region = (retailer["region"] or "").strip()
+        backfilled = None
+        if not region:
+            backfilled = nearest_city(body.lat, body.lng)
+            db.execute(
+                """UPDATE retailers SET lat = ?, lng = ?,
+                       location_source = 'gps', region = ? WHERE id = ?""",
+                (body.lat, body.lng, backfilled or "", rid),
+            )
+        else:
+            db.execute(
+                """UPDATE retailers SET lat = ?, lng = ?,
+                       location_source = 'gps' WHERE id = ?""",
+                (body.lat, body.lng, rid),
+            )
+    return {"updated": True, "region": backfilled}
 
 
 # ---------- QR generation (manufacturer-scoped) ----------
@@ -891,11 +910,12 @@ def scan(body: ScanIn, retailer: dict = Depends(current_retailer)):
             db.execute(
                 """INSERT INTO points_ledger
                    (manufacturer_id, retailer_id, token, product_id, points,
-                    base_points, bonus_points, scheme_id, region)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    base_points, bonus_points, scheme_id, region, lat, lng)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (row["manufacturer_id"], rid, t,
                  row["product_id"], per, base, bonus,
-                 scheme["id"] if scheme else None, retailer["region"]),
+                 scheme["id"] if scheme else None, retailer["region"],
+                 body.lat, body.lng),
             )
         if row["is_parent"]:
             db.execute(
@@ -1131,16 +1151,37 @@ def dashboard(user: dict = Depends(current_manufacturer)):
                GROUP BY r.id ORDER BY points DESC LIMIT 10""",
             (mid,),
         ).fetchall()
-        map_points = db.execute(
-            """SELECT r.id, r.name, r.shop_name, r.region, r.lat, r.lng,
-                      COUNT(*) AS scans, SUM(l.points) AS points,
-                      MAX(l.scanned_at) AS last_scan
+        # One dot per place a retailer actually scanned: use the per-scan GPS
+        # captured at scan time, falling back to the retailer's pinned shop
+        # coords for scans recorded without a location. Bucketed in Python by
+        # ~110m (3 decimals) so repeated scans at one spot collapse to a single
+        # weighted dot (and to keep the SQL backend-portable).
+        scan_rows = db.execute(
+            """SELECT r.id, r.name, r.shop_name, r.region,
+                      COALESCE(l.lat, r.lat) AS lat,
+                      COALESCE(l.lng, r.lng) AS lng,
+                      l.points AS points, l.scanned_at AS scanned_at
                FROM points_ledger l JOIN retailers r ON r.id = l.retailer_id
                WHERE l.manufacturer_id = ? AND l.entry_type = 'scan'
-                 AND r.lat IS NOT NULL AND r.lng IS NOT NULL
-               GROUP BY r.id""",
+                 AND COALESCE(l.lat, r.lat) IS NOT NULL
+                 AND COALESCE(l.lng, r.lng) IS NOT NULL""",
             (mid,),
         ).fetchall()
+    buckets: dict[tuple, dict] = {}
+    for s in scan_rows:
+        lat, lng = round(s["lat"], 3), round(s["lng"], 3)
+        key = (s["id"], lat, lng)
+        b = buckets.get(key)
+        if b is None:
+            b = {"id": s["id"], "name": s["name"], "shop_name": s["shop_name"],
+                 "region": s["region"], "lat": lat, "lng": lng,
+                 "scans": 0, "points": 0, "last_scan": s["scanned_at"]}
+            buckets[key] = b
+        b["scans"] += 1
+        b["points"] += s["points"] or 0
+        if s["scanned_at"] and s["scanned_at"] > (b["last_scan"] or ""):
+            b["last_scan"] = s["scanned_at"]
+    map_points = list(buckets.values())
     return {
         "totals": dict(totals),
         "by_region": [dict(r) for r in by_region],
