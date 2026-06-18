@@ -40,15 +40,16 @@ export default function Customers() {
         ...form,
         phone: form.phone || null,
       })
-      setNotice(
+      const place =
         out.lat != null
-          ? `${out.shop_name} added — placed on the map at ${out.region}.`
+          ? `Placed on the map at ${out.region}.`
           : !out.region
-            ? `${out.shop_name} added. No city set — it'll be detected ` +
-              'automatically from the first scan location.'
-            : `${out.shop_name} added. City "${out.region}" not in the map ` +
-              'lookup; the shop will be pinned by GPS on its first scan.',
-      )
+            ? "No city set — it'll be detected from the first scan location."
+            : `City "${out.region}" not in the map lookup; pinned by GPS on first scan.`
+      const creds = out.login_username
+        ? ` Login → ${out.login_username} / ${out.login_password}`
+        : ''
+      setNotice(`${out.shop_name} added. ${place}${creds}`)
       setForm(EMPTY)
       setShowForm(false)
       load()

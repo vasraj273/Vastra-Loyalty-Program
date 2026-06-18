@@ -401,10 +401,32 @@ def create_retailer(body: RetailerIn, user: dict = Depends(current_manufacturer)
             (user["id"], body.name, body.shop_name, region, body.phone,
              lat, lng, source),
         )
+        rid = cur.lastrowid
+        # Auto-create a retailer login so the shop can sign in to YourApp
+        # immediately. Username = first word of the shop name (alphanumerics,
+        # lowercased); password = <username>123 — the same convention seed.py
+        # and backfill_retailer_logins.py use. A clash gets the id appended so
+        # the UNIQUE username constraint always holds.
+        first = (body.shop_name.split() or ["shop"])[0].lower()
+        base = "".join(ch for ch in first if ch.isalnum()) or "shop"
+        username = base
+        if db.execute("SELECT 1 FROM retailers WHERE username = ?",
+                      (username,)).fetchone():
+            username = f"{base}{rid}"
+        password = f"{username}123"
+        db.execute(
+            "UPDATE retailers SET username = ?, password_hash = ? WHERE id = ?",
+            (username, hash_password(password), rid),
+        )
         row = db.execute(
-            "SELECT * FROM retailers WHERE id = ?", (cur.lastrowid,)
+            "SELECT * FROM retailers WHERE id = ?", (rid,)
         ).fetchone()
-    return _clean_retailer(row)
+    out = _clean_retailer(row)
+    # Plaintext password is returned only here, at creation, so the panel can
+    # show the manufacturer the credentials to hand to the retailer.
+    out["login_username"] = username
+    out["login_password"] = password
+    return out
 
 
 def _clean_retailer(row) -> dict:
