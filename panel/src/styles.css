@@ -268,6 +268,19 @@ body {
 .map-tip span { font-size: 12px; }
 .tip-sub { color: #777; }
 
+/* Individual scan dot (divIcon) — sized inline by scan volume. */
+.scan-dot-icon { background: none; border: 0; }
+.scan-dot {
+  display: block; box-sizing: border-box; border-radius: 50%;
+  background: rgba(200, 71, 43, 0.55); border: 1.5px solid #b8431f;
+}
+/* Cluster bubbles tinted to the panel's terracotta palette. */
+.marker-cluster div {
+  background: rgba(184, 67, 31, 0.85); color: #fff;
+  font-family: 'IBM Plex Sans', sans-serif; font-weight: 600;
+}
+.marker-cluster { background: rgba(184, 67, 31, 0.35); }
+
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
 /* ── schemes ── */
