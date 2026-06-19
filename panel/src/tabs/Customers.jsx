@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { get, post, patch, del } from '../api.js'
 
-const EMPTY = { name: '', shop_name: '', region: '', phone: '' }
+const EMPTY = { name: '', shop_name: '', region: '', phone: '', distributor_id: '' }
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
 
 export default function Customers() {
@@ -20,12 +20,20 @@ export default function Customers() {
   const [toId, setToId] = useState('')
 
   const [cities, setCities] = useState([])
+  const [distributors, setDistributors] = useState([])
+  const [importResult, setImportResult] = useState(null)
+  const fileRef = useRef(null)
 
   const load = useCallback(() => {
     get('/retailers').then(setList).catch((e) => setError(e.message))
   }, [])
 
+  const loadDistributors = useCallback(() => {
+    get('/distributors').then(setDistributors).catch(() => {})
+  }, [])
+
   useEffect(load, [load])
+  useEffect(loadDistributors, [loadDistributors])
   useEffect(() => {
     get('/public/cities').then(setCities).catch(() => {})
   }, [])
@@ -39,6 +47,7 @@ export default function Customers() {
       const out = await post('/retailers', {
         ...form,
         phone: form.phone || null,
+        distributor_id: form.distributor_id ? Number(form.distributor_id) : null,
       })
       const place =
         out.lat != null
@@ -88,6 +97,43 @@ export default function Customers() {
       load()
     } catch (err) {
       setError(err.message)
+    }
+  }
+
+  // Assign / unassign a retailer's distributor straight from the table row.
+  const assignDistributor = async (r, value) => {
+    setError(null)
+    try {
+      await patch(`/retailers/${r.id}`, {
+        distributor_id: value === '' ? null : Number(value),
+      })
+      load()
+      loadDistributors()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  // Bulk import retailers (+ their distributors) from a CSV file, read
+  // client-side and posted as text so no multipart dependency is needed.
+  const onImportFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (file) e.target.value = '' // allow re-importing the same filename
+    if (!file) return
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    setImportResult(null)
+    try {
+      const csv = await file.text()
+      const res = await post('/retailers/import', { csv })
+      setImportResult(res)
+      load()
+      loadDistributors()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -158,6 +204,21 @@ export default function Customers() {
           >
             Transfer points
           </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,text/csv"
+            style={{ display: 'none' }}
+            onChange={onImportFile}
+          />
+          <button
+            className="btn-secondary"
+            disabled={busy}
+            onClick={() => fileRef.current?.click()}
+            title="CSV columns: shop_name, name, region, phone, distributor"
+          >
+            Import CSV
+          </button>
           <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
             {showForm ? 'Close' : '+ Add customer'}
           </button>
@@ -165,6 +226,56 @@ export default function Customers() {
       </div>
       {error && <p className="error">{error}</p>}
       {notice && <p className="created-note">{notice}</p>}
+
+      {importResult && (
+        <div className="panel-card" style={{ marginBottom: 14 }}>
+          <div className="schemes-head" style={{ marginBottom: 6 }}>
+            <strong>
+              Imported {importResult.created} · skipped {importResult.skipped}
+              {importResult.errors.length
+                ? ` · ${importResult.errors.length} error(s)`
+                : ''}
+            </strong>
+            <button className="btn-ghost small" onClick={() => setImportResult(null)}>
+              Dismiss
+            </button>
+          </div>
+          {importResult.errors.length > 0 && (
+            <ul className="hint" style={{ marginTop: 0 }}>
+              {importResult.errors.slice(0, 8).map((er, i) => (
+                <li key={i}>{er}</li>
+              ))}
+            </ul>
+          )}
+          {importResult.credentials.length > 0 && (
+            <>
+              <p className="hint" style={{ margin: '4px 0' }}>
+                New logins (shown once — copy them now):
+              </p>
+              <div style={{ maxHeight: 180, overflowY: 'auto' }}>
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Shop</th>
+                      <th>Username</th>
+                      <th>Password</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importResult.credentials.map((c) => (
+                      <tr key={c.username}>
+                        <td>{c.shop_name}</td>
+                        <td className="mono">{c.username}</td>
+                        <td className="mono">{c.password}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {showForm && (
         <form className="panel-card scheme-form" onSubmit={submit}>
@@ -211,6 +322,22 @@ export default function Customers() {
                 placeholder="98XXXXXXXX"
               />
             </label>
+            <label>
+              Distributor <span className="hint">(optional)</span>
+              <select
+                value={form.distributor_id}
+                onChange={(e) =>
+                  setForm({ ...form, distributor_id: e.target.value })
+                }
+              >
+                <option value="">— none —</option>
+                {distributors.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
           <p className="hint" style={{ margin: 0 }}>
             Map location is set automatically from the city. The exact shop
@@ -237,6 +364,7 @@ export default function Customers() {
               <th>Shop</th>
               <th>Owner</th>
               <th>City</th>
+              <th>Distributor</th>
               <th>Phone</th>
               <th>Location</th>
               <th className="num">Scans</th>
@@ -277,6 +405,20 @@ export default function Customers() {
                     />
                   </td>
                   <td>
+                    <select
+                      className="inline-input"
+                      value={r.distributor_id ?? ''}
+                      onChange={(e) => assignDistributor(r, e.target.value)}
+                    >
+                      <option value="">— none —</option>
+                      {distributors.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
                     <input
                       className="inline-input"
                       value={editing.phone ?? ''}
@@ -313,6 +455,20 @@ export default function Customers() {
                   <td>{r.shop_name}</td>
                   <td>{r.name}</td>
                   <td>{r.region || <span style={{ color: 'var(--ink-soft)' }}>Pending first scan</span>}</td>
+                  <td>
+                    <select
+                      className="inline-input"
+                      value={r.distributor_id ?? ''}
+                      onChange={(e) => assignDistributor(r, e.target.value)}
+                    >
+                      <option value="">— none —</option>
+                      {distributors.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
                   <td className="mono">{r.phone ?? '—'}</td>
                   <td>
                     {r.location_source === 'gps' ? (
@@ -362,7 +518,7 @@ export default function Customers() {
             )}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan="8" className="empty">
+                <td colSpan="9" className="empty">
                   No customers match.
                 </td>
               </tr>

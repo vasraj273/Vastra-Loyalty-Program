@@ -15,7 +15,8 @@ export default function Dashboard() {
   if (error) return <p className="error">Failed to load dashboard: {error}</p>
   if (!data) return <p className="loading">Loading…</p>
 
-  const { totals, by_region, by_product, top_retailers, map_points } = data
+  const { totals, by_region, by_product, top_retailers, map_points,
+          by_distributor = [] } = data
 
   return (
     <div className="dashboard">
@@ -104,6 +105,44 @@ export default function Dashboard() {
                   <td className="num">{fmt(r.points)}</td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <div className="panel-card">
+          <h2>By distributor</h2>
+          <p className="hint">
+            Which distributor is moving your goods — retailers under each, and the
+            scans/points they drove.
+          </p>
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Distributor</th>
+                <th className="num">Retailers</th>
+                <th className="num">Scans</th>
+                <th className="num">Points</th>
+              </tr>
+            </thead>
+            <tbody>
+              {by_distributor.map((d) => (
+                <tr key={d.id}>
+                  <td>{d.name}</td>
+                  <td className="num">{fmt(d.retailers)}</td>
+                  <td className="num">{fmt(d.scans)}</td>
+                  <td className="num">{fmt(d.points)}</td>
+                </tr>
+              ))}
+              {by_distributor.length === 0 && (
+                <tr>
+                  <td colSpan="4" className="empty">
+                    No distributors yet — add them in the Distributors tab or via
+                    CSV import.
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>

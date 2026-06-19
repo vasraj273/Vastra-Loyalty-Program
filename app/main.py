@@ -97,6 +97,8 @@ class RetailerIn(BaseModel):
     # first scan location (reverse-geocoded to the nearest known city).
     region: str = Field(default="", max_length=100)
     phone: str | None = Field(default=None, max_length=20)
+    # Distributor this retailer belongs to (manuf -> distributor -> retailer).
+    distributor_id: int | None = Field(default=None)
     # Manual override; when omitted, resolved from region city name
     lat: float | None = Field(default=None, ge=-90, le=90)
     lng: float | None = Field(default=None, ge=-180, le=180)
@@ -393,31 +395,17 @@ def create_retailer(body: RetailerIn, user: dict = Depends(current_manufacturer)
             lat, lng = coords
             source = "city"
     with get_db() as db:
+        distributor_id = _distributor_id_for(db, user["id"], body.distributor_id)
         cur = db.execute(
             """INSERT INTO retailers
                (manufacturer_id, name, shop_name, region, phone, lat, lng,
-                location_source)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                location_source, distributor_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user["id"], body.name, body.shop_name, region, body.phone,
-             lat, lng, source),
+             lat, lng, source, distributor_id),
         )
         rid = cur.lastrowid
-        # Auto-create a retailer login so the shop can sign in to YourApp
-        # immediately. Username = first word of the shop name (alphanumerics,
-        # lowercased); password = <username>123 — the same convention seed.py
-        # and backfill_retailer_logins.py use. A clash gets the id appended so
-        # the UNIQUE username constraint always holds.
-        first = (body.shop_name.split() or ["shop"])[0].lower()
-        base = "".join(ch for ch in first if ch.isalnum()) or "shop"
-        username = base
-        if db.execute("SELECT 1 FROM retailers WHERE username = ?",
-                      (username,)).fetchone():
-            username = f"{base}{rid}"
-        password = f"{username}123"
-        db.execute(
-            "UPDATE retailers SET username = ?, password_hash = ? WHERE id = ?",
-            (username, hash_password(password), rid),
-        )
+        username, password = _assign_retailer_login(db, body.shop_name, rid)
         row = db.execute(
             "SELECT * FROM retailers WHERE id = ?", (rid,)
         ).fetchone()
@@ -427,6 +415,58 @@ def create_retailer(body: RetailerIn, user: dict = Depends(current_manufacturer)
     out["login_username"] = username
     out["login_password"] = password
     return out
+
+
+def _assign_retailer_login(db, shop_name: str, rid: int) -> tuple[str, str]:
+    """Derive and store a retailer login: username = first alphanumeric word of
+    the shop name (lowercased), password = <username>123 (the seed.py /
+    backfill_retailer_logins.py convention). A clash gets the id appended so the
+    UNIQUE username constraint always holds. Returns (username, plaintext pw)."""
+    first = (shop_name.split() or ["shop"])[0].lower()
+    base = "".join(ch for ch in first if ch.isalnum()) or "shop"
+    username = base
+    if db.execute("SELECT 1 FROM retailers WHERE username = ?",
+                  (username,)).fetchone():
+        username = f"{base}{rid}"
+    password = f"{username}123"
+    db.execute(
+        "UPDATE retailers SET username = ?, password_hash = ? WHERE id = ?",
+        (username, hash_password(password), rid),
+    )
+    return username, password
+
+
+def _find_or_create_distributor(db, mid: int, name: str) -> int | None:
+    """Resolve a distributor by name within a manufacturer, creating it if new.
+    Returns its id, or None when the name is blank."""
+    name = (name or "").strip()
+    if not name:
+        return None
+    row = db.execute(
+        """SELECT id FROM distributors
+           WHERE manufacturer_id = ? AND LOWER(name) = LOWER(?)""",
+        (mid, name),
+    ).fetchone()
+    if row:
+        return row["id"]
+    cur = db.execute(
+        "INSERT INTO distributors (manufacturer_id, name) VALUES (?, ?)",
+        (mid, name),
+    )
+    return cur.lastrowid
+
+
+def _distributor_id_for(db, mid: int, distributor_id):
+    """Validate that a distributor_id (if given) belongs to this manufacturer."""
+    if distributor_id is None:
+        return None
+    ok = db.execute(
+        "SELECT 1 FROM distributors WHERE id = ? AND manufacturer_id = ?",
+        (distributor_id, mid),
+    ).fetchone()
+    if not ok:
+        raise HTTPException(400, "Distributor not found")
+    return distributor_id
 
 
 def _clean_retailer(row) -> dict:
@@ -442,12 +482,15 @@ def list_retailers(user: dict = Depends(current_manufacturer)):
     with get_db() as db:
         rows = db.execute(
             """SELECT r.*,
+                      d.name AS distributor_name,
                       (SELECT COUNT(*) FROM points_ledger l
                        WHERE l.retailer_id = r.id AND l.entry_type = 'scan')
                           AS scans,
                       (SELECT COALESCE(SUM(points), 0) FROM points_ledger l
                        WHERE l.retailer_id = r.id) AS points
-               FROM retailers r WHERE r.manufacturer_id = ? ORDER BY r.id""",
+               FROM retailers r
+               LEFT JOIN distributors d ON d.id = r.distributor_id
+               WHERE r.manufacturer_id = ? ORDER BY r.id""",
             (user["id"],),
         ).fetchall()
     return [_clean_retailer(r) for r in rows]
@@ -458,14 +501,17 @@ class RetailerUpdate(BaseModel):
     shop_name: str | None = Field(default=None, min_length=1, max_length=200)
     region: str | None = Field(default=None, min_length=1, max_length=100)
     phone: str | None = Field(default=None, max_length=20)
+    # Nullable on purpose: sending an explicit null unassigns the distributor.
+    distributor_id: int | None = Field(default=None)
 
 
 @app.patch("/retailers/{retailer_id}")
 def update_retailer(retailer_id: int, body: RetailerUpdate,
                     user: dict = Depends(current_manufacturer)):
-    fields = {k: v for k, v in body.model_dump().items() if v is not None}
-    if not fields:
-        raise HTTPException(422, "Nothing to update")
+    # distributor_id is handled separately so an explicit null can unassign it
+    # (the None-filter below would otherwise drop it).
+    fields = {k: v for k, v in body.model_dump().items()
+              if v is not None and k != "distributor_id"}
     with get_db() as db:
         row = db.execute(
             "SELECT * FROM retailers WHERE id = ? AND manufacturer_id = ?",
@@ -473,6 +519,11 @@ def update_retailer(retailer_id: int, body: RetailerUpdate,
         ).fetchone()
         if not row:
             raise HTTPException(404, "Retailer not found")
+        if "distributor_id" in body.model_fields_set:
+            fields["distributor_id"] = _distributor_id_for(
+                db, user["id"], body.distributor_id)
+        if not fields:
+            raise HTTPException(422, "Nothing to update")
         # Region change re-resolves the map position unless an exact GPS
         # location is already locked.
         if ("region" in fields and fields["region"] != row["region"]
@@ -660,6 +711,159 @@ def set_retailer_location(body: LocationIn,
                 (body.lat, body.lng, rid),
             )
     return {"updated": True, "region": backfilled}
+
+
+# ---------- distributors (manufacturer-scoped) ----------
+
+class DistributorIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    phone: str | None = Field(default=None, max_length=20)
+    region: str | None = Field(default=None, max_length=100)
+
+
+class DistributorUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    phone: str | None = Field(default=None, max_length=20)
+    region: str | None = Field(default=None, max_length=100)
+
+
+@app.post("/distributors", status_code=201)
+def create_distributor(body: DistributorIn,
+                       user: dict = Depends(current_manufacturer)):
+    with get_db() as db:
+        cur = db.execute(
+            """INSERT INTO distributors (manufacturer_id, name, phone, region)
+               VALUES (?, ?, ?, ?)""",
+            (user["id"], body.name.strip(), body.phone, body.region),
+        )
+        row = db.execute(
+            "SELECT * FROM distributors WHERE id = ?", (cur.lastrowid,)
+        ).fetchone()
+    return dict(row)
+
+
+@app.get("/distributors")
+def list_distributors(user: dict = Depends(current_manufacturer)):
+    with get_db() as db:
+        rows = db.execute(
+            """SELECT d.*,
+                      (SELECT COUNT(*) FROM retailers r
+                       WHERE r.distributor_id = d.id) AS retailers,
+                      (SELECT COUNT(*) FROM points_ledger l
+                       WHERE l.distributor_id = d.id
+                         AND l.entry_type = 'scan') AS scans,
+                      (SELECT COALESCE(SUM(points), 0) FROM points_ledger l
+                       WHERE l.distributor_id = d.id
+                         AND l.entry_type = 'scan') AS points
+               FROM distributors d
+               WHERE d.manufacturer_id = ? ORDER BY d.name""",
+            (user["id"],),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.patch("/distributors/{distributor_id}")
+def update_distributor(distributor_id: int, body: DistributorUpdate,
+                       user: dict = Depends(current_manufacturer)):
+    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not fields:
+        raise HTTPException(422, "Nothing to update")
+    with get_db() as db:
+        row = db.execute(
+            "SELECT 1 FROM distributors WHERE id = ? AND manufacturer_id = ?",
+            (distributor_id, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Distributor not found")
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        db.execute(
+            f"UPDATE distributors SET {sets} WHERE id = ?",
+            [*fields.values(), distributor_id],
+        )
+        out = db.execute(
+            "SELECT * FROM distributors WHERE id = ?", (distributor_id,)
+        ).fetchone()
+    return dict(out)
+
+
+@app.delete("/distributors/{distributor_id}", status_code=204)
+def delete_distributor(distributor_id: int,
+                       user: dict = Depends(current_manufacturer)):
+    """Deleting a distributor unlinks its retailers (they are NOT deleted).
+    Past scans keep their recorded distributor_id (point-in-time history)."""
+    with get_db() as db:
+        row = db.execute(
+            "SELECT 1 FROM distributors WHERE id = ? AND manufacturer_id = ?",
+            (distributor_id, user["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Distributor not found")
+        db.execute(
+            """UPDATE retailers SET distributor_id = NULL
+               WHERE distributor_id = ? AND manufacturer_id = ?""",
+            (distributor_id, user["id"]),
+        )
+        db.execute("DELETE FROM distributors WHERE id = ?", (distributor_id,))
+
+
+class ImportIn(BaseModel):
+    csv: str = Field(min_length=1, description="Raw CSV text")
+
+
+@app.post("/retailers/import")
+def import_retailers_csv(body: ImportIn,
+                         user: dict = Depends(current_manufacturer)):
+    """Bulk-create retailers from CSV text. Columns (header row, case-insensitive):
+    shop_name (required), name, region, phone, distributor (optional). Each
+    retailer gets an auto-login; the distributor is found-or-created by name and
+    linked. Rows whose shop_name already exists for this manufacturer are skipped.
+    Returns generated credentials so the panel can show them once."""
+    import csv as csvmod
+    import io
+    mid = user["id"]
+    reader = csvmod.DictReader(io.StringIO(body.csv))
+    headers = {(h or "").strip().lower() for h in (reader.fieldnames or [])}
+    if "shop_name" not in headers:
+        raise HTTPException(422, "CSV must have a 'shop_name' column")
+    created = skipped = 0
+    errors: list[str] = []
+    credentials: list[dict] = []
+    with get_db() as db:
+        for i, raw in enumerate(reader, start=2):  # row 1 is the header
+            row = {(k or "").strip().lower(): (v or "").strip()
+                   for k, v in raw.items()}
+            shop = row.get("shop_name", "")
+            if not shop:
+                errors.append(f"row {i}: missing shop_name")
+                continue
+            dup = db.execute(
+                """SELECT 1 FROM retailers
+                   WHERE manufacturer_id = ? AND LOWER(shop_name) = LOWER(?)""",
+                (mid, shop),
+            ).fetchone()
+            if dup:
+                skipped += 1
+                continue
+            region = row.get("region", "")
+            coords = coords_for(region) if region else None
+            lat, lng = coords if coords else (None, None)
+            distributor_id = _find_or_create_distributor(
+                db, mid, row.get("distributor", ""))
+            cur = db.execute(
+                """INSERT INTO retailers
+                   (manufacturer_id, name, shop_name, region, phone, lat, lng,
+                    location_source, distributor_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (mid, row.get("name", "") or shop, shop, region,
+                 row.get("phone", "") or None, lat, lng,
+                 "city" if coords else None, distributor_id),
+            )
+            username, password = _assign_retailer_login(db, shop, cur.lastrowid)
+            created += 1
+            credentials.append(
+                {"shop_name": shop, "username": username, "password": password})
+    return {"created": created, "skipped": skipped,
+            "errors": errors, "credentials": credentials}
 
 
 # ---------- QR generation (manufacturer-scoped) ----------
@@ -932,12 +1136,13 @@ def scan(body: ScanIn, retailer: dict = Depends(current_retailer)):
             db.execute(
                 """INSERT INTO points_ledger
                    (manufacturer_id, retailer_id, token, product_id, points,
-                    base_points, bonus_points, scheme_id, region, lat, lng)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    base_points, bonus_points, scheme_id, region, lat, lng,
+                    distributor_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (row["manufacturer_id"], rid, t,
                  row["product_id"], per, base, bonus,
                  scheme["id"] if scheme else None, retailer["region"],
-                 body.lat, body.lng),
+                 body.lat, body.lng, retailer["distributor_id"]),
             )
         if row["is_parent"]:
             db.execute(
@@ -1165,6 +1370,19 @@ def dashboard(user: dict = Depends(current_manufacturer)):
                GROUP BY p.id ORDER BY scans DESC""",
             (mid,),
         ).fetchall()
+        by_distributor = db.execute(
+            """SELECT d.id, d.name,
+                      (SELECT COUNT(*) FROM retailers r
+                       WHERE r.distributor_id = d.id) AS retailers,
+                      COUNT(l.id) AS scans,
+                      COALESCE(SUM(l.points), 0) AS points
+               FROM distributors d
+               LEFT JOIN points_ledger l
+                 ON l.distributor_id = d.id AND l.entry_type = 'scan'
+               WHERE d.manufacturer_id = ?
+               GROUP BY d.id, d.name ORDER BY scans DESC""",
+            (mid,),
+        ).fetchall()
         top_retailers = db.execute(
             """SELECT r.id, r.name, r.shop_name, r.region, COUNT(*) AS scans,
                       SUM(l.points) AS points
@@ -1176,8 +1394,9 @@ def dashboard(user: dict = Depends(current_manufacturer)):
         # One dot per place a retailer actually scanned: use the per-scan GPS
         # captured at scan time, falling back to the retailer's pinned shop
         # coords for scans recorded without a location. Bucketed in Python by
-        # ~110m (3 decimals) so repeated scans at one spot collapse to a single
-        # weighted dot (and to keep the SQL backend-portable).
+        # ~11m (4 decimals) so repeated scans at one spot collapse to a single
+        # weighted dot while distinct spots stay separate (the panel map clusters
+        # nearby dots for display); keeps the SQL backend-portable.
         scan_rows = db.execute(
             """SELECT r.id, r.name, r.shop_name, r.region,
                       COALESCE(l.lat, r.lat) AS lat,
@@ -1191,7 +1410,7 @@ def dashboard(user: dict = Depends(current_manufacturer)):
         ).fetchall()
     buckets: dict[tuple, dict] = {}
     for s in scan_rows:
-        lat, lng = round(s["lat"], 3), round(s["lng"], 3)
+        lat, lng = round(s["lat"], 4), round(s["lng"], 4)
         key = (s["id"], lat, lng)
         b = buckets.get(key)
         if b is None:
@@ -1208,6 +1427,7 @@ def dashboard(user: dict = Depends(current_manufacturer)):
         "totals": dict(totals),
         "by_region": [dict(r) for r in by_region],
         "by_product": [dict(r) for r in by_product],
+        "by_distributor": [dict(r) for r in by_distributor],
         "top_retailers": [dict(r) for r in top_retailers],
         "map_points": [dict(r) for r in map_points],
     }

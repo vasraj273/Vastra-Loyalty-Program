@@ -68,6 +68,18 @@ CREATE TABLE IF NOT EXISTS retailer_tokens (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Distributors sit between a manufacturer and its retailers (manuf ->
+-- distributor -> retailer). Tracking/attribution only; no login of their own.
+-- A retailer links to one via retailers.distributor_id (nullable).
+CREATE TABLE IF NOT EXISTS distributors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    manufacturer_id INTEGER NOT NULL REFERENCES manufacturers(id),
+    name TEXT NOT NULL,
+    phone TEXT,
+    region TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS schemes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     manufacturer_id INTEGER NOT NULL REFERENCES manufacturers(id),
@@ -166,17 +178,20 @@ CREATE INDEX IF NOT EXISTS idx_ledger_product ON points_ledger(product_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_manuf ON points_ledger(manufacturer_id);
 CREATE INDEX IF NOT EXISTS idx_products_manuf ON products(manufacturer_id);
 CREATE INDEX IF NOT EXISTS idx_retailers_manuf ON retailers(manufacturer_id);
+CREATE INDEX IF NOT EXISTS idx_distributors_manuf ON distributors(manufacturer_id);
 """
 
 # Tables with a serial ``id`` column, for which we emulate sqlite's
 # ``cur.lastrowid`` via Postgres ``RETURNING id``.
 _ID_TABLES = {"manufacturers", "products", "retailers", "qr_batches",
-              "schemes", "gifts", "gift_claims", "points_ledger"}
+              "schemes", "gifts", "gift_claims", "points_ledger",
+              "distributors"}
 
 # All tables, dropped with CASCADE on reset (order irrelevant).
 _DROP_ORDER = ("gift_claims", "gifts", "points_ledger", "qr_codes",
                "qr_batches", "scheme_products", "schemes", "retailer_tokens",
-               "retailers", "products", "auth_tokens", "manufacturers")
+               "retailers", "distributors", "products", "auth_tokens",
+               "manufacturers")
 
 
 # ---------------------------------------------------------------- Postgres
@@ -286,6 +301,10 @@ _MIGRATIONS = [
     # from the retailer's pinned shop coords. Null when location was denied.
     ("points_ledger", "lat", "REAL"),
     ("points_ledger", "lng", "REAL"),
+    # Distributor layer (manuf -> distributor -> retailer). The retailer links to
+    # one; the ledger records it per scan (locked at scan time, like region).
+    ("retailers", "distributor_id", "INTEGER"),
+    ("points_ledger", "distributor_id", "INTEGER"),
 ]
 
 
