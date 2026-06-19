@@ -66,6 +66,9 @@
   .id-box .hint { font-size:11px; color:var(--soft); margin-top:4px; }
   .modal button { width:100%; margin-top:10px; }
   .modal .copy { background:transparent; color:var(--ink); border:1px solid var(--line); box-shadow:none; padding:9px; font-size:13px; }
+  .modal.confirm { text-align:left; }
+  .modal.confirm h2 { color:var(--ink); }
+  .modal.confirm p { color:var(--soft); font-size:14px; line-height:1.5; }
 </style>
 </head>
 <body>
@@ -98,6 +101,15 @@
       <button class="copy" onclick="copyRef(this)">Copy Claim ID</button>
       <button onclick="go('/web/claims')">View my claims</button>
       <button class="copy" onclick="closeModal()">Done</button>
+    </div>
+  </div>
+
+  <div class="backdrop" id="confirmModal" style="display:none">
+    <div class="modal confirm">
+      <h2 id="cfTitle">Confirm</h2>
+      <p id="cfMsg"></p>
+      <button class="claim" id="cfYes">Confirm</button>
+      <button class="copy" id="cfNo">Cancel</button>
     </div>
   </div>
 
@@ -149,8 +161,30 @@ async function loadShop() {
   } catch (e) { flash('err', e.message); }
 }
 
+function confirmDialog(title, message, confirmLabel) {
+  return new Promise((resolve) => {
+    $('cfTitle').textContent = title;
+    $('cfMsg').textContent = message;
+    $('cfYes').textContent = confirmLabel || 'Confirm';
+    const bd = $('confirmModal');
+    bd.style.display = 'flex';
+    const done = (v) => {
+      bd.style.display = 'none';
+      $('cfYes').onclick = null; $('cfNo').onclick = null; bd.onclick = null;
+      resolve(v);
+    };
+    $('cfYes').onclick = () => done(true);
+    $('cfNo').onclick = () => done(false);
+    bd.onclick = (e) => { if (e.target === bd) done(false); };
+  });
+}
+
 async function claim(giftId, name, cost) {
-  if (!confirm(`Claim "${name}" for ${nf(cost)} points?\n\nThis is final — the points will be deducted now and the request sent to the manufacturer for approval.`)) return;
+  const ok = await confirmDialog(
+    'Claim this reward?',
+    `Claim "${name}" for ${nf(cost)} points? This is final — the points are deducted now and the request is sent to the manufacturer for approval.`,
+    'Claim reward');
+  if (!ok) return;
   flash('err', ''); flash('ok', '');
   try {
     const out = await api('/retailer/claim', { method: 'POST', body: JSON.stringify({ gift_id: giftId }) });

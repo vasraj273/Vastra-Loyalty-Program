@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { get, post } from '../api.js'
+import { useConfirm } from '../confirm.jsx'
 
 const STATUSES = ['pending', 'approved', 'rejected']
 
@@ -8,6 +9,7 @@ export default function Redemptions() {
   const [filter, setFilter] = useState('pending')
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(null)
+  const confirm = useConfirm()
 
   const load = useCallback(() => {
     const q = filter ? `?status=${filter}` : ''
@@ -16,11 +18,30 @@ export default function Redemptions() {
 
   useEffect(load, [load])
 
-  const decide = async (id, action) => {
-    setBusy(id)
+  const decide = async (c, action) => {
+    const ok = await confirm(
+      action === 'approve'
+        ? {
+            title: 'Approve redemption?',
+            message:
+              `Hand over "${c.gift_name}" to ${c.shop_name}. The ` +
+              `${c.points_spent} points stay deducted.`,
+            confirmLabel: 'Approve',
+          }
+        : {
+            title: 'Reject & refund?',
+            message:
+              `Refund ${c.points_spent} points to ${c.shop_name} and cancel ` +
+              `this claim for "${c.gift_name}".`,
+            confirmLabel: 'Reject & refund',
+            danger: true,
+          },
+    )
+    if (!ok) return
+    setBusy(c.id)
     setError(null)
     try {
-      await post(`/gift-claims/${id}/${action}`)
+      await post(`/gift-claims/${c.id}/${action}`)
       load()
     } catch (err) {
       setError(err.message)
@@ -90,14 +111,14 @@ export default function Redemptions() {
                       <button
                         className="btn-ghost small"
                         disabled={busy === c.id}
-                        onClick={() => decide(c.id, 'approve')}
+                        onClick={() => decide(c, 'approve')}
                       >
                         Approve
                       </button>
                       <button
                         className="btn-ghost small danger"
                         disabled={busy === c.id}
-                        onClick={() => decide(c.id, 'reject')}
+                        onClick={() => decide(c, 'reject')}
                       >
                         Reject
                       </button>

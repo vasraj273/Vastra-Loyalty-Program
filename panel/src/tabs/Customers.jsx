@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { get, post, patch, del } from '../api.js'
+import { useConfirm } from '../confirm.jsx'
 
 const EMPTY = { name: '', shop_name: '', region: '', phone: '', distributor_id: '' }
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
@@ -23,6 +24,7 @@ export default function Customers() {
   const [distributors, setDistributors] = useState([])
   const [importResult, setImportResult] = useState(null)
   const fileRef = useRef(null)
+  const confirm = useConfirm()
 
   const load = useCallback(() => {
     get('/retailers').then(setList).catch((e) => setError(e.message))
@@ -138,6 +140,17 @@ export default function Customers() {
   }
 
   const doAdjust = async () => {
+    const n = Number(pts)
+    const ok = await confirm({
+      title: n < 0 ? 'Remove points?' : 'Add points?',
+      message:
+        `${n >= 0 ? '+' : ''}${fmt(n)} points ${n < 0 ? 'from' : 'to'} ` +
+        `${modal.r.shop_name} — balance ${fmt(modal.r.points)} → ` +
+        `${fmt(modal.r.points + n)}.${note ? ` Reason: ${note}` : ''}`,
+      confirmLabel: n < 0 ? 'Remove points' : 'Add points',
+      danger: n < 0,
+    })
+    if (!ok) return
     setBusy(true)
     setError(null)
     try {
@@ -155,6 +168,16 @@ export default function Customers() {
   }
 
   const doTransfer = async () => {
+    const from = list.find((r) => r.id === Number(fromId))
+    const to = list.find((r) => r.id === Number(toId))
+    const ok = await confirm({
+      title: 'Transfer points?',
+      message:
+        `Move ${fmt(Number(pts))} points from ${from?.shop_name} to ` +
+        `${to?.shop_name}.${note ? ` Reason: ${note}` : ''}`,
+      confirmLabel: 'Transfer',
+    })
+    if (!ok) return
     setBusy(true)
     setError(null)
     try {

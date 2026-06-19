@@ -813,6 +813,28 @@ th.actions-col { text-align: right; }
 
 .modal .btn-row { margin-top: 6px; }
 
+/* ── confirmation dialog (stacks above form modals) ── */
+.confirm-backdrop { z-index: 200; }
+.confirm-modal { max-width: 380px; }
+.confirm-msg { margin: 0; font-size: 14px; color: var(--ink-soft); line-height: 1.5; }
+
+.btn-danger {
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--paper);
+  background: var(--madder-deep);
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 var(--indigo);
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+.btn-danger:hover { transform: translate(-1px, -1px); box-shadow: 3px 3px 0 var(--indigo); }
+.btn-danger:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--indigo); }
+.btn-danger:disabled { opacity: 0.6; cursor: default; }
+
 /* ── footer ── */
 .footer {
   margin-top: 36px;
