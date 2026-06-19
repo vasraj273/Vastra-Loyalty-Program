@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS retailer_tokens (
 );
 
 -- Distributors sit between a manufacturer and its retailers (manuf ->
--- distributor -> retailer). Tracking/attribution only; no login of their own.
+-- distributor -> retailer), for tracking/attribution only (no login).
 -- A retailer links to one via retailers.distributor_id (nullable).
 CREATE TABLE IF NOT EXISTS distributors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -268,7 +268,11 @@ class _PGConn:
 
     def executescript(self, script):
         cur = self._conn.cursor()
-        for stmt in script.split(";"):
+        # Drop full-line "--" comments before splitting so a ';' inside a comment
+        # can't break a statement in two (Postgres ignores them anyway).
+        cleaned = "\n".join(line for line in script.splitlines()
+                            if not line.lstrip().startswith("--"))
+        for stmt in cleaned.split(";"):
             if stmt.strip():
                 cur.execute(stmt)
         return _Cursor(cur)
