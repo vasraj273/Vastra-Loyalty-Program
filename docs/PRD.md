@@ -72,15 +72,32 @@ schemes are unverifiable and easy to abuse.
 - Dashboard shows totals, scans by region/product, top retailers, and an
   interactive India map of scan locations.
 
-### 4.5 Retailer wallet
+### 4.5 Distributors (manufacturer → distributor → retailer)
+- Manufacturers can record which **distributor** each retailer is supplied by, to
+  see who is connected to whom and which distributor is driving sales.
+- Distributors are **tracking/attribution only** — no login, no wallet, **no
+  points of their own**. Created manually in the panel or auto-created when
+  importing retailers (a `distributor` column in the CSV).
+- Each scan records the retailer's distributor **at scan time** (history is not
+  rewritten if a retailer is later reassigned). The dashboard rolls up each
+  distributor's connected retailers and their scans/points.
+
+### 4.6 Retailer wallet
 - Balance = sum of all ledger entries. History shows scans, redemptions,
   adjustments, and transfers between retailers.
+
+### 4.7 Confirmations on points changes
+- Every action that changes a points balance — redeem/claim a gift, transfer,
+  manual adjust (+/-), and approve/reject a redemption — shows a **confirmation
+  dialog** summarizing the effect before it commits. Scanning to earn is exempt
+  (high-frequency; the result screen already shows the outcome).
 
 ## 5. Key user flows
 
 1. **Onboard manufacturer** — super admin creates account → manufacturer logs in.
 2. **Set up rewards** — manufacturer adds products, schemes, gifts; adds retailers
-   (login auto-created; city optional).
+   (login auto-created; city + distributor optional), or bulk-imports retailers
+   from a CSV that auto-creates and links their distributors.
 3. **Generate & print** — pick product → quantity → generate → save → print A4 PDF
    of QR labels.
 4. **Earn** — retailer logs into YourApp → scans QR (or types manual code) →

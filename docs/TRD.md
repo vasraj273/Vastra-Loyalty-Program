@@ -23,7 +23,10 @@ Single FastAPI service (`app/main.py`) serving three surfaces from one container
 - **PDF/QR:** `qrcode[pil]`, `reportlab` (A4 label sheets).
 - **DB driver:** `psycopg[binary]` (Postgres); stdlib `sqlite3` otherwise.
 - **Panel:** React + Vite (`panel/`), built to `panel/dist`, served at `/panel`.
-  `panel/src/api.js` is the only fetch layer.
+  `panel/src/api.js` is the only fetch layer. Navigation is a top-right burger
+  menu (`App.jsx`); the India map clusters via `leaflet.markercluster`; a
+  promise-based `useConfirm()` (`confirm.jsx`) gates every points-changing action
+  (adjust/transfer/approve/reject) with a themed confirmation dialog.
 - **Webviews:** static HTML/JS in `app/web/` served via `FileResponse`.
 
 ## 2. Data model
@@ -35,12 +38,13 @@ Tables (`app/database.py` `SCHEMA`, evolved additively via `_MIGRATIONS`):
 | `manufacturers` | Manufacturer + super-admin accounts | `username`, `password_hash`, `display_name`, `is_admin` |
 | `auth_tokens` | Manufacturer/admin bearer tokens | `token`, `manufacturer_id` |
 | `products` | Catalog | `manufacturer_id`, `name`, `sku`, `loyalty_points` |
-| `retailers` | Shops | `manufacturer_id`, `shop_name`, `region`, `username`, `password_hash`, `lat`, `lng`, `location_source` |
+| `retailers` | Shops | `manufacturer_id`, `shop_name`, `region`, `username`, `password_hash`, `lat`, `lng`, `location_source`, `distributor_id` |
 | `retailer_tokens` | Retailer bearer tokens | `token`, `retailer_id` |
+| `distributors` | Distributor layer (tracking only, no login/points) | `manufacturer_id`, `name`, `phone`, `region` |
 | `schemes` / `scheme_products` | Time-bound bonus campaigns + scope | `bonus_points`, `start_date`, `end_date` |
 | `qr_batches` | Generation batch | `product_id`, `quantity`, `points_per_code` (frozen) |
 | `qr_codes` | Individual codes | `token`, `manual_code`, `batch_id`, `is_parent`, `parent_token`, `redeemed_at`, `redeemed_by` |
-| `points_ledger` | Typed transaction log | `entry_type`, `points`, `base_points`, `bonus_points`, `scheme_id`, `region`, `lat`, `lng`, `scanned_at` |
+| `points_ledger` | Typed transaction log | `entry_type`, `points`, `base_points`, `bonus_points`, `scheme_id`, `region`, `lat`, `lng`, `distributor_id`, `scanned_at` |
 | `gifts` / `gift_claims` | Rewards catalog + claims | `points_cost`, `reference`, status |
 
 Every tenant-owned row carries `manufacturer_id`.
@@ -61,6 +65,10 @@ adapter translates to psycopg at runtime.
 - Startup does `init_db()` + `migrate()` + `_backfill_coords()` — **never seeds**.
   `seed.py`/`reset_db()` are destructive (local/initial only) and do **not** run
   `_MIGRATIONS`.
+- **No `;` in `SCHEMA` comments.** The PG `executescript` splits on `;`; a
+  semicolon in a `--` comment would split a statement (SQLite tolerates it, so it
+  only fails on Postgres at deploy). `executescript` now strips full-line `--`
+  comments before splitting, but keep schema comments semicolon-free.
 
 ## 4. Authentication & authorization
 
@@ -87,7 +95,8 @@ Authoritative list at `/docs`. Principal endpoints:
   `PATCH|DELETE /gifts/{id}`.
 - **Retailers:** `GET|POST /retailers`, `PATCH|DELETE /retailers/{id}`,
   `POST /retailers/{id}/adjust`, `POST /retailers/transfer`,
-  `POST /retailer/location`.
+  `POST /retailers/import` (CSV-as-JSON bulk create), `POST /retailer/location`.
+- **Distributors:** `GET|POST /distributors`, `PATCH|DELETE /distributors/{id}`.
 - **QR:** `POST /qr/generate`, `GET /qr/batches`, `GET /qr/batches/{id}`,
   `POST /qr/batches/{id}/save`, `GET /qr/batches/{id}/print`,
   `DELETE /qr/batches/{id}`, `GET /qr/codes/{token}/image`.
@@ -107,8 +116,19 @@ Authoritative list at `/docs`. Principal endpoints:
 3. Base = `qr_batches.points_per_code` (frozen). Bonus = most generous active scheme
    covering the product (date-bound, no stacking).
 4. Mark codes redeemed; write one `points_ledger` (`entry_type='scan'`) row per code
-   with base/bonus split, scheme, region, and the scan's `lat/lng`.
+   with base/bonus split, scheme, region, the scan's `lat/lng`, and the retailer's
+   current `distributor_id` (point-in-time attribution).
 - **Balance = `SUM(points)`**; scan analytics filter `entry_type='scan'`.
+
+### 6.1b Distributors
+- `distributors` (manufacturer-scoped) is tracking-only: no login, wallet, or
+  points. `retailers.distributor_id` links a retailer to one.
+- `POST /retailers/import` parses CSV text (stdlib `csv`); a `distributor` column
+  is resolved via `_find_or_create_distributor(db, mid, name)` (case-insensitive,
+  per manufacturer); retailers get auto-logins (`_assign_retailer_login`); rows
+  with a duplicate `shop_name` are skipped. Returns generated credentials.
+- Dashboard `by_distributor` sums each distributor's connected **retailers'**
+  scans/points — never points held by the distributor.
 
 ### 6.2 Location
 - **Shop pin:** `retailers.lat/lng` + `location_source` (`city` from

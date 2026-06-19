@@ -38,12 +38,13 @@ npm run build --prefix panel
 
 ## Admin panel
 
-React + Vite app in `panel/`. Manufacturer tabs: **Dashboard** (stats, region table, interactive India map of scan locations), **Customers** (retailers), **Products**, **Schemes**, **Gifts**, **Claims**, **Redemptions**. Super admin gets a **Manufacturers** tab instead. `panel/src/api.js` is the only fetch layer.
+React + Vite app in `panel/`. A top-right **burger menu** holds the manufacturer tabs: **Dashboard** (stats, region + by-distributor tables, clustered India map of scan locations), **Customers** (retailers), **Distributors**, **Products**, **Schemes**, **Gifts**, **Claims**, **Redemptions**. Super admin gets a **Manufacturers** tab instead. `panel/src/api.js` is the only fetch layer.
 
 ## Core flow
 
 1. **Products** — `POST /products` with `loyalty_points` (base points awarded per scan).
-2. **Retailers** — `POST /retailers` with name, shop, and an **optional** city. A login is created automatically. If the city is left blank, it's filled in from the retailer's first scan location (reverse-geocoded to the nearest known city).
+2. **Retailers** — `POST /retailers` with name, shop, an **optional** city, and an optional **distributor**. A login is created automatically. If the city is left blank, it's filled in from the retailer's first scan location (reverse-geocoded to the nearest known city). Bulk-onboard via `POST /retailers/import` (panel "Import CSV") — a `distributor` column find-or-creates and links distributors.
+   - **Distributors** (`/distributors`) sit between manufacturer and retailer (manuf → distributor → retailer) — a tracking layer so the manufacturer sees who supplies whom. Each scan records the retailer's distributor on the ledger (locked at scan time); the dashboard rolls scans/points up by distributor. Distributors have **no login and no points of their own**.
 3. **Generate** (Vastra) — `POST /qr/generate {product_id, quantity, points_per_code?, items_per_box?}` → N unique codes. Each = QR token + 6-char manual fallback (alphabet excludes 0/O/1/I). With `items_per_box`, parent (box) codes wrap children. Points are **frozen per batch** at generation.
 4. **Save / print** — `POST /qr/batches/{id}/save`; `GET /qr/batches/{id}/print` → A4 PDF (QR + product + manual code). Saved batches print any time.
 5. **Scan** (YourApp) — `POST /scan {code, lat?, lng?}`. The retailer comes from the auth token, never the body. `code` accepts the QR token or manual code (case/dash/space insensitive). One-time redemption; awards batch points (+ best active scheme bonus) and logs a `points_ledger` row with product, region, and the scan's GPS. Scanning a box parent registers all its children at once. Duplicate → `409`.
@@ -52,6 +53,7 @@ React + Vite app in `panel/`. Manufacturer tabs: **Dashboard** (stats, region ta
 ## How points & location work
 
 - **Wallet ledger.** `points_ledger` is a typed log (`scan`, `gift_redeem`, `refund`, `adjustment`, `transfer`). A retailer's balance = `SUM(points)`; scan analytics filter `entry_type='scan'`.
+- **Confirmations.** Every action that changes a balance — redeem, transfer, manual adjust, approve/reject — shows a confirmation dialog before committing (scanning to earn is exempt).
 - **Schemes.** Base points always apply; a scheme adds a time-bound bonus on top. Overlapping schemes don't stack — the most generous active one covering the product wins. The ledger stores the base/bonus split and the paying scheme.
 - **Location.** The retailer's **shop pin** locks to exact GPS on the first scan that shares location (and never moves). Separately, **each scan records its own GPS** (captured once per session in the browser, reused for that session), so the dashboard map shows *where scans actually happen* over time. Location is optional/graceful — scans still work if it's denied.
 
