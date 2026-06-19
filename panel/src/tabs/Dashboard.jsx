@@ -114,16 +114,17 @@ export default function Dashboard() {
         <div className="panel-card">
           <h2>By distributor</h2>
           <p className="hint">
-            Which distributor is moving your goods — retailers under each, and the
-            scans/points they drove.
+            Which distributor is moving your goods. Totals are the connected
+            retailers' own scans and points — distributors hold no points
+            themselves.
           </p>
           <table className="data-table">
             <thead>
               <tr>
                 <th>Distributor</th>
                 <th className="num">Retailers</th>
-                <th className="num">Scans</th>
-                <th className="num">Points</th>
+                <th className="num">Retailer scans</th>
+                <th className="num">Retailer points</th>
               </tr>
             </thead>
             <tbody>
