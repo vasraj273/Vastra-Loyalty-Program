@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Dashboard from './tabs/Dashboard.jsx'
 import Schemes from './tabs/Schemes.jsx'
 import Claims from './tabs/Claims.jsx'
@@ -30,12 +30,29 @@ export default function App() {
   const [user, setUser] = useState(() => (getToken() ? getUser() : null))
   const tabs = user?.is_admin ? ADMIN_TABS : MANUF_TABS
   const [tab, setTab] = useState(tabs[0].id)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef(null)
 
   useEffect(() => {
     const onLogout = () => setUser(null)
     window.addEventListener('vl-logout', onLogout)
     return () => window.removeEventListener('vl-logout', onLogout)
   }, [])
+
+  // Close the menu on outside click or Escape.
+  useEffect(() => {
+    if (!menuOpen) return undefined
+    const onDoc = (e) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false)
+    }
+    const onEsc = (e) => e.key === 'Escape' && setMenuOpen(false)
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onEsc)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onEsc)
+    }
+  }, [menuOpen])
 
   if (!user) {
     return (
@@ -56,7 +73,8 @@ export default function App() {
     setUser(null)
   }
 
-  const Active = (tabs.find((t) => t.id === tab) ?? tabs[0]).component
+  const activeTab = tabs.find((t) => t.id === tab) ?? tabs[0]
+  const Active = activeTab.component
 
   return (
     <div className="shell">
@@ -70,20 +88,48 @@ export default function App() {
             </p>
           </div>
         </div>
-        <nav className="tabs">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              className={tab === t.id ? 'tab active' : 'tab'}
-              onClick={() => setTab(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
-          <button className="tab logout" onClick={logout}>
-            Log out
+        <div className="nav-menu" ref={menuRef}>
+          <button
+            className={menuOpen ? 'burger open' : 'burger'}
+            onClick={() => setMenuOpen((o) => !o)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label="Open menu"
+          >
+            <span className="burger-current">{activeTab.label}</span>
+            <span className="burger-lines" aria-hidden="true">
+              <i /><i /><i />
+            </span>
           </button>
-        </nav>
+          {menuOpen && (
+            <div className="menu-pop" role="menu">
+              {tabs.map((t) => (
+                <button
+                  key={t.id}
+                  role="menuitem"
+                  className={tab === t.id ? 'menu-item active' : 'menu-item'}
+                  onClick={() => {
+                    setTab(t.id)
+                    setMenuOpen(false)
+                  }}
+                >
+                  {t.label}
+                </button>
+              ))}
+              <div className="menu-sep" />
+              <button
+                className="menu-item logout"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false)
+                  logout()
+                }}
+              >
+                Log out
+              </button>
+            </div>
+          )}
+        </div>
       </header>
       <main className="content">
         <Active />
