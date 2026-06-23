@@ -43,13 +43,14 @@
   .balance { border-top:1px dashed var(--line); margin-top:12px; padding-top:10px; font-size:14px; }
   .backdrop { position:fixed; inset:0; background:rgba(34,41,79,.55); display:flex; align-items:center;
               justify-content:center; padding:22px; z-index:100; }
-  .lmodal { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:24px 22px;
-            max-width:380px; width:100%; text-align:center; box-shadow:0 20px 60px rgba(34,41,79,.3); }
-  .lmodal .pin { font-size:42px; line-height:1; }
+  .lmodal { position:relative; background:var(--card); border:1px solid var(--line); border-radius:16px;
+            padding:24px 22px; max-width:380px; width:100%; text-align:center; box-shadow:0 20px 60px rgba(34,41,79,.3); }
+  .lmodal .lclose { position:absolute; top:8px; right:10px; width:auto; margin:0; padding:2px 8px;
+                    background:transparent; color:var(--soft); box-shadow:none; font-size:24px; line-height:1; }
+  .lmodal .lclose:active { transform:none; box-shadow:none; }
+  .lmodal .pin { font-size:40px; line-height:1; }
   .lmodal h2 { font-family:'Fraunces',serif; font-size:21px; margin:6px 0; color:var(--ink); }
   .lmodal p { font-size:14px; color:var(--soft); margin:0; line-height:1.5; }
-  .lmodal .skip { background:transparent; color:var(--soft); box-shadow:none; font-size:13px;
-                  text-decoration:underline; padding:8px; margin-top:6px; }
 </style>
 </head>
 <body>
@@ -86,12 +87,13 @@
 
   <div class="backdrop" id="locModal" style="display:none">
     <div class="lmodal">
-      <div class="pin">📍</div>
-      <h2>Share your location</h2>
-      <p id="locMsg">We record where each scan happens so your manufacturer can
-        see your shop on the map. Please allow location to continue.</p>
+      <button class="lclose" onclick="locSkip()" aria-label="Close">&times;</button>
+      <div class="pin">🛡️</div>
+      <h2 id="locTitle">Confirm it's really you</h2>
+      <p id="locMsg">We check your location so only the genuine shop owner earns
+        these points — it keeps your rewards safe from misuse. Your location is
+        used only to verify this scan.</p>
       <button id="locAllowBtn" onclick="locAllow(this)">Allow location</button>
-      <button class="skip" onclick="locSkip()">Continue without location</button>
     </div>
   </div>
 </div>
@@ -226,8 +228,8 @@ function locAllow(btn) {
   }, (e) => {
     btn.disabled = false; btn.textContent = 'Allow location';
     $('locMsg').textContent = (e && e.code === 1)
-      ? 'Location is blocked for this site. Enable it in your browser settings, or continue and we\'ll use your registered city.'
-      : 'Couldn\'t get a location fix. Make sure phone Location/GPS is on, or continue and we\'ll use your registered city.';
+      ? 'Location is turned off or blocked for this site. Turn it on in your browser settings to verify your scan — or tap ✕ to continue.'
+      : 'Couldn\'t read your location. Make sure your phone\'s GPS is on — or tap ✕ to continue.';
   }, GEO_OPTS);
 }
 
