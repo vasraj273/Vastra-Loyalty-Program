@@ -1,9 +1,10 @@
 // Lightweight themed SVG bar chart. Supports one series (single bars) or several
 // grouped series per label. No external dependency — colors come from the panel
-// theme. The SVG uses a viewBox so it scales to the card width while staying crisp.
+// theme. The SVG uses a viewBox + width:100% so it always scales to fit the card
+// (never overflows) while keeping a tall, readable aspect ratio.
 
-const PAD = { top: 22, right: 10, bottom: 30, left: 40 }
-const W = 760
+const VB_W = 720
+const PAD = { top: 26, right: 14, bottom: 34, left: 50 }
 
 const niceMax = (v) => {
   if (v <= 0) return 1
@@ -18,16 +19,16 @@ const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
 export default function BarChart({
   data = [],
   series = [{ name: '', color: '#2b3468' }],
-  height = 240,
+  height = 360,
   showValues = false,
 }) {
-  const innerW = W - PAD.left - PAD.right
+  const innerW = VB_W - PAD.left - PAD.right
   const innerH = height - PAD.top - PAD.bottom
   const rawMax = Math.max(1, ...data.flatMap((d) => d.values))
   const max = niceMax(rawMax)
   const groupW = innerW / Math.max(1, data.length)
   const nSeries = series.length
-  const slot = groupW * 0.62 // share of the group used by bars
+  const slot = groupW * 0.6 // share of the group used by bars
   const barW = slot / nSeries
   const x0 = PAD.left + (groupW - slot) / 2
 
@@ -37,9 +38,9 @@ export default function BarChart({
   return (
     <svg
       className="bar-chart"
-      viewBox={`0 0 ${W} ${height}`}
-      role="img"
+      viewBox={`0 0 ${VB_W} ${height}`}
       preserveAspectRatio="xMidYMid meet"
+      role="img"
     >
       {/* gridlines + y-axis labels */}
       {ticks.map((t, i) => (
@@ -47,11 +48,11 @@ export default function BarChart({
           <line
             className="bc-grid"
             x1={PAD.left}
-            x2={W - PAD.right}
+            x2={VB_W - PAD.right}
             y1={y(t)}
             y2={y(t)}
           />
-          <text className="bc-ytick" x={PAD.left - 6} y={y(t) + 3.5}>
+          <text className="bc-ytick" x={PAD.left - 8} y={y(t) + 4}>
             {fmt(t)}
           </text>
         </g>
@@ -71,9 +72,9 @@ export default function BarChart({
                     className="bc-bar"
                     x={bx}
                     y={by}
-                    width={Math.max(0, barW - 2)}
+                    width={Math.max(0, barW - 3)}
                     height={Math.max(0, bh)}
-                    rx={2}
+                    rx={3}
                     fill={series[si].color}
                   >
                     <title>{`${d.label} · ${series[si].name || 'value'}: ${fmt(v)}`}</title>
@@ -81,8 +82,8 @@ export default function BarChart({
                   {showValues && v > 0 && (
                     <text
                       className="bc-vlabel"
-                      x={bx + (barW - 2) / 2}
-                      y={by - 5}
+                      x={bx + (barW - 3) / 2}
+                      y={by - 7}
                     >
                       {fmt(v)}
                     </text>
@@ -93,7 +94,7 @@ export default function BarChart({
             <text
               className="bc-xlabel"
               x={gx + groupW / 2}
-              y={height - PAD.bottom + 18}
+              y={height - PAD.bottom + 22}
             >
               {d.label}
             </text>

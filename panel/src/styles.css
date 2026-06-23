@@ -353,6 +353,11 @@ body {
   grid-template-columns: 1fr 1fr;
   gap: 14px;
 }
+.chart-card {
+  min-width: 0;           /* let the grid column shrink; SVG scales to fit */
+  display: flex;
+  flex-direction: column;
+}
 .chart-card h3 {
   font-family: 'Fraunces', serif;
   font-size: 16px;
@@ -369,7 +374,7 @@ body {
 .chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .chart-legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
 
-.bar-chart { width: 100%; height: auto; display: block; margin-top: 6px; }
+.bar-chart { width: 100%; height: auto; display: block; margin-top: 8px; flex: 1; }
 .bar-chart .bc-grid { stroke: var(--line); stroke-width: 1; }
 .bar-chart .bc-ytick,
 .bar-chart .bc-xlabel,
@@ -377,9 +382,9 @@ body {
   font-family: 'IBM Plex Mono', monospace;
   fill: var(--ink-soft);
 }
-.bar-chart .bc-ytick { font-size: 10px; text-anchor: end; }
-.bar-chart .bc-xlabel { font-size: 11px; text-anchor: middle; }
-.bar-chart .bc-vlabel { font-size: 10px; text-anchor: middle; fill: var(--ink); }
+.bar-chart .bc-ytick { font-size: 13px; text-anchor: end; }
+.bar-chart .bc-xlabel { font-size: 14px; text-anchor: middle; }
+.bar-chart .bc-vlabel { font-size: 13px; text-anchor: middle; fill: var(--ink); }
 .bar-chart .bc-bar { transition: opacity 0.15s; }
 .bar-chart .bc-bar:hover { opacity: 0.82; }
 
