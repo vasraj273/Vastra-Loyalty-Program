@@ -163,3 +163,29 @@ def nearest_city(lat: float, lng: float) -> str | None:
         if best_d is None or d < best_d:
             best, best_d = name, d
     return best.title() if best else None
+
+
+def reverse_address(lat: float, lng: float) -> str | None:
+    """Best-effort reverse geocode to a full readable street address via
+    OpenStreetMap's free Nominatim service (no API key). Returns e.g.
+    "Naroda Business Hub, Naroda - Dehgam Road, Naroda, Ahmedabad, Gujarat,
+    382330, India", or None on any failure (caller falls back to the city /
+    the map link, which always works from the raw coordinates).
+
+    Called ~once per scanning session, with a short timeout and an identifying
+    User-Agent, to respect Nominatim's usage policy."""
+    import json
+    import urllib.parse
+    import urllib.request
+    url = "https://nominatim.openstreetmap.org/reverse?" + urllib.parse.urlencode(
+        {"format": "jsonv2", "lat": lat, "lon": lng,
+         "zoom": 18, "addressdetails": 0})
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "VastraLoyalty/1.0 (retailer loyalty app)"})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.load(resp)
+        name = (data.get("display_name") or "").strip()
+        return name or None
+    except Exception:
+        return None

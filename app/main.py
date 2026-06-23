@@ -26,7 +26,7 @@ from .auth import (current_admin, current_manufacturer, current_retailer,
                    current_user, hash_password, issue_retailer_token,
                    issue_token, verify_password)
 from .database import get_db, init_db, migrate
-from .geo import coords_for, known_places, nearest_city
+from .geo import coords_for, known_places, nearest_city, reverse_address
 from .pdf_service import build_pdf
 from .qr_service import (new_manual_code, new_reference, new_token,
                          payload_for, render_png)
@@ -687,30 +687,23 @@ class LocationIn(BaseModel):
 @app.post("/retailer/location")
 def set_retailer_location(body: LocationIn,
                           retailer: dict = Depends(current_retailer)):
-    """First scan with location permission pins the shop exactly. Once a GPS
-    location is locked it never changes (and the app never asks again). If the
-    retailer was registered without a city, the region is inferred here from
-    the first scan location (nearest known city)."""
+    """Refresh the shop's exact pin, city, and street address from where the
+    retailer actually scanned — **latest wins**, every scanning session. A wrong
+    city entered at registration self-corrects to the real one, and the
+    manufacturer gets a precise, visitable address. The address is reverse-
+    geocoded best-effort; if that lookup fails we keep the previous address (the
+    'View on map' link still works from the fresh coordinates)."""
     rid = retailer["id"]
+    city = nearest_city(body.lat, body.lng)
+    address = reverse_address(body.lat, body.lng)
     with get_db() as db:
-        if retailer["location_source"] == "gps":
-            return {"updated": False, "reason": "GPS location already locked"}
-        region = (retailer["region"] or "").strip()
-        backfilled = None
-        if not region:
-            backfilled = nearest_city(body.lat, body.lng)
-            db.execute(
-                """UPDATE retailers SET lat = ?, lng = ?,
-                       location_source = 'gps', region = ? WHERE id = ?""",
-                (body.lat, body.lng, backfilled or "", rid),
-            )
-        else:
-            db.execute(
-                """UPDATE retailers SET lat = ?, lng = ?,
-                       location_source = 'gps' WHERE id = ?""",
-                (body.lat, body.lng, rid),
-            )
-    return {"updated": True, "region": backfilled}
+        db.execute(
+            """UPDATE retailers SET lat = ?, lng = ?, location_source = 'gps',
+                   region = COALESCE(?, region), address = COALESCE(?, address)
+               WHERE id = ?""",
+            (body.lat, body.lng, city, address, rid),
+        )
+    return {"updated": True, "region": city, "address": address}
 
 
 # ---------- distributors (manufacturer-scoped) ----------

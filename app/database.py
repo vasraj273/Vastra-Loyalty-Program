@@ -309,6 +309,9 @@ _MIGRATIONS = [
     # one; the ledger records it per scan (locked at scan time, like region).
     ("retailers", "distributor_id", "INTEGER"),
     ("points_ledger", "distributor_id", "INTEGER"),
+    # Reverse-geocoded street address of the shop, refreshed from the latest
+    # scan location so the manufacturer can find the shop without asking.
+    ("retailers", "address", "TEXT"),
 ]
 
 

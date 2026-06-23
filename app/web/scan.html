@@ -163,7 +163,10 @@ function ensureSessionLoc() {
 // nearest city and bucketed to ~110m), so skip high-accuracy GPS: it's far
 // slower to fix on a phone and frequently times out. A generous timeout and a
 // cached fix make the prompt actually succeed.
-const GEO_OPTS = { enableHighAccuracy: false, timeout: 20000, maximumAge: 60000 };
+// High accuracy so the shop pin is tight enough for the manufacturer to visit.
+// Generous timeout + the tap-to-share fallback keep it reliable if a precise
+// fix is slow; a recent fix (<30s) is reused to avoid re-waiting each scan.
+const GEO_OPTS = { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 };
 
 // Triggered by a tap on the result card. A user gesture is the most reliable
 // way to surface the location prompt on mobile browsers, and it retries even
@@ -200,11 +203,18 @@ function renderLoc(loc) {
   }
 }
 
+// Refresh the shop's pin/city/address from this session's location (latest
+// wins). Runs once per session (ensureSessionLoc caches the fix), so it isn't
+// fired on every individual scan.
 function pinShopOnce(loc) {
-  if (!me || me.location_source === 'gps') return;
+  if (!me) return;
   api('/retailer/location', { method: 'POST', body: JSON.stringify({
     lat: loc.lat, lng: loc.lng }) })
-    .then((r) => { me.location_source = 'gps'; if (r && r.region) me.region = r.region; })
+    .then((r) => {
+      me.location_source = 'gps';
+      if (r && r.region) me.region = r.region;
+      if (r && r.address) me.address = r.address;
+    })
     .catch(() => {});
 }
 

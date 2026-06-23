@@ -494,12 +494,24 @@ export default function Customers() {
                   </td>
                   <td className="mono">{r.phone ?? '—'}</td>
                   <td>
-                    {r.location_source === 'gps' ? (
-                      <span className="loc-badge gps">GPS · exact</span>
+                    {r.location_source === 'gps' && r.lat != null ? (
+                      <div className="loc-cell">
+                        <span className="loc-addr" title={r.address || ''}>
+                          {r.address || r.region || 'Location captured'}
+                        </span>
+                        <a
+                          className="loc-map"
+                          href={`https://www.google.com/maps?q=${r.lat},${r.lng}`}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          View on map →
+                        </a>
+                      </div>
                     ) : r.location_source === 'city' ? (
-                      <span className="loc-badge">city</span>
+                      <span className="loc-badge">city (approx)</span>
                     ) : (
-                      <span className="loc-badge none">pending</span>
+                      <span className="loc-badge none">pending first scan</span>
                     )}
                   </td>
                   <td className="num">{fmt(r.scans)}</td>
