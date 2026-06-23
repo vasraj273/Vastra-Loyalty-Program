@@ -41,6 +41,15 @@
   .scheme-tag { display:inline-block; background:rgba(62,107,79,.12); color:var(--leaf); border:1px solid rgba(62,107,79,.35);
                 border-radius:999px; padding:2px 12px; font-size:12px; margin-top:4px; }
   .balance { border-top:1px dashed var(--line); margin-top:12px; padding-top:10px; font-size:14px; }
+  .backdrop { position:fixed; inset:0; background:rgba(34,41,79,.55); display:flex; align-items:center;
+              justify-content:center; padding:22px; z-index:100; }
+  .lmodal { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:24px 22px;
+            max-width:380px; width:100%; text-align:center; box-shadow:0 20px 60px rgba(34,41,79,.3); }
+  .lmodal .pin { font-size:42px; line-height:1; }
+  .lmodal h2 { font-family:'Fraunces',serif; font-size:21px; margin:6px 0; color:var(--ink); }
+  .lmodal p { font-size:14px; color:var(--soft); margin:0; line-height:1.5; }
+  .lmodal .skip { background:transparent; color:var(--soft); box-shadow:none; font-size:13px;
+                  text-decoration:underline; padding:8px; margin-top:6px; }
 </style>
 </head>
 <body>
@@ -70,10 +79,20 @@
     <div id="resScheme"></div>
     <p class="balance">New balance: <strong id="resBalance"></strong> points</p>
     <p class="breakdown" id="resLoc"></p>
-    <button class="ghost" id="resLocBtn" style="display:none" onclick="shareLocationNow(this)">📍 Share shop location</button>
     <button class="ghost" onclick="again()">Scan another</button>
     <button class="ghost" onclick="go('/web/shop')">Open rewards shop →</button>
     <button class="ghost" onclick="go('/web/claims')">My claims →</button>
+  </div>
+
+  <div class="backdrop" id="locModal" style="display:none">
+    <div class="lmodal">
+      <div class="pin">📍</div>
+      <h2>Share your location</h2>
+      <p id="locMsg">We record where each scan happens so your manufacturer can
+        see your shop on the map. Please allow location to continue.</p>
+      <button id="locAllowBtn" onclick="locAllow(this)">Allow location</button>
+      <button class="skip" onclick="locSkip()">Continue without location</button>
+    </div>
   </div>
 </div>
 
@@ -168,38 +187,66 @@ function ensureSessionLoc() {
 // fix is slow; a recent fix (<30s) is reused to avoid re-waiting each scan.
 const GEO_OPTS = { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 };
 
-// Triggered by a tap on the result card. A user gesture is the most reliable
-// way to surface the location prompt on mobile browsers, and it retries even
-// after an earlier timeout. Clears any cached "no" first.
-function shareLocationNow(btn) {
-  if (!navigator.geolocation) { lastLocNote = 'This browser has no location support.'; renderLoc(null); return; }
-  sessionStorage.removeItem('vl_scan_loc');
-  if (btn) { btn.disabled = true; btn.textContent = 'Getting location…'; }
+// Ask for location up front, BEFORE scanning. Resolves once the retailer has
+// responded (allowed or chose to continue). Never blocks scanning: if they
+// can't/won't share, we record a "skip" for the session and the scan falls back
+// to the retailer's registered city (handled server-side from their region).
+// Shown once per session; a cached fix or prior decision skips it.
+let locResolve = null;
+function promptLocationFirst() {
+  return new Promise((resolve) => {
+    let cached = null;
+    try { cached = JSON.parse(sessionStorage.getItem('vl_scan_loc') || 'null'); } catch {}
+    if (cached) { resolve(); return; }
+    if (!window.isSecureContext || !navigator.geolocation) {
+      sessionStorage.setItem('vl_scan_loc', JSON.stringify({ lat: null, lng: null,
+        note: 'Location unavailable here — using your registered city.' }));
+      resolve(); return;
+    }
+    locResolve = resolve;
+    $('locAllowBtn').disabled = false;
+    $('locAllowBtn').textContent = 'Allow location';
+    $('locModal').style.display = 'flex';
+  });
+}
+
+function closeLocModal() {
+  $('locModal').style.display = 'none';
+  const r = locResolve; locResolve = null; if (r) r();
+}
+
+function locAllow(btn) {
+  btn.disabled = true; btn.textContent = 'Getting location…';
   navigator.geolocation.getCurrentPosition((pos) => {
     const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
     sessionStorage.setItem('vl_scan_loc', JSON.stringify(loc));
     lastLocNote = '';
     pinShopOnce(loc);
-    renderLoc(loc);
+    closeLocModal();
   }, (e) => {
-    lastLocNote = (e && e.code === 1)
-      ? 'Permission denied. Enable Location for this site in your browser settings, then tap again.'
-      : (e && e.code === 3) ? 'Still timing out — make sure phone Location/GPS is on, then tap again.'
-      : 'Location unavailable on this device.';
-    if (btn) { btn.disabled = false; btn.textContent = '📍 Share shop location'; }
-    renderLoc(null);
+    btn.disabled = false; btn.textContent = 'Allow location';
+    $('locMsg').textContent = (e && e.code === 1)
+      ? 'Location is blocked for this site. Enable it in your browser settings, or continue and we\'ll use your registered city.'
+      : 'Couldn\'t get a location fix. Make sure phone Location/GPS is on, or continue and we\'ll use your registered city.';
   }, GEO_OPTS);
 }
 
-// Paint the location status + the manual "share" button on the result card.
+function locSkip() {
+  sessionStorage.setItem('vl_scan_loc', JSON.stringify({ lat: null, lng: null,
+    note: 'Location not shared — using your registered city.' }));
+  lastLocNote = 'Using your registered city (location not shared).';
+  closeLocModal();
+}
+
+// Location status line on the result card (no manual button — location is asked
+// up front now).
 function renderLoc(loc) {
-  const el = $('resLoc'); const btn = $('resLocBtn');
+  const el = $('resLoc');
   if (loc) {
     el.textContent = '📍 Scan location captured.'; el.style.color = '';
-    if (btn) btn.style.display = 'none';
   } else {
-    el.textContent = '⚠️ ' + (lastLocNote || 'Location not captured.'); el.style.color = '#b4541f';
-    if (btn) { btn.style.display = 'inline-block'; btn.disabled = false; btn.textContent = '📍 Share shop location'; }
+    el.textContent = '📍 ' + (lastLocNote || 'Using your registered city.');
+    el.style.color = 'var(--soft)';
   }
 }
 
@@ -265,9 +312,11 @@ function again() { $('manual').value = ''; $('resultCard').classList.add('hidden
 if (!token) {
   gotoLogin();
 } else {
-  api('/retailer/me').then((m) => {
+  api('/retailer/me').then(async (m) => {
     me = m;
     $('whoShop').textContent = m.shop_name;
+    // Ask for location first (before any scan), then handle a deep-linked code.
+    await promptLocationFirst();
     if (pathToken) {
       // Cosmetic: drop the long code from the address bar once we've captured
       // it, so the retailer sees a clean /web/scan URL. The token is already
