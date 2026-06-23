@@ -38,6 +38,10 @@ export default function Dashboard() {
     })
   }, [by_month, year])
 
+  // Totals for the selected year, so the bars reconcile to a number on the card.
+  const yearGen = monthly.reduce((s, m) => s + m.generated, 0)
+  const yearScan = monthly.reduce((s, m) => s + m.scanned, 0)
+
   if (error) return <p className="error">Failed to load dashboard: {error}</p>
   if (!data) return <p className="loading">Loading…</p>
 
@@ -214,7 +218,9 @@ export default function Dashboard() {
           <div className="chart-grid">
             <div className="panel-card chart-card">
               <h3>Month-wise QR generation</h3>
-              <p className="hint">Codes generated each month in {year}.</p>
+              <p className="hint">
+                {year} total: <strong>{fmt(yearGen)}</strong> codes generated.
+              </p>
               <BarChart
                 data={monthly.map((m) => ({ label: m.label, values: [m.generated] }))}
                 series={[{ name: 'Generated', color: '#e07b39' }]}
@@ -223,6 +229,10 @@ export default function Dashboard() {
             </div>
             <div className="panel-card chart-card">
               <h3>Generated vs scanned</h3>
+              <p className="hint">
+                {year}: <strong>{fmt(yearGen)}</strong> generated ·{' '}
+                <strong>{fmt(yearScan)}</strong> scanned.
+              </p>
               <div className="chart-legend">
                 <span><i style={{ background: '#2b3468' }} /> Generated</span>
                 <span><i style={{ background: '#c8472b' }} /> Scanned</span>
