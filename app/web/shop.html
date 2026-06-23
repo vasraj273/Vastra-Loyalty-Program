@@ -17,8 +17,7 @@
   .topbar { position:sticky; top:0; z-index:5; background:var(--paper); border-bottom:3px double var(--ink);
             padding:14px 18px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
   .brand { display:flex; align-items:center; gap:10px; }
-  .brand-mark { font-family:'Fraunces',serif; font-size:20px; color:var(--paper); background:var(--indigo);
-                padding:6px 8px 8px; border-radius:3px 10px 3px 10px; box-shadow:2px 2px 0 var(--madder); }
+  .brand-logo { height:40px; width:auto; display:block; }
   .brand h1 { font-family:'Fraunces',serif; font-size:18px; margin:0; }
   .brand .sub { font-size:9px; letter-spacing:2px; text-transform:uppercase; color:var(--madder); font-weight:600; }
   .wallet { text-align:right; }
@@ -74,7 +73,7 @@
 <body>
   <div class="topbar">
     <div class="brand">
-      <span class="brand-mark">वस्त्र</span>
+      <img class="brand-logo" src="/web/vastra-logo.png" alt="Vastra" />
       <div><h1 id="shopTitle">Rewards Shop</h1><div class="sub">Loyalty rewards</div></div>
     </div>
     <div class="wallet"><div class="label">Your points</div><div class="bal" id="bal">—</div></div>

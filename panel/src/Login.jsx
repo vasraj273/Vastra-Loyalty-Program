@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { post, setSession } from './api.js'
+import vastraLogo from './assets/vastra-logo.png'
 
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState('')
@@ -30,7 +31,7 @@ export default function Login({ onLogin }) {
   return (
     <div className="login-screen">
       <form className="panel-card login-card" onSubmit={submit}>
-        <span className="brand-mark">वस्त्र</span>
+        <img className="brand-logo login-logo" src={vastraLogo} alt="Vastra" />
         <h1>Loyalty Panel</h1>
         <p className="login-sub">Manufacturer &amp; super-admin access</p>
         <label>

@@ -1819,6 +1819,11 @@ def web_claims():
     return FileResponse(WEB_DIR / "claims.html")
 
 
+@app.get("/web/vastra-logo.png", include_in_schema=False)
+def web_logo():
+    return FileResponse(WEB_DIR / "vastra-logo.png", media_type="image/png")
+
+
 if PANEL_DIST.exists():
     app.mount("/panel", StaticFiles(directory=PANEL_DIST, html=True),
               name="panel")

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import vastraLogo from './assets/vastra-logo.png'
 import Dashboard from './tabs/Dashboard.jsx'
 import Schemes from './tabs/Schemes.jsx'
 import Claims from './tabs/Claims.jsx'
@@ -80,7 +81,7 @@ export default function App() {
     <div className="shell">
       <header className="masthead">
         <div className="brand">
-          <span className="brand-mark">वस्त्र</span>
+          <img className="brand-logo" src={vastraLogo} alt="Vastra" />
           <div>
             <h1>{user.display_name}</h1>
             <p className="brand-sub">
