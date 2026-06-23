@@ -859,6 +859,89 @@ def import_retailers_csv(body: ImportIn,
             "errors": errors, "credentials": credentials}
 
 
+@app.post("/products/import")
+def import_products_csv(body: ImportIn,
+                        user: dict = Depends(current_manufacturer)):
+    """Bulk-create products from CSV text. Columns (header row, case-insensitive):
+    name (required), sku (required), loyalty_points (optional, default 0). Rows
+    whose sku already exists are skipped (sku is globally unique)."""
+    import csv as csvmod
+    import io
+    mid = user["id"]
+    reader = csvmod.DictReader(io.StringIO(body.csv))
+    headers = {(h or "").strip().lower() for h in (reader.fieldnames or [])}
+    for req in ("name", "sku"):
+        if req not in headers:
+            raise HTTPException(422, f"CSV must have a '{req}' column")
+    created = skipped = 0
+    errors: list[str] = []
+    with get_db() as db:
+        for i, raw in enumerate(reader, start=2):
+            row = {(k or "").strip().lower(): (v or "").strip()
+                   for k, v in raw.items()}
+            name, sku = row.get("name", ""), row.get("sku", "")
+            if not name or not sku:
+                errors.append(f"row {i}: missing name or sku")
+                continue
+            if db.execute("SELECT 1 FROM products WHERE LOWER(sku) = LOWER(?)",
+                          (sku,)).fetchone():
+                skipped += 1
+                continue
+            raw_pts = row.get("loyalty_points", "") or "0"
+            try:
+                pts = max(0, int(float(raw_pts)))
+            except ValueError:
+                errors.append(f"row {i}: invalid loyalty_points '{raw_pts}'")
+                continue
+            db.execute(
+                """INSERT INTO products (manufacturer_id, name, sku, loyalty_points)
+                   VALUES (?, ?, ?, ?)""",
+                (mid, name, sku, pts),
+            )
+            created += 1
+    return {"created": created, "skipped": skipped, "errors": errors}
+
+
+@app.post("/distributors/import")
+def import_distributors_csv(body: ImportIn,
+                            user: dict = Depends(current_manufacturer)):
+    """Bulk-create distributors from CSV text. Columns (header row,
+    case-insensitive): name (required), phone, region. Rows whose name already
+    exists for this manufacturer are skipped."""
+    import csv as csvmod
+    import io
+    mid = user["id"]
+    reader = csvmod.DictReader(io.StringIO(body.csv))
+    headers = {(h or "").strip().lower() for h in (reader.fieldnames or [])}
+    if "name" not in headers:
+        raise HTTPException(422, "CSV must have a 'name' column")
+    created = skipped = 0
+    errors: list[str] = []
+    with get_db() as db:
+        for i, raw in enumerate(reader, start=2):
+            row = {(k or "").strip().lower(): (v or "").strip()
+                   for k, v in raw.items()}
+            name = row.get("name", "")
+            if not name:
+                errors.append(f"row {i}: missing name")
+                continue
+            if db.execute(
+                """SELECT 1 FROM distributors
+                   WHERE manufacturer_id = ? AND LOWER(name) = LOWER(?)""",
+                (mid, name),
+            ).fetchone():
+                skipped += 1
+                continue
+            db.execute(
+                """INSERT INTO distributors (manufacturer_id, name, phone, region)
+                   VALUES (?, ?, ?, ?)""",
+                (mid, name, row.get("phone", "") or None,
+                 row.get("region", "") or None),
+            )
+            created += 1
+    return {"created": created, "skipped": skipped, "errors": errors}
+
+
 # ---------- QR generation (manufacturer-scoped) ----------
 
 @app.post("/qr/generate", status_code=201)

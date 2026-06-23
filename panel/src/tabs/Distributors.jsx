@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { get, post, patch, del } from '../api.js'
+import ImportResult from '../components/ImportResult.jsx'
 
 const EMPTY = { name: '', phone: '', region: '' }
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
@@ -11,6 +12,27 @@ export default function Distributors() {
   const [editing, setEditing] = useState(null) // {id, name, phone, region}
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [importResult, setImportResult] = useState(null)
+  const fileRef = useRef(null)
+
+  // Bulk import distributors from a CSV file (name, phone, region).
+  const onImportFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (file) e.target.value = '' // allow re-importing the same filename
+    if (!file) return
+    setBusy(true)
+    setError(null)
+    setImportResult(null)
+    try {
+      const csv = await file.text()
+      setImportResult(await post('/distributors/import', { csv }))
+      load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const load = useCallback(() => {
     get('/distributors').then(setList).catch((e) => setError(e.message))
@@ -81,9 +103,26 @@ export default function Distributors() {
         <h2 className="page-title">
           Distributors <span className="count">{list.length}</span>
         </h2>
-        <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
-          {showForm ? 'Close' : '+ Add distributor'}
-        </button>
+        <div className="btn-row">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,text/csv"
+            style={{ display: 'none' }}
+            onChange={onImportFile}
+          />
+          <button
+            className="btn-secondary"
+            disabled={busy}
+            onClick={() => fileRef.current?.click()}
+            title="CSV columns: name, phone, region"
+          >
+            Import CSV
+          </button>
+          <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
+            {showForm ? 'Close' : '+ Add distributor'}
+          </button>
+        </div>
       </div>
       <p className="hint">
         Distributors sit between you and your retailers (you → distributor →
@@ -91,6 +130,7 @@ export default function Distributors() {
         the <strong>distributor</strong> column when importing a CSV.
       </p>
       {error && <p className="error">{error}</p>}
+      <ImportResult result={importResult} onDismiss={() => setImportResult(null)} />
 
       {showForm && (
         <form className="panel-card scheme-form" onSubmit={add}>
