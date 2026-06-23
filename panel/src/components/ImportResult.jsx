@@ -6,7 +6,9 @@ export default function ImportResult({ result, onDismiss }) {
     <div className="panel-card" style={{ marginBottom: 14 }}>
       <div className="schemes-head" style={{ marginBottom: 6 }}>
         <strong>
-          Imported {result.created} · skipped {result.skipped}
+          Imported {result.created}
+          {result.updated ? ` · updated ${result.updated}` : ''} · skipped{' '}
+          {result.skipped}
           {result.errors?.length ? ` · ${result.errors.length} error(s)` : ''}
         </strong>
         <button className="btn-ghost small" onClick={onDismiss}>

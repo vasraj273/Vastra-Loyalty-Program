@@ -859,12 +859,30 @@ def import_retailers_csv(body: ImportIn,
             "errors": errors, "credentials": credentials}
 
 
+# Header names accepted for the points-per-scan value (compared lowercased), so
+# a CSV exported as "PointsPerScan", "Points", etc. still maps correctly.
+_POINTS_ALIASES = ("loyalty_points", "loyalty points", "pointsperscan",
+                   "points_per_scan", "points per scan", "points",
+                   "points_per_code", "pointspercode", "points/scan")
+
+
+def _row_points(row: dict) -> str:
+    """Pull the points value from a CSV row under any accepted column name."""
+    for key in _POINTS_ALIASES:
+        if row.get(key, ""):
+            return row[key]
+    return ""
+
+
 @app.post("/products/import")
 def import_products_csv(body: ImportIn,
                         user: dict = Depends(current_manufacturer)):
-    """Bulk-create products from CSV text. Columns (header row, case-insensitive):
-    name (required), sku (required), loyalty_points (optional, default 0). Rows
-    whose sku already exists are skipped (sku is globally unique)."""
+    """Bulk add/update products from CSV text. Columns (header row,
+    case-insensitive): name (required), sku (required), and the points per scan
+    under any of: loyalty_points / PointsPerScan / points / points_per_scan
+    (optional, default 0). Extra columns (e.g. category, MRP) are ignored. A SKU
+    you already own is **updated** (name + points); a SKU owned by another
+    account is skipped."""
     import csv as csvmod
     import io
     mid = user["id"]
@@ -873,7 +891,7 @@ def import_products_csv(body: ImportIn,
     for req in ("name", "sku"):
         if req not in headers:
             raise HTTPException(422, f"CSV must have a '{req}' column")
-    created = skipped = 0
+    created = updated = skipped = 0
     errors: list[str] = []
     with get_db() as db:
         for i, raw in enumerate(reader, start=2):
@@ -883,23 +901,34 @@ def import_products_csv(body: ImportIn,
             if not name or not sku:
                 errors.append(f"row {i}: missing name or sku")
                 continue
-            if db.execute("SELECT 1 FROM products WHERE LOWER(sku) = LOWER(?)",
-                          (sku,)).fetchone():
-                skipped += 1
-                continue
-            raw_pts = row.get("loyalty_points", "") or "0"
+            raw_pts = _row_points(row)
             try:
-                pts = max(0, int(float(raw_pts)))
+                pts = max(0, int(float(raw_pts))) if raw_pts else 0
             except ValueError:
-                errors.append(f"row {i}: invalid loyalty_points '{raw_pts}'")
+                errors.append(f"row {i}: invalid points '{raw_pts}'")
                 continue
-            db.execute(
-                """INSERT INTO products (manufacturer_id, name, sku, loyalty_points)
-                   VALUES (?, ?, ?, ?)""",
-                (mid, name, sku, pts),
-            )
-            created += 1
-    return {"created": created, "skipped": skipped, "errors": errors}
+            existing = db.execute(
+                "SELECT id, manufacturer_id FROM products WHERE LOWER(sku) = LOWER(?)",
+                (sku,)).fetchone()
+            if existing:
+                if existing["manufacturer_id"] != mid:
+                    skipped += 1
+                    errors.append(f"row {i}: SKU '{sku}' belongs to another account")
+                    continue
+                db.execute(
+                    "UPDATE products SET name = ?, loyalty_points = ? WHERE id = ?",
+                    (name, pts, existing["id"]),
+                )
+                updated += 1
+            else:
+                db.execute(
+                    """INSERT INTO products (manufacturer_id, name, sku, loyalty_points)
+                       VALUES (?, ?, ?, ?)""",
+                    (mid, name, sku, pts),
+                )
+                created += 1
+    return {"created": created, "updated": updated,
+            "skipped": skipped, "errors": errors}
 
 
 @app.post("/distributors/import")
