@@ -132,6 +132,23 @@ Authoritative list at `/docs`. Principal endpoints:
 - Dashboard `by_distributor` sums each distributor's connected **retailers'**
   scans/points — never points held by the distributor.
 
+### 6.1d Dashboard analytics (`GET /analytics/dashboard`)
+- `totals` includes `retailers`, `products`, `scans`, `points_awarded`,
+  `codes_issued`, and redemption-request counts from `gift_claims`:
+  `redeem_total`, `redeem_pending`, `redeem_approved`.
+- `by_region` rolls scans/points up by region; blank/NULL region groups under
+  `'Unspecified'` via `COALESCE(NULLIF(region, ''), 'Unspecified')`.
+- `by_month` is a `{month:'YYYY-MM', generated, scanned}` series (merged in Python
+  from two queries — generation `COUNT` over `qr_codes.created_at` joined to the
+  manufacturer's products, scans `COUNT` over `points_ledger.scanned_at` where
+  `entry_type='scan'`). Month buckets use `substr(x, 1, 7)` (portable across
+  SQLite/Postgres — **not** `strftime`).
+- The panel renders `by_month` as two themed SVG bar charts
+  (`panel/src/components/BarChart.jsx`, a viewBox chart that scales to the card —
+  no charting dependency) under a **year selector**: month-wise generation, and
+  generated-vs-scanned grouped bars. Stat cards are all-time; charts are per-month
+  within the selected year and show a per-year subtotal so bars reconcile to cards.
+
 ### 6.1c CSV imports
 - All three imports (`/retailers/import`, `/distributors/import`,
   `/products/import`) take CSV text as JSON (stdlib `csv`, no `python-multipart`)

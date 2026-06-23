@@ -65,7 +65,9 @@ One FastAPI service serves three surfaces from a single container:
 ## 4. Feature surface (current)
 
 **Manufacturer panel** (`/panel`, top-right burger menu):
-Dashboard (stats, region + by-distributor tables, clustered India scan map),
+Dashboard (two stat rows — funnel totals + redemption requests; region +
+by-distributor tables; clustered India scan map; and a **QR analytics** section
+with a year selector + month-wise generation and generated-vs-scanned bar charts),
 Customers (retailers — with assign-distributor, per-row map link, **Import CSV**),
 Distributors (**Import CSV**), Products (**Import CSV**), Schemes, Gifts, Claims,
 Redemptions. Super admin sees a Manufacturers tab instead.

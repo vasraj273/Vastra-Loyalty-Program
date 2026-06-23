@@ -74,8 +74,15 @@ schemes are unverifiable and easy to abuse.
   the address and a "View on map" link precise enough to visit the shop.
 - **Each scan records its own GPS**, so the dashboard map shows where scans
   actually happen, clustered with zoom to street level.
-- Dashboard shows totals, scans by region/product, by distributor, top retailers,
-  and the interactive India scan map.
+- Dashboard shows two stat rows (funnel totals — retailers, products, codes issued,
+  codes scanned, points awarded — plus redemption-request counts: total, pending,
+  approved), scans by region/product, by distributor, top retailers, and the
+  interactive India scan map. Scans from retailers with no region group under
+  **"Unspecified"** (no blank row).
+- A **QR analytics** section charts QR activity over time: a **year selector** drives
+  a **month-wise QR generation** bar chart and a **generated-vs-scanned** monthly
+  comparison. Stat cards are all-time; the charts are per-month within the selected
+  year, each showing a per-year subtotal so the bars reconcile to the cards.
 
 ### 4.5 Distributors (manufacturer → distributor → retailer)
 - Manufacturers can record which **distributor** each retailer is supplied by, to

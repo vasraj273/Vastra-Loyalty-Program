@@ -38,7 +38,7 @@ npm run build --prefix panel
 
 ## Admin panel
 
-React + Vite app in `panel/`. A top-right **burger menu** holds the manufacturer tabs: **Dashboard** (stats, region + by-distributor tables, clustered India map of scan locations), **Customers** (retailers), **Distributors**, **Products**, **Schemes**, **Gifts**, **Claims**, **Redemptions**. Super admin gets a **Manufacturers** tab instead. `panel/src/api.js` is the only fetch layer.
+React + Vite app in `panel/`. A top-right **burger menu** holds the manufacturer tabs: **Dashboard** (two stat rows — funnel totals + redemption requests; region + by-distributor tables; clustered India map of scan locations; and a **QR analytics** section with a year selector and month-wise *generation* and *generated-vs-scanned* SVG bar charts), **Customers** (retailers), **Distributors**, **Products**, **Schemes**, **Gifts**, **Claims**, **Redemptions**. Super admin gets a **Manufacturers** tab instead. `panel/src/api.js` is the only fetch layer.
 
 ## Core flow
 
@@ -48,7 +48,7 @@ React + Vite app in `panel/`. A top-right **burger menu** holds the manufacturer
 3. **Generate** (Vastra) — `POST /qr/generate {product_id, quantity, points_per_code?, items_per_box?}` → N unique codes. Each = QR token + 6-char manual fallback (alphabet excludes 0/O/1/I). With `items_per_box`, parent (box) codes wrap children. Points are **frozen per batch** at generation.
 4. **Save / print** — `POST /qr/batches/{id}/save`; `GET /qr/batches/{id}/print` → A4 PDF (QR + product + manual code). Saved batches print any time.
 5. **Scan** (YourApp) — `POST /scan {code, lat?, lng?}`. The retailer comes from the auth token, never the body. `code` accepts the QR token or manual code (case/dash/space insensitive). One-time redemption; awards batch points (+ best active scheme bonus) and logs a `points_ledger` row with product, region, and the scan's GPS. Scanning a box parent registers all its children at once. Duplicate → `409`.
-6. **Track** (panel) — `GET /analytics/dashboard` (totals, by region/product, top retailers, map points). Wallet/history via `/retailer/wallet`.
+6. **Track** (panel) — `GET /analytics/dashboard` (totals incl. redemption-request counts, by region/product/distributor, top retailers, map points, and `by_month` generation-vs-scan series). Wallet/history via `/retailer/wallet`.
 
 ## How points & location work
 

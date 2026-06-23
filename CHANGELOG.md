@@ -4,6 +4,33 @@ Notable changes to the Loyalty QR API. Dates are when the change went live on
 production (Render + Neon). Schema changes are additive (`_MIGRATIONS`), applied
 by `migrate()` on startup — no reseed, existing data preserved.
 
+## 2026-06-23 (dashboard expansion)
+
+### Added
+- **Second stat row on the Dashboard — redemption requests.** Three new cards:
+  total redeem requests, pending requests, approved requests. Backed by new
+  `redeem_total` / `redeem_pending` / `redeem_approved` counts (from `gift_claims`)
+  in the `/analytics/dashboard` `totals`.
+- **QR analytics charts.** A new Dashboard section with a **Year selector** and two
+  themed, hand-rolled SVG bar charts (no new dependency, `panel/src/components/BarChart.jsx`):
+  **Month-wise QR generation** (codes generated per month) and **Generated vs scanned**
+  (grouped bars per month). Powered by a new `by_month` array
+  (`{month, generated, scanned}`) on `/analytics/dashboard`, bucketed with
+  `substr(created_at, 1, 7)` so it is portable across SQLite and Postgres. Each chart
+  shows a per-year subtotal so the bars reconcile to a number on the card.
+
+### Changed
+- **First stat row reordered into a funnel:** Retailers · Products · Codes issued ·
+  Codes scanned · Points awarded (the old "Scans" card is relabelled "Codes scanned").
+- **Region-wise card no longer shows a blank row.** Scans from retailers with no
+  region (region is optional at registration) are now grouped under the label
+  **"Unspecified"** instead of an empty cell (`COALESCE(NULLIF(region, ''), 'Unspecified')`).
+
+### Notes
+- Cards are **all-time** totals; the QR charts are **per-month within the selected
+  year**, which is why a single bar never equals an all-time card. The charts' bars
+  always sum to the card totals across all years.
+
 ## 2026-06-23
 
 ### Added
