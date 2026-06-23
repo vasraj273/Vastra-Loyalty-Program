@@ -291,12 +291,97 @@ body {
   line-height: 1;
 }
 
+.stat-row-3 { grid-template-columns: repeat(3, 1fr); }
+
+.stat-card.accent-gold {
+  background: var(--gold);
+  color: #2c2208;
+  border-color: var(--gold);
+}
+.stat-card.accent-gold .stat-label { color: #5a4708; }
+
+.stat-card.accent-leaf {
+  background: var(--leaf);
+  color: var(--paper);
+  border-color: var(--leaf);
+}
+.stat-card.accent-leaf .stat-label { color: #cfe3d6; }
+
 .reveal { animation: rise 0.5s both; animation-delay: var(--d, 0ms); }
 
 @keyframes rise {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: none; }
 }
+
+/* --- QR analytics charts --- */
+.chart-section { margin-top: 8px; }
+
+.chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.chart-head h2 { margin: 0; }
+
+.chart-toolbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.chart-toolbar select {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 14px;
+  letter-spacing: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+.chart-card h3 {
+  font-family: 'Fraunces', serif;
+  font-size: 16px;
+  margin: 0 0 2px;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 12px;
+  color: var(--ink-soft);
+  margin: 4px 0 6px;
+}
+.chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.chart-legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+.bar-chart { width: 100%; height: auto; display: block; margin-top: 6px; }
+.bar-chart .bc-grid { stroke: var(--line); stroke-width: 1; }
+.bar-chart .bc-ytick,
+.bar-chart .bc-xlabel,
+.bar-chart .bc-vlabel {
+  font-family: 'IBM Plex Mono', monospace;
+  fill: var(--ink-soft);
+}
+.bar-chart .bc-ytick { font-size: 10px; text-anchor: end; }
+.bar-chart .bc-xlabel { font-size: 11px; text-anchor: middle; }
+.bar-chart .bc-vlabel { font-size: 10px; text-anchor: middle; fill: var(--ink); }
+.bar-chart .bc-bar { transition: opacity 0.15s; }
+.bar-chart .bc-bar:hover { opacity: 0.82; }
 
 .map-section {
   display: grid;
@@ -853,8 +938,8 @@ th.actions-col { text-align: right; }
 }
 
 @media (max-width: 960px) {
-  .stat-row { grid-template-columns: repeat(2, 1fr); }
-  .map-section, .two-col { grid-template-columns: 1fr; }
+  .stat-row, .stat-row-3 { grid-template-columns: repeat(2, 1fr); }
+  .map-section, .two-col, .chart-grid { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr 1fr; }
   .masthead { flex-direction: column; align-items: stretch; }
   .nav-menu { align-self: flex-end; padding-bottom: 16px; }

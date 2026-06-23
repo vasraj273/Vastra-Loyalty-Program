@@ -1,16 +1,42 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { get } from '../api.js'
 import IndiaMap from '../components/IndiaMap.jsx'
+import BarChart from '../components/BarChart.jsx'
 
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 export default function Dashboard() {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
+  const [year, setYear] = useState(null)
 
   useEffect(() => {
     get('/analytics/dashboard').then(setData).catch((e) => setError(e.message))
   }, [])
+
+  const by_month = data?.by_month ?? []
+
+  // Years present in the data, newest first; default the selector to the latest.
+  const years = useMemo(() => {
+    const set = new Set(by_month.map((m) => m.month.slice(0, 4)))
+    return [...set].sort().reverse()
+  }, [by_month])
+
+  useEffect(() => {
+    if (years.length && (year === null || !years.includes(year))) setYear(years[0])
+  }, [years, year])
+
+  // 12 rows (Jan–Dec) for the selected year, zero-filled for missing months.
+  const monthly = useMemo(() => {
+    const byKey = Object.fromEntries(by_month.map((m) => [m.month, m]))
+    return MONTHS.map((label, i) => {
+      const key = `${year}-${String(i + 1).padStart(2, '0')}`
+      const row = byKey[key] || {}
+      return { label, generated: row.generated || 0, scanned: row.scanned || 0 }
+    })
+  }, [by_month, year])
 
   if (error) return <p className="error">Failed to load dashboard: {error}</p>
   if (!data) return <p className="loading">Loading…</p>
@@ -30,16 +56,31 @@ export default function Dashboard() {
           <span className="stat-value">{fmt(totals.products)}</span>
         </article>
         <article className="stat-card reveal" style={{ '--d': '120ms' }}>
-          <span className="stat-label">Scans</span>
+          <span className="stat-label">Codes issued</span>
+          <span className="stat-value">{fmt(totals.codes_issued)}</span>
+        </article>
+        <article className="stat-card reveal" style={{ '--d': '180ms' }}>
+          <span className="stat-label">Codes scanned</span>
           <span className="stat-value">{fmt(totals.scans)}</span>
         </article>
-        <article className="stat-card reveal accent" style={{ '--d': '180ms' }}>
+        <article className="stat-card reveal accent" style={{ '--d': '240ms' }}>
           <span className="stat-label">Points awarded</span>
           <span className="stat-value">{fmt(totals.points_awarded)}</span>
         </article>
-        <article className="stat-card reveal" style={{ '--d': '240ms' }}>
-          <span className="stat-label">Codes issued</span>
-          <span className="stat-value">{fmt(totals.codes_issued)}</span>
+      </section>
+
+      <section className="stat-row stat-row-3">
+        <article className="stat-card reveal" style={{ '--d': '0ms' }}>
+          <span className="stat-label">Redeem requests</span>
+          <span className="stat-value">{fmt(totals.redeem_total)}</span>
+        </article>
+        <article className="stat-card reveal accent-gold" style={{ '--d': '60ms' }}>
+          <span className="stat-label">Pending requests</span>
+          <span className="stat-value">{fmt(totals.redeem_pending)}</span>
+        </article>
+        <article className="stat-card reveal accent-leaf" style={{ '--d': '120ms' }}>
+          <span className="stat-label">Approved requests</span>
+          <span className="stat-value">{fmt(totals.redeem_approved)}</span>
         </article>
       </section>
 
@@ -147,6 +188,57 @@ export default function Dashboard() {
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section className="chart-section">
+        <div className="chart-head">
+          <h2>QR analytics</h2>
+          {years.length > 0 && (
+            <label className="chart-toolbar">
+              Year
+              <select value={year ?? ''} onChange={(e) => setYear(e.target.value)}>
+                {years.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+
+        {by_month.length === 0 ? (
+          <div className="panel-card">
+            <p className="empty">No QR codes generated yet — generate codes in the
+              Vastra app to see monthly trends here.</p>
+          </div>
+        ) : (
+          <div className="chart-grid">
+            <div className="panel-card chart-card">
+              <h3>Month-wise QR generation</h3>
+              <p className="hint">Codes generated each month in {year}.</p>
+              <BarChart
+                data={monthly.map((m) => ({ label: m.label, values: [m.generated] }))}
+                series={[{ name: 'Generated', color: '#e07b39' }]}
+                showValues
+              />
+            </div>
+            <div className="panel-card chart-card">
+              <h3>Generated vs scanned</h3>
+              <div className="chart-legend">
+                <span><i style={{ background: '#2b3468' }} /> Generated</span>
+                <span><i style={{ background: '#c8472b' }} /> Scanned</span>
+              </div>
+              <BarChart
+                data={monthly.map((m) => ({
+                  label: m.label, values: [m.generated, m.scanned],
+                }))}
+                series={[
+                  { name: 'Generated', color: '#2b3468' },
+                  { name: 'Scanned', color: '#c8472b' },
+                ]}
+              />
+            </div>
+          </div>
+        )}
       </section>
     </div>
   )

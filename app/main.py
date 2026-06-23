@@ -1456,7 +1456,15 @@ def dashboard(user: dict = Depends(current_manufacturer)):
                  (SELECT COUNT(*) FROM qr_codes c
                   JOIN qr_batches b ON b.id = c.batch_id
                   JOIN products p ON p.id = b.product_id
-                  WHERE p.manufacturer_id = :m) AS codes_issued""",
+                  WHERE p.manufacturer_id = :m) AS codes_issued,
+                 (SELECT COUNT(*) FROM gift_claims
+                  WHERE manufacturer_id = :m) AS redeem_total,
+                 (SELECT COUNT(*) FROM gift_claims
+                  WHERE manufacturer_id = :m AND status = 'pending')
+                     AS redeem_pending,
+                 (SELECT COUNT(*) FROM gift_claims
+                  WHERE manufacturer_id = :m AND status = 'approved')
+                     AS redeem_approved""",
             {"m": mid},
         ).fetchone()
         by_region = db.execute(
@@ -1498,6 +1506,24 @@ def dashboard(user: dict = Depends(current_manufacturer)):
                GROUP BY r.id ORDER BY points DESC LIMIT 10""",
             (mid,),
         ).fetchall()
+        # Monthly QR generation vs scans. Month bucket is substr(...,1,7) ->
+        # 'YYYY-MM', portable across both SQLite and Postgres (no strftime).
+        gen_rows = db.execute(
+            """SELECT substr(c.created_at, 1, 7) AS month, COUNT(*) AS n
+               FROM qr_codes c
+               JOIN qr_batches b ON b.id = c.batch_id
+               JOIN products p ON p.id = b.product_id
+               WHERE p.manufacturer_id = ?
+               GROUP BY substr(c.created_at, 1, 7)""",
+            (mid,),
+        ).fetchall()
+        scan_month_rows = db.execute(
+            """SELECT substr(scanned_at, 1, 7) AS month, COUNT(*) AS n
+               FROM points_ledger
+               WHERE manufacturer_id = ? AND entry_type = 'scan'
+               GROUP BY substr(scanned_at, 1, 7)""",
+            (mid,),
+        ).fetchall()
         # One dot per place a retailer actually scanned: use the per-scan GPS
         # captured at scan time, falling back to the retailer's pinned shop
         # coords for scans recorded without a location. Bucketed in Python by
@@ -1530,6 +1556,19 @@ def dashboard(user: dict = Depends(current_manufacturer)):
         if s["scanned_at"] and s["scanned_at"] > (b["last_scan"] or ""):
             b["last_scan"] = s["scanned_at"]
     map_points = list(buckets.values())
+    # Merge generation + scan counts into one {month, generated, scanned} series.
+    months: dict[str, dict] = {}
+    for row in gen_rows:
+        m = row["month"]
+        if m:
+            months.setdefault(m, {"month": m, "generated": 0, "scanned": 0})
+            months[m]["generated"] = row["n"]
+    for row in scan_month_rows:
+        m = row["month"]
+        if m:
+            months.setdefault(m, {"month": m, "generated": 0, "scanned": 0})
+            months[m]["scanned"] = row["n"]
+    by_month = [months[m] for m in sorted(months)]
     return {
         "totals": dict(totals),
         "by_region": [dict(r) for r in by_region],
@@ -1537,6 +1576,7 @@ def dashboard(user: dict = Depends(current_manufacturer)):
         "by_distributor": [dict(r) for r in by_distributor],
         "top_retailers": [dict(r) for r in top_retailers],
         "map_points": [dict(r) for r in map_points],
+        "by_month": by_month,
     }
 
 
