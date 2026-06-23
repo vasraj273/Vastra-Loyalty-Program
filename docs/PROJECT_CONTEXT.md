@@ -1,0 +1,131 @@
+# Project Context — Vastra Loyalty Program
+
+A one-stop orientation to what this project is, who it serves, how it's built, and
+where it stands. For deeper detail see the companion docs linked at the end.
+
+**Status:** Live in production on Render + Neon (Postgres) with real data.
+**Last updated:** 2026-06-23.
+
+---
+
+## 1. What it is
+
+A **multi-tenant loyalty-program backend** for the VastraApp ecosystem. The market
+flow is **manufacturer → distributor → retailer**:
+
+- **Manufacturers** (textile makers) generate QR codes in their **Vastra** app and
+  print them on product/box stickers.
+- **Retailers** (shops) scan those codes in **YourApp** when they receive stock,
+  earning loyalty **points** they later redeem for **gifts**.
+- Manufacturers get analytics on who is selling what, where, and through which
+  distributor.
+
+One FastAPI service serves three surfaces from a single container:
+
+| Surface | Path | Audience |
+|---|---|---|
+| **REST API** (`app/`) | `/…`, docs at `/docs` | source of truth for all clients |
+| **React admin panel** (`panel/`, built to `panel/dist`) | `/panel` | manufacturers + super admin |
+| **Plain-HTML webview pages** (`app/web/`) | `/web/*` | retailers (inside YourApp), manufacturers (Vastra) |
+
+## 2. Who uses it (principals)
+
+- **Super admin** — creates manufacturer accounts; owns no catalog data.
+- **Manufacturer** — manages products, schemes, gifts, retailers, distributors;
+  generates/prints QR; sees analytics, claims, redemptions.
+- **Retailer** — logs into the webview, scans codes, sees wallet, redeems gifts.
+- **Distributor** — *not a login.* A tracking/attribution entity only (see below).
+
+## 3. Core concepts
+
+- **Points & the wallet ledger.** `points_ledger` is a typed transaction log
+  (`scan`, `gift_redeem`, `refund`, `adjustment`, `transfer`). A retailer's
+  **balance = SUM(points)**; scan analytics filter `entry_type='scan'`. Always add
+  a ledger row rather than mutating a balance.
+- **QR codes.** Each encodes a `{QR_BASE_URL}/{token}` URL; the token is a random,
+  opaque `uuid4`. A 6-char `manual_code` is the typed fallback. **Points are frozen
+  per batch at generation**, so old stickers keep their promised value. Box (parent)
+  codes register all their child items in one scan.
+- **Schemes.** Time-bound bonus points on top of base, optionally scoped to
+  products; the most generous active scheme wins (no stacking).
+- **Gifts & redemptions.** Retailers claim gifts (points deducted, proof reference
+  issued); manufacturers approve (hand over) or reject (auto-refund).
+- **Distributors.** A manufacturer-scoped layer between manufacturer and retailer,
+  for **tracking/attribution only** — **no login, no wallet, no points of their
+  own.** A retailer optionally links to one; each scan records the distributor at
+  scan time (point-in-time). The dashboard rolls up each distributor's *retailers'*
+  scans/points.
+- **Location.** Two layers: the retailer's **shop pin + address** (refreshed from
+  the latest scan, see §5) and **per-scan coordinates** on the ledger (for the map).
+  Geocoding city↔coords is **offline** (`app/geo.py` `CITY_COORDS`); the precise
+  street address uses free OpenStreetMap **Nominatim**, best-effort.
+- **Confirmations.** Every points-changing action (claim, transfer, adjust,
+  approve/reject) requires a themed confirmation dialog first.
+
+## 4. Feature surface (current)
+
+**Manufacturer panel** (`/panel`, top-right burger menu):
+Dashboard (stats, region + by-distributor tables, clustered India scan map),
+Customers (retailers — with assign-distributor, per-row map link, **Import CSV**),
+Distributors (**Import CSV**), Products (**Import CSV**), Schemes, Gifts, Claims,
+Redemptions. Super admin sees a Manufacturers tab instead.
+
+**Retailer webview** (`/web`): home/login, **scan** (camera + manual code, with a
+location-verification popup), rewards **shop**, **claims** history.
+
+**Bulk import (CSV-as-JSON, no file-upload dependency):**
+`/retailers/import` (auto-logins + find-or-create distributor),
+`/products/import` (flexible points column, upserts by SKU),
+`/distributors/import`.
+
+## 5. How location works (current behavior)
+
+- The scan page asks for location **up front, before scanning**, via a trust-framed
+  popup ("Confirm it's really you" — anti-fraud verification). High-accuracy GPS.
+- **If allowed:** the shop's pin, city (`region`), and a precise reverse-geocoded
+  **street address** (`retailers.address`) are **refreshed every scanning session —
+  latest wins.** So a wrong registered city self-corrects to the real one. The
+  Customers tab shows the address + a **"View on map"** link to the exact pin.
+- **If denied/blocked/unavailable:** scanning is **not blocked** — the user taps the
+  ✕ to close and the scan falls back to the retailer's **registered city** (shown in
+  the Claims view). No one is locked out of earning.
+- The dashboard map plots per-scan events, **clustered** (`leaflet.markercluster`)
+  with zoom to street level.
+
+## 6. Tech & architecture
+
+- **Backend:** Python 3.12+, FastAPI, Pydantic v2, Uvicorn. PDF/QR via `reportlab`,
+  `qrcode`.
+- **Database — dual backend** (`app/database.py`): Postgres when `DATABASE_URL` is
+  set, SQLite otherwise. Code is written in **SQLite style everywhere** (`?`
+  placeholders, `cur.lastrowid`, `datetime('now')`); a `_PGConn` adapter translates
+  to psycopg. Schema evolution is **additive & idempotent** — new tables in
+  `SCHEMA`, new columns in `_MIGRATIONS`, applied by `migrate()` on every startup.
+  **Never reseed/drop the Neon DB.** (Gotcha: no `;` inside `SCHEMA` comments.)
+- **Auth:** opaque bearer tokens; two principals (`auth_tokens` for
+  manufacturers/admin, `retailer_tokens` for retailers); PBKDF2 passwords. Retailer
+  logins are auto-created from the shop name.
+- **Multi-tenancy:** every owned row carries `manufacturer_id`; retailer endpoints
+  derive the retailer from the token, never the body.
+- **Panel:** React + Vite; `panel/src/api.js` is the only fetch layer.
+
+## 7. Deployment & ops
+
+- **Render** Docker web service (`vastra-loyalty.onrender.com`, free tier — spins
+  down on idle, ~50s cold start), **auto-deploys from GitHub `main`**.
+- **Neon** Postgres holds production data (`DATABASE_URL`). Tables are
+  created/migrated on boot; the app **never seeds**.
+- `seed.py` is destructive (local/initial only) and does **not** run `_MIGRATIONS`.
+
+## 8. Known gaps / backlog
+
+- Rate limiting and scan/redeem race-condition (TOCTOU) hardening are not yet done.
+- Precise address quality depends on GPS accuracy + Nominatim; the "View on map"
+  link is the reliable fallback.
+
+## 9. More detail
+
+- **README.md** — setup, endpoints, flow.
+- **CLAUDE.md** — contributor conventions (SQL style, multi-tenancy, gotchas).
+- **docs/PRD.md** — product requirements. **docs/TRD.md** — technical design.
+- **DEPLOY.md** — deployment/ops. **CHANGELOG.md** — dated change history.

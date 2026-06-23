@@ -4,6 +4,43 @@ Notable changes to the Loyalty QR API. Dates are when the change went live on
 production (Render + Neon). Schema changes are additive (`_MIGRATIONS`), applied
 by `migrate()` on startup — no reseed, existing data preserved.
 
+## 2026-06-23
+
+### Added
+- **Precise shop location + address.** When a retailer shares location it is now
+  reverse-geocoded to a full street address (free OpenStreetMap Nominatim, in
+  `geo.reverse_address`) and stored in the new nullable `retailers.address`
+  column. The Customers "Location" column shows the address plus a Google Maps
+  **"View on map"** link to the exact pin. Scan capture switched to high-accuracy
+  GPS for a tighter pin.
+- **CSV import for Products and Distributors.** "Import CSV" buttons on both tabs
+  (matching Customers) with new `POST /products/import` and
+  `POST /distributors/import`, reporting created/updated/skipped/errors via a
+  shared `ImportResult` component.
+
+### Changed
+- **Shop location now updates every scan (latest wins).** Previously the pin
+  locked on the first GPS scan and a registered city never corrected. Now each
+  scanning session refreshes the pin, city, and address — so a wrong city (e.g.
+  Surat) self-corrects to where the retailer actually scans (Ahmedabad).
+- **Location asked up front, before scanning.** A trust-framed verification popup
+  ("Confirm it's really you") replaces the after-the-fact capture and the "Share
+  shop location" button. It is **not** a hard block: a retailer who can't grant it
+  taps ✕ and the scan falls back to their registered city (shown in Claims).
+- **Map dots clustered** (`leaflet.markercluster`) with street-level zoom; per-dot
+  precision tightened to ~11m.
+
+### Fixed
+- **Product CSV import ignored the points column** unless it was named exactly
+  `loyalty_points` — a CSV with `PointsPerScan` imported everything at 0 points.
+  Points are now matched under several header aliases, and import **upserts by
+  SKU** (updates an existing product instead of skipping), so re-importing a
+  corrected CSV fixes existing rows with no manual editing.
+
+### Notes
+- New DB column: `retailers.address` (nullable, additive).
+- Added `docs/PROJECT_CONTEXT.md` — a full project orientation/summary.
+
 ## 2026-06-19
 
 ### Added

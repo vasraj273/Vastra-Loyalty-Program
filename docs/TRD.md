@@ -1,6 +1,6 @@
 # Technical Requirements Document — Vastra Loyalty Program
 
-**Status:** Live (Render + Neon) · **Last updated:** 2026-06-18
+**Status:** Live (Render + Neon) · **Last updated:** 2026-06-23
 
 Companion to **PRD.md** (product) and **CLAUDE.md** (contributor conventions).
 This document describes the technical design as built.
@@ -38,7 +38,7 @@ Tables (`app/database.py` `SCHEMA`, evolved additively via `_MIGRATIONS`):
 | `manufacturers` | Manufacturer + super-admin accounts | `username`, `password_hash`, `display_name`, `is_admin` |
 | `auth_tokens` | Manufacturer/admin bearer tokens | `token`, `manufacturer_id` |
 | `products` | Catalog | `manufacturer_id`, `name`, `sku`, `loyalty_points` |
-| `retailers` | Shops | `manufacturer_id`, `shop_name`, `region`, `username`, `password_hash`, `lat`, `lng`, `location_source`, `distributor_id` |
+| `retailers` | Shops | `manufacturer_id`, `shop_name`, `region`, `username`, `password_hash`, `lat`, `lng`, `location_source`, `address`, `distributor_id` |
 | `retailer_tokens` | Retailer bearer tokens | `token`, `retailer_id` |
 | `distributors` | Distributor layer (tracking only, no login/points) | `manufacturer_id`, `name`, `phone`, `region` |
 | `schemes` / `scheme_products` | Time-bound bonus campaigns + scope | `bonus_points`, `start_date`, `end_date` |
@@ -90,9 +90,11 @@ Authoritative list at `/docs`. Principal endpoints:
 - **Auth:** `POST /auth/login`, `/auth/logout`, `/auth/retailer/login`,
   `/auth/retailer/logout`, `GET /auth/me`, `/retailer/me`.
 - **Admin:** `GET|POST /admin/manufacturers`.
-- **Catalog:** `GET|POST /products`, `PATCH|DELETE /products/{id}`;
-  `GET|POST /schemes`, `DELETE /schemes/{id}`; `GET|POST /gifts`,
-  `PATCH|DELETE /gifts/{id}`.
+- **Catalog:** `GET|POST /products`, `PATCH|DELETE /products/{id}`,
+  `POST /products/import`; `GET|POST /schemes`, `DELETE /schemes/{id}`;
+  `GET|POST /gifts`, `PATCH|DELETE /gifts/{id}`.
+- **Bulk import (CSV-as-JSON):** `POST /retailers/import`,
+  `POST /distributors/import`, `POST /products/import`.
 - **Retailers:** `GET|POST /retailers`, `PATCH|DELETE /retailers/{id}`,
   `POST /retailers/{id}/adjust`, `POST /retailers/transfer`,
   `POST /retailers/import` (CSV-as-JSON bulk create), `POST /retailer/location`.
@@ -130,18 +132,34 @@ Authoritative list at `/docs`. Principal endpoints:
 - Dashboard `by_distributor` sums each distributor's connected **retailers'**
   scans/points — never points held by the distributor.
 
+### 6.1c CSV imports
+- All three imports (`/retailers/import`, `/distributors/import`,
+  `/products/import`) take CSV text as JSON (stdlib `csv`, no `python-multipart`)
+  and return `created`/`skipped`/`errors`.
+- `/products/import` reads the points value under several header aliases
+  (`_row_points`: `PointsPerScan`, `points`, `points_per_scan`, `loyalty_points`,
+  …) and **upserts by SKU** — a product you already own is *updated* (name +
+  points) instead of skipped; a SKU owned by another account is skipped. Also
+  returns `updated`.
+
 ### 6.2 Location
-- **Shop pin:** `retailers.lat/lng` + `location_source` (`city` from
-  `geo.coords_for(region)`, or `gps` locked on first `POST /retailer/location`).
-- **Optional region backfill:** if `region` is blank, the first GPS fix
-  reverse-geocodes via `geo.nearest_city(lat,lng)` (offline haversine over
-  `CITY_COORDS`) and sets `region`.
-- **Per-scan capture (client, `app/web/scan.html`):** captured once per session
-  (`sessionStorage`), low-accuracy (`enableHighAccuracy:false`, 20s timeout, cached
-  fix), reused for every scan that session; sent as optional `lat/lng` on `/scan`.
-  Requires a secure context; result screen shows status + a tap-to-share fallback.
+- **Shop pin + address, latest-wins:** `POST /retailer/location` (called once per
+  scanning session by `scan.html`) updates `retailers.lat/lng`, sets
+  `location_source='gps'`, re-derives `region` via `geo.nearest_city`, and sets
+  `retailers.address` via `geo.reverse_address` (free OpenStreetMap Nominatim,
+  best-effort, ~5s timeout; `COALESCE`s to keep the previous value on failure).
+  No lock — each session refreshes it, so a wrong registered city self-corrects.
+- **Client capture (`app/web/scan.html`):** location is requested **up front**
+  before scanning via a trust-framed popup; high-accuracy GPS
+  (`enableHighAccuracy:true`, 20s timeout, 30s cache), once per session
+  (`sessionStorage`), sent as optional `lat/lng` on `/scan`. Secure context
+  required. If denied/blocked the popup is dismissed (✕) and the scan proceeds on
+  the registered city — never hard-blocked.
+- **Panel:** the Customers "Location" column shows `address` + a Google Maps
+  `?q=lat,lng` "View on map" link; the city falls back to `region`.
 - **Map (`/analytics/dashboard` → `map_points`):** scan events grouped by retailer +
-  rounded coords (~110m), weighted by count, falling back to the shop pin.
+  rounded coords (~11m), weighted by count, clustered client-side
+  (`leaflet.markercluster`, zoom 18), falling back to the shop pin.
 
 ### 6.3 QR payload
 - Each code encodes `{QR_BASE_URL}/{token}` (default `/web/scan`). The token is a

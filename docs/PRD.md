@@ -1,6 +1,6 @@
 # Product Requirements Document — Vastra Loyalty Program
 
-**Status:** Live in production · **Last updated:** 2026-06-18 · **Owner:** Vastra team
+**Status:** Live in production · **Last updated:** 2026-06-23 · **Owner:** Vastra team
 
 ## 1. Overview
 
@@ -63,14 +63,19 @@ schemes are unverifiable and easy to abuse.
   once per code; scanning a box parent registers all its children at once.
 
 ### 4.4 Location & analytics
-- A retailer's **city is optional** at registration; if omitted, it is detected
-  from their **first scan's GPS** (nearest known city).
-- The retailer's **shop location** pins to exact GPS on the first scan that shares
-  location, and is then locked.
-- **Each scan records its own GPS** (captured once per session, reused that
-  session), so the dashboard map shows where scans actually happen over time.
-- Dashboard shows totals, scans by region/product, top retailers, and an
-  interactive India map of scan locations.
+- A retailer's **city is optional** at registration.
+- Scanning asks for location **up front**, framed as a fairness/anti-fraud check
+  ("confirm it's really you"). It is **not mandatory** — a retailer who can't or
+  won't share it closes the popup (✕) and the scan proceeds on their registered
+  city; nobody is locked out of earning.
+- When location is shared, the retailer's **shop pin, city, and a precise street
+  address** are refreshed from the **latest** scan (latest wins) — so a wrong
+  registered city self-corrects to where they actually are. The manufacturer sees
+  the address and a "View on map" link precise enough to visit the shop.
+- **Each scan records its own GPS**, so the dashboard map shows where scans
+  actually happen, clustered with zoom to street level.
+- Dashboard shows totals, scans by region/product, by distributor, top retailers,
+  and the interactive India scan map.
 
 ### 4.5 Distributors (manufacturer → distributor → retailer)
 - Manufacturers can record which **distributor** each retailer is supplied by, to
@@ -95,9 +100,11 @@ schemes are unverifiable and easy to abuse.
 ## 5. Key user flows
 
 1. **Onboard manufacturer** — super admin creates account → manufacturer logs in.
-2. **Set up rewards** — manufacturer adds products, schemes, gifts; adds retailers
-   (login auto-created; city + distributor optional), or bulk-imports retailers
-   from a CSV that auto-creates and links their distributors.
+2. **Set up rewards** — manufacturer adds products, schemes, gifts, retailers, and
+   distributors (retailer logins auto-created; city + distributor optional). Each of
+   Products, Distributors, and Customers also supports **bulk CSV import** (the
+   retailer CSV auto-creates + links distributors; the product CSV upserts by SKU
+   and accepts a flexible points column).
 3. **Generate & print** — pick product → quantity → generate → save → print A4 PDF
    of QR labels.
 4. **Earn** — retailer logs into YourApp → scans QR (or types manual code) →
