@@ -1460,10 +1460,12 @@ def dashboard(user: dict = Depends(current_manufacturer)):
             {"m": mid},
         ).fetchone()
         by_region = db.execute(
-            """SELECT region, COUNT(*) AS scans, SUM(points) AS points
+            """SELECT COALESCE(NULLIF(region, ''), 'Unspecified') AS region,
+                      COUNT(*) AS scans, SUM(points) AS points
                FROM points_ledger WHERE manufacturer_id = ?
                  AND entry_type = 'scan'
-               GROUP BY region ORDER BY scans DESC""",
+               GROUP BY COALESCE(NULLIF(region, ''), 'Unspecified')
+               ORDER BY scans DESC""",
             (mid,),
         ).fetchall()
         by_product = db.execute(
