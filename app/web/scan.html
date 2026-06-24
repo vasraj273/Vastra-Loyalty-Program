@@ -422,6 +422,7 @@ function again() {
   clearConfetti();
   $('resultCard').classList.remove('pop'); $('resPoints').classList.remove('pop');
   $('resultCard').classList.add('hidden'); $('scanCard').classList.remove('hidden');
+  startCamera();  // reopen the camera straight away — no extra tap to rescan
 }
 
 if (!token) {

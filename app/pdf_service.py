@@ -19,11 +19,13 @@ CELL_W = (PAGE_W - 2 * MARGIN) / COLS
 CELL_H = (PAGE_H - 2 * MARGIN) / ROWS
 QR_SIZE = min(CELL_W, CELL_H) - 14 * mm
 
-# box (parent) sticker grid — fewer, larger
+# box (parent) sticker grid — fewer, larger. The QR is kept smaller than the
+# cell so the title sits above it and the product name + code fit below it,
+# all inside the border.
 BCOLS, BROWS = 2, 3
 BCELL_W = (PAGE_W - 2 * MARGIN) / BCOLS
 BCELL_H = (PAGE_H - 2 * MARGIN) / BROWS
-BQR_SIZE = min(BCELL_W, BCELL_H) - 26 * mm
+BQR_SIZE = min(BCELL_W, BCELL_H) - 38 * mm
 
 
 def _fmt(code: str) -> str:
@@ -72,29 +74,31 @@ def build_pdf(product_name: str, sku: str,
             col, rown = slot % BCOLS, slot // BCOLS
             cell_x = MARGIN + col * BCELL_W
             cell_y = PAGE_H - MARGIN - (rown + 1) * BCELL_H
+            cx = cell_x + BCELL_W / 2
 
             # border so a box sticker is unmistakable on the carton
+            inner_x, inner_y = cell_x + 5 * mm, cell_y + 5 * mm
             pdf.setLineWidth(1.2)
-            pdf.rect(cell_x + 5 * mm, cell_y + 5 * mm,
-                     BCELL_W - 10 * mm, BCELL_H - 10 * mm)
+            pdf.rect(inner_x, inner_y, BCELL_W - 10 * mm, BCELL_H - 10 * mm)
 
+            # Title sits just below the top border.
             pdf.setFont("Helvetica-Bold", 13)
-            pdf.drawCentredString(cell_x + BCELL_W / 2,
-                                  cell_y + BCELL_H - 16 * mm,
+            pdf.drawCentredString(cx, cell_y + BCELL_H - 14 * mm,
                                   f"BOX — {items} items")
 
-            qr_x = cell_x + (BCELL_W - BQR_SIZE) / 2
-            qr_y = cell_y + (BCELL_H - BQR_SIZE) / 2 - 4 * mm
+            # QR shifted up so both labels fit below it, above the bottom line.
+            qr_x = cx - BQR_SIZE / 2
+            qr_y = inner_y + 17 * mm
             pdf.drawImage(
                 ImageReader(io.BytesIO(render_png(token, box_size=8))),
                 qr_x, qr_y, BQR_SIZE, BQR_SIZE)
 
+            # Product name then manual code, both inside the border.
             pdf.setFont("Helvetica-Bold", 8)
-            pdf.drawCentredString(cell_x + BCELL_W / 2, qr_y - 4 * mm,
+            pdf.drawCentredString(cx, inner_y + 9 * mm,
                                   f"{product_name} ({sku})")
             pdf.setFont("Helvetica-Bold", 12)
-            pdf.drawCentredString(cell_x + BCELL_W / 2, qr_y - 10 * mm,
-                                  _fmt(manual_code))
+            pdf.drawCentredString(cx, inner_y + 3 * mm, _fmt(manual_code))
 
     pdf.showPage()
     pdf.save()
