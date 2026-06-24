@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { get, post, patch, del } from '../api.js'
 import { useConfirm } from '../confirm.jsx'
+import { downloadCSV, today } from '../utils/csv.js'
 
 const EMPTY = { name: '', shop_name: '', region: '', phone: '', distributor_id: '' }
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
@@ -139,6 +140,26 @@ export default function Customers() {
     }
   }
 
+  // Download every customer (current list) as CSV; distributor id → name.
+  const exportCsv = () => {
+    const dName = (id) =>
+      distributors.find((d) => d.id === id)?.name ?? ''
+    downloadCSV(
+      `customers-${today()}.csv`,
+      [
+        { label: 'Shop', key: 'shop_name' },
+        { label: 'Owner', key: 'name' },
+        { label: 'City', key: 'region' },
+        { label: 'Distributor', format: (r) => dName(r.distributor_id) },
+        { label: 'Phone', key: 'phone' },
+        { label: 'Address', key: 'address' },
+        { label: 'Scans', format: (r) => r.scans ?? 0 },
+        { label: 'Points', format: (r) => r.points ?? 0 },
+      ],
+      list,
+    )
+  }
+
   const doAdjust = async () => {
     const n = Number(pts)
     const ok = await confirm({
@@ -226,6 +247,13 @@ export default function Customers() {
             }}
           >
             Transfer points
+          </button>
+          <button
+            className="btn-secondary"
+            disabled={list.length === 0}
+            onClick={exportCsv}
+          >
+            ↓ Export CSV
           </button>
           <input
             ref={fileRef}

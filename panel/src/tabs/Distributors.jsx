@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { get, post, patch, del } from '../api.js'
 import ImportResult from '../components/ImportResult.jsx'
+import { downloadCSV, today } from '../utils/csv.js'
 
 const EMPTY = { name: '', phone: '', region: '' }
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
@@ -78,6 +79,20 @@ export default function Distributors() {
     }
   }
 
+  const exportCsv = () => {
+    downloadCSV(
+      `distributors-${today()}.csv`,
+      [
+        { label: 'Distributor', key: 'name' },
+        { label: 'Phone', key: 'phone' },
+        { label: 'Region', key: 'region' },
+        { label: 'Retailers', format: (d) => d.retailers ?? 0 },
+        { label: 'Scans', format: (d) => d.scans ?? 0 },
+      ],
+      list,
+    )
+  }
+
   const remove = async (d) => {
     if (
       !window.confirm(
@@ -104,6 +119,13 @@ export default function Distributors() {
           Distributors <span className="count">{list.length}</span>
         </h2>
         <div className="btn-row">
+          <button
+            className="btn-secondary"
+            disabled={list.length === 0}
+            onClick={exportCsv}
+          >
+            ↓ Export CSV
+          </button>
           <input
             ref={fileRef}
             type="file"

@@ -40,12 +40,40 @@
   .badge.rejected { background:#f0ddd6; color:var(--madder); border:1px solid rgba(200,71,43,.4); }
   .links { margin-top:18px; font-size:13px; }
   .links a { color:var(--madder); cursor:pointer; }
+  .navmenu { position:relative; flex:none; margin-left:auto; }
+  .menu-btn { padding:9px; background:transparent; box-shadow:none; border:1px solid var(--line);
+              border-radius:9px; display:inline-flex; flex-direction:column; gap:4px; cursor:pointer; }
+  .menu-btn:active { transform:none; box-shadow:none; }
+  .menu-btn i { display:block; width:22px; height:2px; background:var(--indigo); border-radius:2px; transition:transform .2s,opacity .2s; }
+  .menu-btn.open i:nth-child(1){ transform:translateY(6px) rotate(45deg); }
+  .menu-btn.open i:nth-child(2){ opacity:0; }
+  .menu-btn.open i:nth-child(3){ transform:translateY(-6px) rotate(-45deg); }
+  .menu-pop { position:absolute; right:0; top:calc(100% + 8px); min-width:210px; background:var(--card);
+              border:1px solid var(--line); border-radius:12px; padding:8px; z-index:60;
+              box-shadow:0 16px 40px rgba(34,41,79,.22); display:none; }
+  .menu-pop.open { display:block; }
+  .menu-pop button { width:100%; margin:0; text-align:left; font-size:15px; font-weight:500; padding:11px 14px;
+                     border:none; background:transparent; color:var(--ink); box-shadow:none; border-radius:8px; cursor:pointer; }
+  .menu-pop button.active { color:var(--madder); font-weight:600; background:rgba(200,71,43,.08); }
+  .menu-pop button.logout { color:var(--madder); }
+  .menu-pop .sep { height:1px; background:var(--line); margin:6px 8px; }
 </style>
 </head>
 <body>
   <div class="topbar">
     <img class="brand-logo" src="/web/vastra-logo.png" alt="Vastra" />
     <h1>My Claims</h1>
+    <div class="navmenu">
+      <button class="menu-btn" id="navBtn" onclick="toggleMenu()" aria-label="Menu" aria-haspopup="menu"><i></i><i></i><i></i></button>
+      <div class="menu-pop" id="navPop" role="menu">
+        <button onclick="go('/web')">Home</button>
+        <button onclick="go('/web/scan')">Scan</button>
+        <button onclick="go('/web/shop')">Reward shop</button>
+        <button class="active" onclick="go('/web/claims')">Claims history</button>
+        <div class="sep"></div>
+        <button class="logout" onclick="menuLogout()">Log out</button>
+      </div>
+    </div>
   </div>
   <div class="wrap">
     <div class="error" id="err"></div>
@@ -60,6 +88,23 @@ const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','
 const nf = (n) => Number(n).toLocaleString('en-IN');
 function go(p) { window.location.href = p; }
 function gotoLogin() { window.location.href = '/web?next=' + encodeURIComponent('/web/claims'); }
+
+function toggleMenu() {
+  $('navPop').classList.toggle('open');
+  $('navBtn').classList.toggle('open');
+}
+document.addEventListener('click', (e) => {
+  const pop = $('navPop'), btn = $('navBtn');
+  if (!pop || !pop.classList.contains('open')) return;
+  if (!pop.contains(e.target) && !btn.contains(e.target)) {
+    pop.classList.remove('open'); btn.classList.remove('open');
+  }
+});
+async function menuLogout() {
+  try { await fetch('/auth/retailer/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } }); } catch {}
+  localStorage.removeItem('vl_rtoken'); sessionStorage.removeItem('vl_scan_loc');
+  window.location.href = '/web';
+}
 
 async function api(path) {
   const res = await fetch(path, { headers: { 'Authorization': 'Bearer ' + token } });

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { get, post, patch, del } from '../api.js'
+import { downloadCSV, today } from '../utils/csv.js'
 
 // Shows the image, or a clean emoji fallback if it fails to load. Uses React
 // state instead of DOM surgery so one broken image never affects other cards.
@@ -119,6 +120,20 @@ export default function Gifts() {
     reader.readAsDataURL(file)
   }
 
+  const exportCsv = () => {
+    downloadCSV(
+      `rewards-${today()}.csv`,
+      [
+        { label: 'Reward', key: 'name' },
+        { label: 'Description', key: 'description' },
+        { label: 'Points', key: 'points_cost' },
+        { label: 'In shop', format: (g) => (g.active ? 'yes' : 'hidden') },
+        { label: 'Claims', format: (g) => g.claims ?? 0 },
+      ],
+      list,
+    )
+  }
+
   const remove = async (g) => {
     if (!window.confirm(`Delete "${g.name}"?`)) return
     setError(null)
@@ -138,9 +153,18 @@ export default function Gifts() {
         <h2 className="page-title">
           Reward shop <span className="count">{list.length}</span>
         </h2>
-        <button className="btn-primary" onClick={showForm ? () => setShowForm(false) : openAdd}>
-          {showForm ? 'Close' : '+ Add reward'}
-        </button>
+        <div className="btn-row">
+          <button
+            className="btn-secondary"
+            disabled={list.length === 0}
+            onClick={exportCsv}
+          >
+            ↓ Export CSV
+          </button>
+          <button className="btn-primary" onClick={showForm ? () => setShowForm(false) : openAdd}>
+            {showForm ? 'Close' : '+ Add reward'}
+          </button>
+        </div>
       </div>
       <p className="hint">
         Rewards retailers redeem with their points. Claims arrive in the{' '}

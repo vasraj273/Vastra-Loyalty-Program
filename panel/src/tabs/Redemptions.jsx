@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { get, post } from '../api.js'
 import { useConfirm } from '../confirm.jsx'
+import { downloadCSV, today } from '../utils/csv.js'
 
 const STATUSES = ['pending', 'approved', 'rejected']
 
@@ -9,7 +10,40 @@ export default function Redemptions() {
   const [filter, setFilter] = useState('pending')
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(null)
+  const [exporting, setExporting] = useState(false)
   const confirm = useConfirm()
+
+  // Export every redemption (all three statuses) into one file with a status
+  // column, regardless of which tab is currently shown.
+  const exportCsv = async () => {
+    setExporting(true)
+    setError(null)
+    try {
+      const all = (
+        await Promise.all(
+          STATUSES.map((s) => get(`/gift-claims?status=${s}`)),
+        )
+      ).flat()
+      downloadCSV(
+        `redemptions-${today()}.csv`,
+        [
+          { label: 'When', key: 'created_at' },
+          { label: 'Reference', format: (c) => c.reference || `CLM-${c.id}` },
+          { label: 'Shop', key: 'shop_name' },
+          { label: 'Owner', key: 'retailer_name' },
+          { label: 'Region', key: 'region' },
+          { label: 'Gift', key: 'gift_name' },
+          { label: 'Points', key: 'points_spent' },
+          { label: 'Status', key: 'status' },
+        ],
+        all,
+      )
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const load = useCallback(() => {
     const q = filter ? `?status=${filter}` : ''
@@ -68,6 +102,14 @@ export default function Redemptions() {
             {s[0].toUpperCase() + s.slice(1)}
           </button>
         ))}
+        <button
+          className="btn-secondary"
+          style={{ marginLeft: 'auto' }}
+          disabled={exporting}
+          onClick={exportCsv}
+        >
+          {exporting ? 'Exporting…' : '↓ Export CSV'}
+        </button>
       </div>
 
       {error && <p className="error">{error}</p>}

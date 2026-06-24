@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { get, post, patch, del } from '../api.js'
 import ImportResult from '../components/ImportResult.jsx'
+import GenerateQrModal from '../components/GenerateQrModal.jsx'
+import { downloadCSV, today } from '../utils/csv.js'
 
 const EMPTY = { name: '', sku: '', loyalty_points: 10 }
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
@@ -13,7 +15,21 @@ export default function Products() {
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const [importResult, setImportResult] = useState(null)
+  const [showGenerate, setShowGenerate] = useState(false)
   const fileRef = useRef(null)
+
+  const exportCsv = () => {
+    downloadCSV(
+      `products-${today()}.csv`,
+      [
+        { label: 'Product', key: 'name' },
+        { label: 'SKU', key: 'sku' },
+        { label: 'Points per scan', key: 'loyalty_points' },
+        { label: 'Scans', format: (p) => p.scans ?? 0 },
+      ],
+      list,
+    )
+  }
 
   // Bulk import products from a CSV file (name, sku, loyalty_points).
   const onImportFile = async (e) => {
@@ -96,16 +112,19 @@ export default function Products() {
           Products <span className="count">{list.length}</span>
         </h2>
         <div className="btn-row">
-          <a
+          <button
             className="btn-secondary"
-            href={import.meta.env.DEV
-              ? 'http://127.0.0.1:8000/web/generate'
-              : '/web/generate'}
-            target="_blank"
-            rel="noreferrer"
+            onClick={() => setShowGenerate(true)}
           >
-            Generate QR ↗
-          </a>
+            Generate QR
+          </button>
+          <button
+            className="btn-secondary"
+            disabled={list.length === 0}
+            onClick={exportCsv}
+          >
+            ↓ Export CSV
+          </button>
           <input
             ref={fileRef}
             type="file"
@@ -267,6 +286,13 @@ export default function Products() {
           </tbody>
         </table>
       </div>
+
+      {showGenerate && (
+        <GenerateQrModal
+          products={list}
+          onClose={() => setShowGenerate(false)}
+        />
+      )}
     </div>
   )
 }

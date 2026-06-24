@@ -1409,22 +1409,45 @@ def list_claims(
         where += " AND l.scanned_at <= ?"
         args.append(date_to)
 
+    # A box (parent) scan writes one ledger row per child code; collapse those
+    # into a single claim so the list isn't flooded with duplicate retailer
+    # rows. Children of one box share the same qr_codes.parent_token (a box is
+    # scanned once), so COALESCE(parent_token, token) is a stable group key —
+    # NULL parent_token (plain scans) groups on the unique token, i.e. one row
+    # each. Done at query time, so it also tidies existing data (no migration).
+    group_key = "COALESCE(q.parent_token, l.token)"
     with get_db() as db:
         total = db.execute(
-            f"SELECT COUNT(*) AS n FROM points_ledger l{where}", args
+            f"""SELECT COUNT(*) AS n FROM (
+                  SELECT 1 FROM points_ledger l
+                  JOIN qr_codes q ON q.token = l.token
+                  {where} GROUP BY {group_key}
+                ) sub""",
+            args,
         ).fetchone()["n"]
         rows = db.execute(
-            f"""SELECT l.id, l.scanned_at, l.points, l.base_points,
-                       l.bonus_points, l.region, l.token,
+            f"""SELECT MIN(l.id) AS id, l.scanned_at,
+                       COUNT(*) AS item_count,
+                       SUM(l.points) AS points,
+                       SUM(l.base_points) AS base_points,
+                       SUM(l.bonus_points) AS bonus_points,
+                       l.region, MAX(q.parent_token) AS parent_token,
+                       {group_key} AS token,
                        p.id AS product_id, p.name AS product_name, p.sku,
                        r.id AS retailer_id, r.name AS retailer_name,
                        r.shop_name, r.lat, r.lng,
                        s.id AS scheme_id, s.name AS scheme_name
                 FROM points_ledger l
+                JOIN qr_codes q ON q.token = l.token
                 JOIN products p ON p.id = l.product_id
                 JOIN retailers r ON r.id = l.retailer_id
                 LEFT JOIN schemes s ON s.id = l.scheme_id
-                {where} ORDER BY l.scanned_at DESC LIMIT ? OFFSET ?""",
+                {where}
+                GROUP BY {group_key}, l.scanned_at, l.region,
+                         p.id, p.name, p.sku,
+                         r.id, r.name, r.shop_name, r.lat, r.lng,
+                         s.id, s.name
+                ORDER BY l.scanned_at DESC LIMIT ? OFFSET ?""",
             args + [limit, offset],
         ).fetchall()
     return {
