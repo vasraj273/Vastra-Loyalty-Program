@@ -1,31 +1,34 @@
-/* ── Indigo Ledger ───────────────────────────────────────────────
-   Textile-trade aesthetic: indigo dye + madder red on cream paper.
-   Fraunces (display) · IBM Plex Sans (body) · IBM Plex Mono (data) */
+/* ── Vastra brand ────────────────────────────────────────────────
+   Bright blue (#0191D0) + dark blue (#1D466F) + coral (#FB624B) on a
+   light cool base. Helvetica (Regular/Bold). Functional status colors
+   kept: leaf = approved, gold = pending. */
 
 :root {
-  --paper: #f6f1e6;
-  --paper-deep: #efe7d6;
-  --card: #fbf8f1;
-  --ink: #22294f;
-  --ink-soft: #4c5170;
-  --line: #ddd2bb;
-  --indigo: #2b3468;
-  --madder: #c8472b;
-  --madder-deep: #a83a22;
+  --paper: #edf3f8;
+  --paper-deep: #e0eaf2;
+  --card: #ffffff;
+  --ink: #112134;
+  --ink-soft: #45576b;
+  --line: #d2dee9;
+  --primary: #0191d0;
+  --primary-deep: #0379ae;
+  --indigo: #1d466f;
+  --madder: #fb624b;
+  --madder-deep: #e34a33;
   --leaf: #3e6b4f;
   --gold: #b98a2f;
-  --shadow: 0 1px 2px rgba(34, 41, 79, 0.08), 0 8px 24px rgba(34, 41, 79, 0.07);
+  --shadow: 0 1px 2px rgba(17, 33, 52, 0.08), 0 8px 24px rgba(17, 33, 52, 0.07);
 }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  font-family: 'IBM Plex Sans', sans-serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   color: var(--ink);
   background:
-    radial-gradient(1200px 500px at 85% -10%, rgba(43, 52, 104, 0.07), transparent 60%),
-    radial-gradient(900px 400px at -10% 110%, rgba(200, 71, 43, 0.06), transparent 55%),
+    radial-gradient(1200px 500px at 85% -10%, rgba(1, 145, 208, 0.07), transparent 60%),
+    radial-gradient(900px 400px at -10% 110%, rgba(251, 98, 75, 0.06), transparent 55%),
     var(--paper);
   min-height: 100vh;
 }
@@ -48,7 +51,7 @@ body {
 .brand-logo.login-logo { height: 84px; margin-bottom: 4px; }
 
 .brand h1 {
-  font-family: 'Fraunces', serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-weight: 700;
   font-size: 26px;
   margin: 0;
@@ -71,7 +74,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 14px;
-  font-family: 'Fraunces', serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-size: 16px;
   color: var(--ink);
   background: var(--card);
@@ -83,7 +86,7 @@ body {
   transition: border-color 0.15s, color 0.15s;
 }
 
-.burger:hover { border-color: var(--madder); color: var(--madder); }
+.burger:hover { border-color: var(--primary); color: var(--primary); }
 .burger-current { font-weight: 600; }
 
 .burger-lines { display: inline-flex; flex-direction: column; gap: 4px; }
@@ -95,7 +98,7 @@ body {
   border-radius: 2px;
   transition: transform 0.2s, opacity 0.2s, background 0.15s;
 }
-.burger:hover .burger-lines i { background: var(--madder); }
+.burger:hover .burger-lines i { background: var(--primary); }
 .burger.open .burger-lines i:nth-child(1) { transform: translateY(6px) rotate(45deg); }
 .burger.open .burger-lines i:nth-child(2) { opacity: 0; }
 .burger.open .burger-lines i:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
@@ -122,7 +125,7 @@ body {
 }
 
 .menu-item {
-  font-family: 'Fraunces', serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-size: 15px;
   text-align: left;
   padding: 11px 14px;
@@ -136,17 +139,17 @@ body {
 
 .menu-item:hover { background: var(--paper-deep); color: var(--ink); }
 .menu-item.active {
-  color: var(--madder);
+  color: var(--primary-deep);
   font-weight: 600;
-  background: rgba(200, 71, 43, 0.08);
+  background: rgba(1, 145, 208, 0.10);
 }
 
 .menu-sep { height: 1px; background: var(--line); margin: 6px 8px; }
 .menu-item.logout { color: var(--madder-deep); }
-.menu-item.logout:hover { background: rgba(168, 58, 34, 0.1); color: var(--madder-deep); }
+.menu-item.logout:hover { background: rgba(227, 74, 51, 0.12); color: var(--madder-deep); }
 
 /* ── shared ── */
-.page-title { font-family: 'Fraunces', serif; font-size: 24px; margin: 0; }
+.page-title { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-weight: 700; font-size: 24px; margin: 0; }
 
 .panel-card {
   background: var(--card);
@@ -157,7 +160,8 @@ body {
 }
 
 .panel-card h2 {
-  font-family: 'Fraunces', serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 700;
   font-size: 17px;
   margin: 0 0 12px;
 }
@@ -167,14 +171,14 @@ body {
 .loading, .empty { color: var(--ink-soft); font-style: italic; }
 
 .error {
-  background: #f7e3dd;
+  background: #fee9e5;
   border: 1px solid var(--madder);
   color: var(--madder-deep);
   padding: 10px 14px;
   border-radius: 8px;
 }
 
-.mono { font-family: 'IBM Plex Mono', monospace; font-size: 0.92em; }
+.mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 0.92em; }
 .sub { color: var(--ink-soft); font-size: 0.88em; }
 .nowrap { white-space: nowrap; }
 
@@ -192,16 +196,16 @@ body {
 
 .data-table td { padding: 9px 10px; border-bottom: 1px solid var(--line); }
 .data-table tbody tr:hover { background: var(--paper-deep); }
-.data-table .num { text-align: right; font-family: 'IBM Plex Mono', monospace; }
-.data-table th.num { font-family: 'IBM Plex Sans', sans-serif; }
+.data-table .num { text-align: right; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+.data-table th.num { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; }
 
 /* ── buttons ── */
 .btn-primary {
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-weight: 600;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 700;
   font-size: 14px;
-  color: var(--paper);
-  background: var(--madder);
+  color: #fff;
+  background: var(--primary);
   border: none;
   border-radius: 8px;
   padding: 10px 20px;
@@ -218,10 +222,10 @@ body {
 
 .btn-secondary {
   display: inline-block;
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-weight: 600;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 700;
   font-size: 14px;
-  color: var(--paper);
+  color: #fff;
   background: var(--indigo);
   border: none;
   border-radius: 8px;
@@ -274,7 +278,7 @@ body {
   border-color: var(--indigo);
 }
 
-.stat-card.accent .stat-label { color: #c9cfeb; }
+.stat-card.accent .stat-label { color: #b9d4e8; }
 
 .stat-label {
   font-size: 11px;
@@ -285,7 +289,7 @@ body {
 }
 
 .stat-value {
-  font-family: 'Fraunces', serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-size: 32px;
   font-weight: 600;
   line-height: 1;
@@ -337,7 +341,7 @@ body {
   color: var(--ink-soft);
 }
 .chart-toolbar select {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 14px;
   letter-spacing: 0;
   padding: 6px 10px;
@@ -359,7 +363,8 @@ body {
   flex-direction: column;
 }
 .chart-card h3 {
-  font-family: 'Fraunces', serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 700;
   font-size: 16px;
   margin: 0 0 2px;
 }
@@ -379,7 +384,7 @@ body {
 .bar-chart .bc-ytick,
 .bar-chart .bc-xlabel,
 .bar-chart .bc-vlabel {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   fill: var(--ink-soft);
 }
 .bar-chart .bc-ytick { font-size: 13px; text-anchor: end; }
@@ -403,7 +408,7 @@ body {
 
 .region-card { overflow-y: auto; max-height: 600px; }
 
-.map-tip { display: flex; flex-direction: column; gap: 2px; font-family: 'IBM Plex Sans', sans-serif; }
+.map-tip { display: flex; flex-direction: column; gap: 2px; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; }
 .map-tip strong { font-size: 13px; }
 .map-tip span { font-size: 12px; }
 .tip-sub { color: #777; }
@@ -412,14 +417,14 @@ body {
 .scan-dot-icon { background: none; border: 0; }
 .scan-dot {
   display: block; box-sizing: border-box; border-radius: 50%;
-  background: rgba(200, 71, 43, 0.55); border: 1.5px solid #b8431f;
+  background: rgba(1, 145, 208, 0.55); border: 1.5px solid #0379ae;
 }
-/* Cluster bubbles tinted to the panel's terracotta palette. */
+/* Cluster bubbles tinted to the brand blue palette. */
 .marker-cluster div {
-  background: rgba(184, 67, 31, 0.85); color: #fff;
-  font-family: 'IBM Plex Sans', sans-serif; font-weight: 600;
+  background: rgba(1, 145, 208, 0.85); color: #fff;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-weight: 600;
 }
-.marker-cluster { background: rgba(184, 67, 31, 0.35); }
+.marker-cluster { background: rgba(1, 145, 208, 0.35); }
 
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
@@ -447,7 +452,7 @@ body {
 }
 
 .scheme-form input, .filters select, .filters input {
-  font-family: 'IBM Plex Sans', sans-serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-size: 14px;
   padding: 9px 10px;
   border: 1px solid var(--line);
@@ -485,7 +490,8 @@ body {
 .scheme-section { margin-bottom: 28px; }
 
 .section-title {
-  font-family: 'Fraunces', serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 700;
   font-size: 18px;
   margin: 0 0 12px;
   display: flex;
@@ -494,7 +500,7 @@ body {
 }
 
 .section-title .count {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 12px;
   background: var(--paper-deep);
   border: 1px solid var(--line);
@@ -525,17 +531,17 @@ body {
 .scheme-card.previous { opacity: 0.72; }
 
 .scheme-card header { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
-.scheme-card h4 { font-family: 'Fraunces', serif; font-size: 16px; margin: 0; }
+.scheme-card h4 { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-weight: 700; font-size: 16px; margin: 0; }
 
 .scheme-card .bonus {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-weight: 600;
   color: var(--madder);
   white-space: nowrap;
 }
 
 .scheme-card .desc { margin: 0; font-size: 13px; color: var(--ink-soft); }
-.scheme-card .dates { margin: 0; font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
+.scheme-card .dates { margin: 0; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: 12px; }
 .scheme-card .coverage { margin: 0; font-size: 12px; color: var(--ink-soft); }
 .scheme-card .btn-ghost { align-self: flex-start; }
 
@@ -563,7 +569,7 @@ body {
 
 .filters .total {
   margin-left: auto;
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 13px;
   color: var(--ink-soft);
 }
@@ -573,15 +579,15 @@ body {
 .claims-table { font-size: 13px; }
 
 .bonus-split {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 11px;
   color: var(--leaf);
 }
 
 .scheme-tag {
-  background: rgba(62, 107, 79, 0.12);
-  color: var(--leaf);
-  border: 1px solid rgba(62, 107, 79, 0.35);
+  background: rgba(1, 145, 208, 0.12);
+  color: var(--primary-deep);
+  border: 1px solid rgba(1, 145, 208, 0.35);
   border-radius: 999px;
   padding: 2px 10px;
   font-size: 12px;
@@ -619,7 +625,8 @@ body {
 .login-card .brand-logo { align-self: center; }
 
 .login-card h1 {
-  font-family: 'Fraunces', serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 700;
   font-size: 24px;
   margin: 8px 0 0;
   text-align: center;
@@ -647,7 +654,7 @@ body {
 }
 
 .login-card input {
-  font-family: 'IBM Plex Sans', sans-serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-size: 15px;
   padding: 11px 12px;
   border: 1px solid var(--line);
@@ -673,7 +680,7 @@ body {
 
 /* ── customers ── */
 .page-title .count {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 13px;
   background: var(--paper-deep);
   border: 1px solid var(--line);
@@ -687,7 +694,7 @@ body {
 .search {
   width: 100%;
   max-width: 360px;
-  font-family: 'IBM Plex Sans', sans-serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-size: 14px;
   padding: 9px 12px;
   border: 1px solid var(--line);
@@ -728,7 +735,7 @@ body {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
 }
-.loc-map { font-size: 12px; font-weight: 600; color: var(--madder); white-space: nowrap; }
+.loc-map { font-size: 12px; font-weight: 600; color: var(--primary-deep); white-space: nowrap; }
 .loc-map:hover { text-decoration: underline; }
 
 .actions-col { white-space: nowrap; text-align: right; }
@@ -781,7 +788,7 @@ th.actions-col { text-align: right; }
 }
 
 .image-row input[type='file'] {
-  font-family: 'IBM Plex Sans', sans-serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-size: 13px;
   padding: 8px 10px;
   border: 1px dashed var(--line);
@@ -815,12 +822,12 @@ th.actions-col { text-align: right; }
   position: absolute;
   top: 12px;
   left: 12px;
-  background: var(--madder);
+  background: var(--primary);
   color: #fff;
   border-radius: 6px;
   padding: 5px 9px;
   line-height: 1.05;
-  box-shadow: 2px 2px 0 rgba(34, 41, 79, 0.25);
+  box-shadow: 2px 2px 0 rgba(17, 33, 52, 0.25);
 }
 
 .gift-badge .pts { font-weight: 700; font-size: 15px; }
@@ -840,7 +847,8 @@ th.actions-col { text-align: right; }
 
 .gift-body { padding: 13px 14px 15px; display: flex; flex-direction: column; gap: 5px; flex: 1; }
 .gift-body h4 {
-  font-family: 'Fraunces', serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 700;
   font-size: 15px;
   margin: 0;
   text-transform: uppercase;
@@ -854,7 +862,7 @@ th.actions-col { text-align: right; }
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(34, 41, 79, 0.45);
+  background: rgba(26, 0, 85, 0.48);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -876,7 +884,8 @@ th.actions-col { text-align: right; }
 }
 
 .modal h3 {
-  font-family: 'Fraunces', serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 700;
   font-size: 19px;
   margin: 0;
 }
@@ -893,7 +902,7 @@ th.actions-col { text-align: right; }
 }
 
 .modal input, .modal select {
-  font-family: 'IBM Plex Sans', sans-serif;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-size: 15px;
   padding: 10px 12px;
   border: 1px solid var(--line);
@@ -915,10 +924,10 @@ th.actions-col { text-align: right; }
 .confirm-msg { margin: 0; font-size: 14px; color: var(--ink-soft); line-height: 1.5; }
 
 .btn-danger {
-  font-family: 'IBM Plex Sans', sans-serif;
-  font-weight: 600;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 700;
   font-size: 14px;
-  color: var(--paper);
+  color: #fff;
   background: var(--madder-deep);
   border: none;
   border-radius: 8px;

@@ -1,6 +1,6 @@
 # Product Requirements Document — Vastra Loyalty Program
 
-**Status:** Live in production · **Last updated:** 2026-06-23 · **Owner:** Vastra team
+**Status:** Live in production · **Last updated:** 2026-06-24 · **Owner:** Vastra team
 
 ## 1. Overview
 
@@ -61,6 +61,12 @@ schemes are unverifiable and easy to abuse.
   promised value even if product points later change.
 - Scanning (QR token or manual code) credits the **logged-in retailer** only,
   once per code; scanning a box parent registers all its children at once.
+- QR generation happens **in the panel** (a modal on the Products tab: generate →
+  print PDF → save for later → browse saved batches), so the manufacturer never
+  leaves the admin UI.
+- In the Claims view a **box (parent) scan is shown as a single row** (`📦 Box ·
+  N items`, points summed) rather than one row per child code, so a box scan does
+  not flood the list. Individual scans remain one row each.
 
 ### 4.4 Location & analytics
 - A retailer's **city is optional** at registration.
@@ -104,6 +110,19 @@ schemes are unverifiable and easy to abuse.
   dialog** summarizing the effect before it commits. Scanning to earn is exempt
   (high-frequency; the result screen already shows the outcome).
 
+### 4.8 Data export
+- Every data tab in the panel — Customers, Distributors, Products, Reward shop,
+  Claims, Redemptions — has an **Export CSV** action that downloads the current
+  data as a spreadsheet. Claims exports respect the active filters; Redemptions
+  exports all statuses (pending/approved/rejected) in one file.
+
+### 4.9 Retailer experience
+- The retailer webview has a persistent **navigation menu** (Home, Scan, Reward
+  shop, Claims history, Log out) on every page.
+- A successful scan shows a **celebratory animation** (the points count up with a
+  confetti burst) so the retailer clearly sees they earned points. After a scan,
+  **"Scan another" reopens the camera immediately** — no extra tap.
+
 ## 5. Key user flows
 
 1. **Onboard manufacturer** — super admin creates account → manufacturer logs in.
@@ -112,10 +131,11 @@ schemes are unverifiable and easy to abuse.
    Products, Distributors, and Customers also supports **bulk CSV import** (the
    retailer CSV auto-creates + links distributors; the product CSV upserts by SKU
    and accepts a flexible points column).
-3. **Generate & print** — pick product → quantity → generate → save → print A4 PDF
-   of QR labels.
+3. **Generate & print** — in the Products tab, **Generate QR** opens an in-panel
+   modal: pick product → quantity → generate → save → print A4 PDF of QR labels.
 4. **Earn** — retailer logs into YourApp → scans QR (or types manual code) →
-   points awarded with scheme bonus; location captured.
+   points awarded with scheme bonus (shown with a count-up + confetti animation);
+   location captured. "Scan another" reopens the camera right away.
 5. **Redeem** — retailer opens rewards shop → claims a gift → manufacturer
    approves → proof reference issued.
 6. **Track** — manufacturer reviews dashboard map, region/product analytics, and

@@ -1,6 +1,6 @@
 # Technical Requirements Document — Vastra Loyalty Program
 
-**Status:** Live (Render + Neon) · **Last updated:** 2026-06-23
+**Status:** Live (Render + Neon) · **Last updated:** 2026-06-24
 
 Companion to **PRD.md** (product) and **CLAUDE.md** (contributor conventions).
 This document describes the technical design as built.
@@ -26,8 +26,15 @@ Single FastAPI service (`app/main.py`) serving three surfaces from one container
   `panel/src/api.js` is the only fetch layer. Navigation is a top-right burger
   menu (`App.jsx`); the India map clusters via `leaflet.markercluster`; a
   promise-based `useConfirm()` (`confirm.jsx`) gates every points-changing action
-  (adjust/transfer/approve/reject) with a themed confirmation dialog.
-- **Webviews:** static HTML/JS in `app/web/` served via `FileResponse`.
+  (adjust/transfer/approve/reject) with a themed confirmation dialog. Every data
+  tab exports to CSV via a shared client-side helper (`utils/csv.js` — RFC-4180 +
+  BOM `Blob` download, no dependency). QR generation runs in a modal
+  (`components/GenerateQrModal.jsx`) calling the existing `/qr/*` endpoints, so the
+  standalone `/web/generate` page is no longer linked from the panel.
+- **Webviews:** static HTML/JS in `app/web/` served via `FileResponse`. Retailer
+  pages (`home/scan/shop/claims`) carry a shared burger menu; `scan.html` plays a
+  count-up + confetti animation on a successful scan and auto-restarts the camera
+  on "Scan another".
 
 ## 2. Data model
 
@@ -149,6 +156,21 @@ Authoritative list at `/docs`. Principal endpoints:
   generated-vs-scanned grouped bars. Stat cards are all-time; charts are per-month
   within the selected year and show a per-year subtotal so bars reconcile to cards.
 
+### 6.1e Claims listing & box grouping (`GET /claims`)
+- A box (parent) scan writes one `points_ledger` row per child code (all sharing
+  the same `scanned_at`, retailer, product). To avoid flooding the Claims list,
+  `list_claims` joins `qr_codes q ON q.token = l.token` and groups by
+  `COALESCE(q.parent_token, l.token)` — children of one box (same `parent_token`)
+  collapse to a single row; plain scans (NULL `parent_token`) group on their unique
+  `token`, i.e. one row each. The row returns `item_count` (`COUNT(*)`), summed
+  `points`/`base_points`/`bonus_points`, `parent_token` (`MAX`), and `id`
+  (`MIN(l.id)`). `total` counts grouped rows via a `GROUP BY` subquery.
+- Done entirely at query time — **no schema change**, and it tidies box scans
+  already stored on Neon. The non-aggregated SELECT columns are repeated in
+  `GROUP BY` (identical within a group) to satisfy Postgres strict grouping; stays
+  `?`-placeholder / sqlite-style for the dual backend.
+- The panel walks every page (`limit`/`offset`) to build the Claims CSV export.
+
 ### 6.1c CSV imports
 - All three imports (`/retailers/import`, `/distributors/import`,
   `/products/import`) take CSV text as JSON (stdlib `csv`, no `python-multipart`)
@@ -181,7 +203,16 @@ Authoritative list at `/docs`. Principal endpoints:
 ### 6.3 QR payload
 - Each code encodes `{QR_BASE_URL}/{token}` (default `/web/scan`). The token is a
   `uuid4().hex` — opaque, unguessable, validated server-side. `scan.html`
-  cosmetically rewrites the address bar to `/web/scan` after reading the token.
+  cosmetically rewrites the address bar to `/web/scan` after reading the token; an
+  unauthenticated open redirects to `/web?next=…` and `home.html` likewise strips
+  the token from the address bar (kept in memory) before showing the login form.
+
+### 6.4 Printable PDF (`app/pdf_service.py`)
+- `build_pdf` lays child stickers on a 4×6 grid; box (parent) stickers go on their
+  own page in a 2×3 grid with a border. Each box sticker stacks **title →
+  QR → product name → manual code, all inside the border** — the box QR is sized
+  `min(cell) − 38mm` to leave room for both label lines (a larger QR previously
+  pushed the labels onto/below the bottom border).
 
 ## 7. Configuration
 

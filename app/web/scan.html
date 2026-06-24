@@ -4,20 +4,19 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Scan Loyalty QR</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet" />
+<meta name="theme-color" content="#0191d0" />
 <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
 <style>
   :root {
-    --paper:#f6f1e6; --card:#fbf8f1; --ink:#22294f; --soft:#4c5170;
-    --line:#ddd2bb; --indigo:#2b3468; --madder:#c8472b; --leaf:#3e6b4f;
+    --paper:#edf3f8; --card:#ffffff; --ink:#112134; --soft:#45576b;
+    --line:#d2dee9; --primary:#0191d0; --primary-deep:#0379ae;
+    --indigo:#1d466f; --madder:#fb624b; --leaf:#3e6b4f;
   }
   * { box-sizing:border-box; }
-  body { margin:0; font-family:'IBM Plex Sans',sans-serif; background:var(--paper); color:var(--ink);
+  body { margin:0; font-family:'Helvetica Neue',Helvetica,Arial,sans-serif; background:var(--paper); color:var(--ink);
          display:flex; justify-content:center; min-height:100vh; }
   .wrap { width:100%; max-width:430px; padding:22px 18px 40px; }
-  h1 { font-family:'Fraunces',serif; font-size:22px; margin:0 0 2px; }
+  h1 { font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-weight:700; font-size:22px; margin:0 0 2px; }
   .sub { font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--madder); font-weight:600; margin-bottom:18px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:14px;
           box-shadow:0 1px 2px rgba(34,41,79,.08),0 8px 24px rgba(34,41,79,.07); }
@@ -25,20 +24,20 @@
   .who strong { color:var(--ink); }
   .who a { color:var(--madder); cursor:pointer; }
   button { width:100%; font:inherit; font-weight:600; font-size:15px; padding:13px; margin-top:14px; border:none; border-radius:9px;
-           background:var(--madder); color:var(--paper); cursor:pointer; box-shadow:2px 2px 0 var(--indigo); }
+           background:var(--primary); color:#fff; cursor:pointer; box-shadow:2px 2px 0 var(--indigo); }
   button:active { transform:translate(1px,1px); box-shadow:1px 1px 0 var(--indigo); }
   button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); box-shadow:none; }
-  .error { background:#f7e3dd; border:1px solid var(--madder); color:#a83a22; padding:10px 13px; border-radius:8px; margin-top:12px; font-size:14px; display:none; }
+  .error { background:#fee9e5; border:1px solid var(--madder); color:#e34a33; padding:10px 13px; border-radius:8px; margin-top:12px; font-size:14px; display:none; }
   .hidden { display:none; }
   #reader { border-radius:10px; overflow:hidden; border:1px solid var(--line); }
   .divider { text-align:center; color:var(--soft); font-size:12px; letter-spacing:2px; text-transform:uppercase; margin:16px 0 2px; }
-  .manual input { width:100%; font-family:'IBM Plex Mono',monospace; font-size:20px; text-align:center; letter-spacing:5px;
+  .manual input { width:100%; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:20px; text-align:center; letter-spacing:5px;
                   text-transform:uppercase; padding:11px 12px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); }
-  .points-hero { font-family:'Fraunces',serif; font-size:54px; line-height:1; color:var(--leaf); margin:6px 0 2px; }
-  .result h2 { font-family:'Fraunces',serif; font-size:19px; margin:0; color:var(--leaf); }
+  .points-hero { font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-weight:700; font-size:54px; line-height:1; color:var(--leaf); margin:6px 0 2px; }
+  .result h2 { font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-weight:700; font-size:19px; margin:0; color:var(--leaf); }
   .result p { margin:5px 0; font-size:14px; }
-  .breakdown { font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--soft); }
-  .scheme-tag { display:inline-block; background:rgba(62,107,79,.12); color:var(--leaf); border:1px solid rgba(62,107,79,.35);
+  .breakdown { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; color:var(--soft); }
+  .scheme-tag { display:inline-block; background:rgba(1,145,208,.12); color:var(--primary-deep); border:1px solid rgba(1,145,208,.35);
                 border-radius:999px; padding:2px 12px; font-size:12px; margin-top:4px; }
   .balance { border-top:1px dashed var(--line); margin-top:12px; padding-top:10px; font-size:14px; }
   /* Celebratory entrance for the success card + a spring on the points number. */
@@ -70,10 +69,10 @@
   .menu-pop button { width:100%; margin:0; text-align:left; font-size:15px; font-weight:500; padding:11px 14px;
                      border:none; background:transparent; color:var(--ink); box-shadow:none; border-radius:8px; cursor:pointer; }
   .menu-pop button:active { transform:none; box-shadow:none; }
-  .menu-pop button.active { color:var(--madder); font-weight:600; background:rgba(200,71,43,.08); }
+  .menu-pop button.active { color:var(--primary-deep); font-weight:600; background:rgba(1,145,208,.10); }
   .menu-pop button.logout { color:var(--madder); }
   .menu-pop .sep { height:1px; background:var(--line); margin:6px 8px; }
-  .backdrop { position:fixed; inset:0; background:rgba(34,41,79,.55); display:flex; align-items:center;
+  .backdrop { position:fixed; inset:0; background:rgba(26,0,85,.48); display:flex; align-items:center;
               justify-content:center; padding:22px; z-index:100; }
   .lmodal { position:relative; background:var(--card); border:1px solid var(--line); border-radius:16px;
             padding:24px 22px; max-width:380px; width:100%; text-align:center; box-shadow:0 20px 60px rgba(34,41,79,.3); }
@@ -81,7 +80,7 @@
                     background:transparent; color:var(--soft); box-shadow:none; font-size:24px; line-height:1; }
   .lmodal .lclose:active { transform:none; box-shadow:none; }
   .lmodal .pin { font-size:40px; line-height:1; }
-  .lmodal h2 { font-family:'Fraunces',serif; font-size:21px; margin:6px 0; color:var(--ink); }
+  .lmodal h2 { font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-weight:700; font-size:21px; margin:6px 0; color:var(--ink); }
   .lmodal p { font-size:14px; color:var(--soft); margin:0; line-height:1.5; }
 </style>
 </head>
@@ -210,7 +209,7 @@ function countUp(el, to, ms) {
 
 // Drop a short confetti burst over the screen; removed after it falls.
 function burstConfetti() {
-  const colors = ['#c8472b', '#3e6b4f', '#2b3468', '#b98a2f'];
+  const colors = ['#0191d0', '#fb624b', '#1d466f', '#3e6b4f'];
   const layer = document.createElement('div');
   layer.className = 'confetti'; layer.id = 'confettiLayer';
   for (let n = 0; n < 70; n++) {

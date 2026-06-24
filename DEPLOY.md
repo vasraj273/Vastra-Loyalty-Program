@@ -34,9 +34,9 @@ Note: free tier sleeps after idle (first request takes ~30s) and the SQLite file
 
 1. **Super admin**: log into panel as `admin/admin123` → Manufacturers tab → create a manufacturer login live.
 2. **Manufacturer**: log out, log in as `surya/surya123` → dashboard with map, schemes, claims (all Surya-only data; log in as `heritage` to show isolation).
-3. **Generate**: open `/web/generate` on phone or webview → log in as surya → pick product → quantity 5 → Generate → Print PDF.
-4. **Scan**: scan a printed QR with the phone camera — it opens `/web/scan/<token>` directly → pick shop → Redeem → points animation with scheme bonus. Or open `/web/scan`, use in-page camera / type the 6-char manual code.
-5. Back in the panel: the scan is already in Claims and on the map.
+3. **Generate**: in the panel, Products tab → **Generate QR** (opens an in-panel modal) → pick product → quantity 5 → Generate → Print PDF. (The standalone `/web/generate` page still works for the Vastra webview.)
+4. **Scan**: scan a printed QR with the phone camera — it opens `/web/scan/<token>` directly → Redeem → count-up + confetti animation with the scheme bonus. Or open `/web/scan`, use the in-page camera / type the 6-char manual code; "Scan another" reopens the camera. The retailer pages share a burger-menu nav.
+5. Back in the panel: the scan is already in Claims (a box scan shows as one `📦 Box · N items` row) and on the map. Every data tab has an **Export CSV** button.
 
 ## Database (Postgres / Neon)
 

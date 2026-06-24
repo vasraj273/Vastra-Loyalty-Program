@@ -18,7 +18,7 @@ const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
 
 export default function BarChart({
   data = [],
-  series = [{ name: '', color: '#2b3468' }],
+  series = [{ name: '', color: '#1d466f' }],
   height = 360,
   showValues = false,
 }) {

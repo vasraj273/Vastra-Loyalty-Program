@@ -4,7 +4,7 @@ A one-stop orientation to what this project is, who it serves, how it's built, a
 where it stands. For deeper detail see the companion docs linked at the end.
 
 **Status:** Live in production on Render + Neon (Postgres) with real data.
-**Last updated:** 2026-06-23.
+**Last updated:** 2026-06-24.
 
 ---
 
@@ -45,7 +45,9 @@ One FastAPI service serves three surfaces from a single container:
 - **QR codes.** Each encodes a `{QR_BASE_URL}/{token}` URL; the token is a random,
   opaque `uuid4`. A 6-char `manual_code` is the typed fallback. **Points are frozen
   per batch at generation**, so old stickers keep their promised value. Box (parent)
-  codes register all their child items in one scan.
+  codes register all their child items in one scan — and the Claims view collapses
+  that box back into a single `📦 Box · N items` row (grouped at query time on
+  `COALESCE(parent_token, token)`), so a box scan doesn't flood the list.
 - **Schemes.** Time-bound bonus points on top of base, optionally scoped to
   products; the most generous active scheme wins (no stacking).
 - **Gifts & redemptions.** Retailers claim gifts (points deducted, proof reference
@@ -69,11 +71,15 @@ Dashboard (two stat rows — funnel totals + redemption requests; region +
 by-distributor tables; clustered India scan map; and a **QR analytics** section
 with a year selector + month-wise generation and generated-vs-scanned bar charts),
 Customers (retailers — with assign-distributor, per-row map link, **Import CSV**),
-Distributors (**Import CSV**), Products (**Import CSV**), Schemes, Gifts, Claims,
-Redemptions. Super admin sees a Manufacturers tab instead.
+Distributors (**Import CSV**), Products (**Import CSV** + **Generate QR** as an
+in-panel modal), Schemes, Gifts, Claims, Redemptions. Super admin sees a
+Manufacturers tab instead. Every data tab has an **Export CSV** button
+(client-side download, `panel/src/utils/csv.js`).
 
-**Retailer webview** (`/web`): home/login, **scan** (camera + manual code, with a
-location-verification popup), rewards **shop**, **claims** history.
+**Retailer webview** (`/web`, shared burger-menu nav — Home/Scan/Reward
+shop/Claims history/Log out): home/login, **scan** (camera + manual code, with a
+location-verification popup; a count-up + confetti animation on success and
+auto-camera on "Scan another"), rewards **shop**, **claims** history.
 
 **Bulk import (CSV-as-JSON, no file-upload dependency):**
 `/retailers/import` (auto-logins + find-or-create distributor),

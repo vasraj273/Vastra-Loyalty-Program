@@ -12,11 +12,11 @@ Multi-tenant backend for a manufacturer→retailer loyalty program in the Vastra
 
 **Multi-tenant + login-based.** A super admin creates manufacturer accounts; every manufacturer sees only their own products, retailers, schemes, gifts, and claims. Demo logins (from `seed.py`): `admin/admin123` (super admin), `surya/surya123` (Surya Textiles), `heritage/heritage123` (Heritage Weaves). Retailer logins are auto-created as `<shop-first-word>/<that>123` (e.g. `kumar/kumar123`).
 
-**Webview pages** (served by the API; HTTPS required for the phone camera + location):
-- `/web` — retailer home / login (YourApp)
-- `/web/scan` — in-page camera QR scanner + 6-char manual code box → points screen. Printed QRs deep-link to `/web/scan/<token>` (the token is cosmetically stripped from the address bar after it's read).
+**Webview pages** (served by the API; HTTPS required for the phone camera + location). Retailer pages share a top-right **burger menu** (Home · Scan · Reward shop · Claims history · Log out):
+- `/web` — retailer home / login (YourApp). A scanned deep link arrives as `/web?next=/web/scan/<token>`; the token is captured in memory and stripped from the address bar so the login URL stays clean.
+- `/web/scan` — in-page camera QR scanner + 6-char manual code box → points screen (confetti + count-up animation on success; "Scan another" reopens the camera directly). Printed QRs deep-link to `/web/scan/<token>` (the token is cosmetically stripped from the address bar after it's read).
 - `/web/shop` — rewards shop (redeem gifts) · `/web/claims` — retailer's claim history
-- `/web/generate` — manufacturer: pick product → quantity → generate → print PDF
+- `/web/generate` — standalone manufacturer generate page (still served; the panel now generates in-page instead, see below)
 - `/panel/` — full admin panel (built from `panel/dist`)
 
 ## Setup (Linux)
@@ -40,6 +40,8 @@ npm run build --prefix panel
 
 React + Vite app in `panel/`. A top-right **burger menu** holds the manufacturer tabs: **Dashboard** (two stat rows — funnel totals + redemption requests; region + by-distributor tables; clustered India map of scan locations; and a **QR analytics** section with a year selector and month-wise *generation* and *generated-vs-scanned* SVG bar charts), **Customers** (retailers), **Distributors**, **Products**, **Schemes**, **Gifts**, **Claims**, **Redemptions**. Super admin gets a **Manufacturers** tab instead. `panel/src/api.js` is the only fetch layer.
 
+Every data tab (Customers, Distributors, Products, Reward shop, Claims, Redemptions) has an **↓ Export CSV** button (client-side download, `panel/src/utils/csv.js`). On **Products**, **Generate QR** opens an **in-panel modal** (`components/GenerateQrModal.jsx`) — generate → print PDF / save for later / browse saved batches — so the manufacturer never leaves the panel. The **Claims** tab collapses a box (parent) scan into a single `📦 Box · N items` row.
+
 ## Core flow
 
 1. **Products** — `POST /products` with `loyalty_points` (base points awarded per scan).
@@ -48,7 +50,7 @@ React + Vite app in `panel/`. A top-right **burger menu** holds the manufacturer
 3. **Generate** (Vastra) — `POST /qr/generate {product_id, quantity, points_per_code?, items_per_box?}` → N unique codes. Each = QR token + 6-char manual fallback (alphabet excludes 0/O/1/I). With `items_per_box`, parent (box) codes wrap children. Points are **frozen per batch** at generation.
 4. **Save / print** — `POST /qr/batches/{id}/save`; `GET /qr/batches/{id}/print` → A4 PDF (QR + product + manual code). Saved batches print any time.
 5. **Scan** (YourApp) — `POST /scan {code, lat?, lng?}`. The retailer comes from the auth token, never the body. `code` accepts the QR token or manual code (case/dash/space insensitive). One-time redemption; awards batch points (+ best active scheme bonus) and logs a `points_ledger` row with product, region, and the scan's GPS. Scanning a box parent registers all its children at once. Duplicate → `409`.
-6. **Track** (panel) — `GET /analytics/dashboard` (totals incl. redemption-request counts, by region/product/distributor, top retailers, map points, and `by_month` generation-vs-scan series). Wallet/history via `/retailer/wallet`.
+6. **Track** (panel) — `GET /analytics/dashboard` (totals incl. redemption-request counts, by region/product/distributor, top retailers, map points, and `by_month` generation-vs-scan series). Wallet/history via `/retailer/wallet`. `GET /claims` groups box scans into one row each; every data tab exports to CSV.
 
 ## How points & location work
 

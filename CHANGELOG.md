@@ -4,6 +4,49 @@ Notable changes to the Loyalty QR API. Dates are when the change went live on
 production (Render + Neon). Schema changes are additive (`_MIGRATIONS`), applied
 by `migrate()` on startup — no reseed, existing data preserved.
 
+## 2026-06-24 (exports, in-panel QR, retailer nav, box-grouped claims)
+
+### Added
+- **Export CSV on every data tab.** Customers, Distributors, Products, Reward
+  shop, Claims, and Redemptions each get an **↓ Export CSV** button. Fully
+  client-side (new `panel/src/utils/csv.js`, RFC-4180 + UTF-8 BOM, no new
+  endpoint or dependency). Claims walks every server page with the current
+  filters; Redemptions exports **all three statuses** (pending/approved/rejected)
+  in one file with a status column.
+- **In-panel QR generation.** The Products **Generate QR** button now opens a
+  modal (`panel/src/components/GenerateQrModal.jsx`) — generate, print PDF, save
+  for later, and browse saved batches — instead of opening the standalone
+  `/web/generate` webview in a new tab. Backend `/qr/generate` contract unchanged.
+- **Retailer webview burger menu.** A top-right menu (Home · Scan · Reward shop ·
+  Claims history · Log out) added to `/web`, `/web/scan`, `/web/shop`,
+  `/web/claims`, matching the panel's burger pattern.
+- **Scan celebration animation.** The scan result screen now plays a confetti
+  burst and counts the points up from zero, replacing the plain text reveal.
+
+### Changed
+- **Claims list groups box (parent) scans.** A box scan writes one ledger row per
+  child code, which flooded the Claims list with duplicate retailer rows. The
+  `/claims` query now collapses a box into **one row** (`📦 Box · N items`, points
+  summed) via `COALESCE(q.parent_token, l.token)` joined to `qr_codes` — done at
+  query time, so it also tidies existing data with **no migration**. Plain scans
+  are unchanged (one row each). The row carries `item_count` + `parent_token`.
+- **"Scan another" reopens the camera automatically** — the extra "Start camera"
+  tap after a scan is gone.
+- **Login URL no longer shows the QR token.** A scanned deep link sends
+  unauthenticated users to `/web?next=/web/scan/<token>`; `home.html` now captures
+  `next` in memory and rewrites the address bar to a clean `/web` (the token is
+  still used to redeem after login).
+
+### Fixed
+- **Box (parent) sticker PDF label.** The product name + manual code rendered on
+  and below the box's bottom border. The box QR was shrunk slightly and both
+  labels repositioned inside the border (`app/pdf_service.py`); child stickers
+  unchanged.
+
+### Notes
+- No schema change. The box-grouped Claims view is purely a query/display change
+  and applies retroactively to data already on Neon.
+
 ## 2026-06-23 (dashboard expansion)
 
 ### Added

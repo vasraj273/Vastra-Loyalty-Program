@@ -223,7 +223,7 @@ export default function Dashboard() {
               </p>
               <BarChart
                 data={monthly.map((m) => ({ label: m.label, values: [m.generated] }))}
-                series={[{ name: 'Generated', color: '#e07b39' }]}
+                series={[{ name: 'Generated', color: '#0191d0' }]}
                 showValues
               />
             </div>
@@ -234,16 +234,16 @@ export default function Dashboard() {
                 <strong>{fmt(yearScan)}</strong> scanned.
               </p>
               <div className="chart-legend">
-                <span><i style={{ background: '#2b3468' }} /> Generated</span>
-                <span><i style={{ background: '#c8472b' }} /> Scanned</span>
+                <span><i style={{ background: '#1d466f' }} /> Generated</span>
+                <span><i style={{ background: '#fb624b' }} /> Scanned</span>
               </div>
               <BarChart
                 data={monthly.map((m) => ({
                   label: m.label, values: [m.generated, m.scanned],
                 }))}
                 series={[
-                  { name: 'Generated', color: '#2b3468' },
-                  { name: 'Scanned', color: '#c8472b' },
+                  { name: 'Generated', color: '#1d466f' },
+                  { name: 'Scanned', color: '#fb624b' },
                 ]}
               />
             </div>

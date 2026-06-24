@@ -174,7 +174,7 @@ export default function Gifts() {
 
       {showForm && (
         <form className="panel-card scheme-form" onSubmit={submit}>
-          <h3 style={{ margin: 0, fontFamily: 'Fraunces, serif' }}>
+          <h3 style={{ margin: 0, fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif" }}>
             {editingId ? 'Edit reward' : 'New reward'}
           </h3>
           <div className="form-grid">

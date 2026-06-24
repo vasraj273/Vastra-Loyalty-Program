@@ -178,7 +178,7 @@ export default function GenerateQrModal({ products, onClose }) {
 
         {showSaved && (
           <div className="panel-card" style={{ marginTop: 14 }}>
-            <strong style={{ fontFamily: 'Fraunces, serif' }}>
+            <strong style={{ fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif" }}>
               Saved batches
             </strong>
             {savedBatches === null ? (
