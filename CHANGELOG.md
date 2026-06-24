@@ -4,6 +4,26 @@ Notable changes to the Loyalty QR API. Dates are when the change went live on
 production (Render + Neon). Schema changes are additive (`_MIGRATIONS`), applied
 by `migrate()` on startup — no reseed, existing data preserved.
 
+## 2026-06-24 (Vastra brand re-theme)
+
+### Changed
+- **Re-skinned both surfaces (panel + retailer/manufacturer webviews) to the
+  Vastra brand.** New palette on a light base: brand blue `#0191D0`, dark blue
+  `#1D466F`, coral `#FB624B`, near-black text `#112134`; modal/scan backdrops use
+  the brand overlay `#1A00557A`. Functional status colors kept (approved = green,
+  pending = amber, rejected/error = coral). Typeface switched from Fraunces + IBM
+  Plex to a **Helvetica** system stack (`'Helvetica Neue', Helvetica, Arial,
+  sans-serif`; headings bold), with a monospace stack for codes/tokens; the Google
+  Fonts links were removed. `theme-color` meta set to `#0191D0`.
+- The palette lives as CSS variables in `panel/src/styles.css` `:root` and is
+  mirrored in each webview's inline `:root` (`app/web/*.html`); chart colors
+  (`Dashboard.jsx`, `BarChart.jsx`), the scan confetti array, map markers, and
+  status badges were re-pointed to the new palette.
+
+### Notes
+- Presentation-only — no backend, schema, or endpoint changes. **QR codes stay
+  black/white** for scanner reliability; the Vastra logo is unchanged.
+
 ## 2026-06-24 (exports, in-panel QR, retailer nav, box-grouped claims)
 
 ### Added

@@ -116,6 +116,10 @@ auto-camera on "Scan another"), rewards **shop**, **claims** history.
 - **Multi-tenancy:** every owned row carries `manufacturer_id`; retailer endpoints
   derive the retailer from the token, never the body.
 - **Panel:** React + Vite; `panel/src/api.js` is the only fetch layer.
+- **Theme:** Vastra brand palette (blue `#0191D0`, dark blue `#1D466F`, coral
+  `#FB624B`, text `#112134`, light base; green/amber kept for approved/pending) in
+  Helvetica. Defined as CSS variables in `panel/src/styles.css` and mirrored in
+  each `app/web/*.html` `:root`. QR codes stay black/white.
 
 ## 7. Deployment & ops
 

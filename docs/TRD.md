@@ -35,6 +35,11 @@ Single FastAPI service (`app/main.py`) serving three surfaces from one container
   pages (`home/scan/shop/claims`) carry a shared burger menu; `scan.html` plays a
   count-up + confetti animation on a successful scan and auto-restarts the camera
   on "Scan another".
+- **Theme:** Vastra brand palette — blue `#0191D0`, dark blue `#1D466F`, coral
+  `#FB624B`, text `#112134`, light base; status colors kept (green/amber). Defined
+  as CSS variables in `panel/src/styles.css` `:root` and mirrored in each
+  `app/web/*.html` inline `:root`. Font is a Helvetica system stack (no web font);
+  QR codes remain black/white for scan reliability.
 
 ## 2. Data model
 
