@@ -4,6 +4,38 @@ Notable changes to the Loyalty QR API. Dates are when the change went live on
 production (Render + Neon). Schema changes are additive (`_MIGRATIONS`), applied
 by `migrate()` on startup — no reseed, existing data preserved.
 
+## 2026-06-25 (native-app SSO)
+
+### Added
+- **Single sign-on for native Vastra/YourApp apps.** Two exchange endpoints —
+  `POST /auth/sso/manufacturer` and `POST /auth/sso/retailer` — verify a
+  parent-app **HS256 JWT** and mint the *same* opaque bearer tokens as the
+  password logins, so every other endpoint is unchanged. Verification
+  (`verify_sso_assertion`, `app/auth.py`) pins `algorithms=["HS256"]`, checks
+  `aud`/`iss`/`role`/`exp` and an `iat`-freshness window, and trusts only the
+  signed `sub`.
+- **`external_id` provisioning.** `POST /retailers` and the `/retailers/import`
+  CSV now accept an optional `external_id` (the parent-system id, unique per
+  manufacturer); manufacturers carry one too. SSO matches principals by
+  `external_id` and **never auto-creates** — unknown/cross-tenant → `403`,
+  bad/expired assertion → `401`.
+
+### Schema (additive)
+- New columns `manufacturers.external_id`, `retailers.external_id` (`_MIGRATIONS`)
+  and two partial unique indexes (`_CONSTRAINTS`): `uq_manuf_external` (global)
+  and `uq_retailer_external` on `(manufacturer_id, external_id)`. Applied
+  idempotently on boot.
+
+### Config
+- New env: `SSO_SECRET` (required to enable SSO; unset → endpoints return `503`),
+  `SSO_ISSUERS` (default `vastra,yourapp`), `SSO_AUDIENCE` (default `loyalty`),
+  `SSO_MAX_AGE` (default `120`s). New dependency: `pyjwt`.
+
+### Notes
+- Manufacturer password login is unchanged (the web panel has no parent session
+  to exchange); retailer access is SSO-only in production. No existing endpoint
+  behaviour changed.
+
 ## 2026-06-24 (Vastra brand re-theme)
 
 ### Changed

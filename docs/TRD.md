@@ -47,10 +47,10 @@ Tables (`app/database.py` `SCHEMA`, evolved additively via `_MIGRATIONS`):
 
 | Table | Purpose | Key columns |
 |---|---|---|
-| `manufacturers` | Manufacturer + super-admin accounts | `username`, `password_hash`, `display_name`, `is_admin` |
+| `manufacturers` | Manufacturer + super-admin accounts | `username`, `password_hash`, `display_name`, `is_admin`, `external_id` (SSO map) |
 | `auth_tokens` | Manufacturer/admin bearer tokens | `token`, `manufacturer_id` |
 | `products` | Catalog | `manufacturer_id`, `name`, `sku`, `loyalty_points` |
-| `retailers` | Shops | `manufacturer_id`, `shop_name`, `region`, `username`, `password_hash`, `lat`, `lng`, `location_source`, `address`, `distributor_id` |
+| `retailers` | Shops | `manufacturer_id`, `shop_name`, `region`, `username`, `password_hash`, `lat`, `lng`, `location_source`, `address`, `distributor_id`, `external_id` (SSO map, unique per manufacturer) |
 | `retailer_tokens` | Retailer bearer tokens | `token`, `retailer_id` |
 | `distributors` | Distributor layer (tracking only, no login/points) | `manufacturer_id`, `name`, `phone`, `region` |
 | `schemes` / `scheme_products` | Time-bound bonus campaigns + scope | `bonus_points`, `start_date`, `end_date` |
@@ -94,13 +94,27 @@ adapter translates to psycopg at runtime.
 - **Retailer login auto-creation:** on `POST /retailers`, username = first
   alphanumeric word of the shop name (lowercased), password = `<username>123`,
   id appended on clash (`username` is UNIQUE).
+- **SSO token exchange (native apps):** `POST /auth/sso/manufacturer` and
+  `POST /auth/sso/retailer` verify a parent-app **HS256 JWT**
+  (`verify_sso_assertion` in `app/auth.py`) and mint the *same* opaque bearer
+  tokens as the password logins — so the rest of the API is unchanged. The verify
+  helper pins `algorithms=["HS256"]` (rejects `alg:none`), enforces
+  `aud`/`iss`/`role`/`exp` and an `iat`-freshness window (`SSO_MAX_AGE`), and takes
+  identity only from the signed `sub`. Principals are matched by **`external_id`**
+  and must be pre-provisioned — the exchange **never auto-creates** (unknown or
+  cross-tenant → `403`, bad/expired assertion → `401`). Retailer assertions carry
+  `manufacturer_external_id`; `retailers(manufacturer_id, external_id)` is unique,
+  so a parent id space can't resolve across tenants. Enabled by env `SSO_SECRET`
+  (unset → endpoints return `503`); `SSO_ISSUERS`/`SSO_AUDIENCE`/`SSO_MAX_AGE`
+  default to `vastra,yourapp` / `loyalty` / `120`s.
 
 ## 5. API surface
 
 Authoritative list at `/docs`. Principal endpoints:
 
 - **Auth:** `POST /auth/login`, `/auth/logout`, `/auth/retailer/login`,
-  `/auth/retailer/logout`, `GET /auth/me`, `/retailer/me`.
+  `/auth/retailer/logout`, `GET /auth/me`, `/retailer/me`;
+  **SSO** `POST /auth/sso/manufacturer`, `POST /auth/sso/retailer`.
 - **Admin:** `GET|POST /admin/manufacturers`.
 - **Catalog:** `GET|POST /products`, `PATCH|DELETE /products/{id}`,
   `POST /products/import`; `GET|POST /schemes`, `DELETE /schemes/{id}`;
@@ -180,6 +194,9 @@ Authoritative list at `/docs`. Principal endpoints:
 - All three imports (`/retailers/import`, `/distributors/import`,
   `/products/import`) take CSV text as JSON (stdlib `csv`, no `python-multipart`)
   and return `created`/`skipped`/`errors`.
+- `/retailers/import` accepts an optional `external_id` column (the SSO mapping
+  id, unique per manufacturer; a duplicate within the manufacturer is skipped with
+  an error). `POST /retailers` likewise accepts `external_id` on the body.
 - `/products/import` reads the points value under several header aliases
   (`_row_points`: `PointsPerScan`, `points`, `points_per_scan`, `loyalty_points`,
   …) and **upserts by SKU** — a product you already own is *updated* (name +
@@ -225,6 +242,10 @@ Authoritative list at `/docs`. Principal endpoints:
 |---|---|
 | `DATABASE_URL` | Postgres/Neon **pooled** connection string. Unset → local SQLite `qr_api.db`. |
 | `QR_BASE_URL` | URL prefix baked into every QR (set to deployed HTTPS origin + `/web/scan` before any production print run). |
+| `SSO_SECRET` | Shared HMAC secret enabling native-app SSO. Unset → `/auth/sso/*` return `503`. |
+| `SSO_ISSUERS` | Allowed JWT `iss` values (comma-separated). Default `vastra,yourapp`. |
+| `SSO_AUDIENCE` | Required JWT `aud`. Default `loyalty`. |
+| `SSO_MAX_AGE` | Max assertion age in seconds (`iat` freshness, bounds replay). Default `120`. |
 
 ## 8. Deployment
 
@@ -238,6 +259,11 @@ Authoritative list at `/docs`. Principal endpoints:
 - Parameterized queries throughout (no string-built SQL) → no SQL injection via
   tokens/inputs.
 - Passwords hashed (PBKDF2); tokens opaque and revocable.
+- **SSO:** assertions are HS256-verified with `algorithms` pinned (no `alg:none`),
+  `aud`/`iss`/`role`/`exp` checked and `iat` bounded by `SSO_MAX_AGE` (replay
+  window); identity comes only from the signed `sub`. No auto-provisioning, so a
+  forged-but-unknown `external_id` still can't create an account, and the
+  per-manufacturer unique index blocks cross-tenant resolution.
 - Known backlog (not yet implemented): rate limiting, scan/redeem
   race-condition (TOCTOU) hardening, broader input/XSS review. Treat production
   Neon data as real — never reseed/drop it.

@@ -35,6 +35,12 @@ body {
 
 .shell { max-width: 1240px; margin: 0 auto; padding: 0 28px 40px; }
 
+/* Default panel view zoomed to 150% on desktop, trimming side whitespace.
+   Below this width we keep 1:1 so narrow screens don't get a horizontal scrollbar. */
+@media (min-width: 1100px) {
+  .shell { zoom: 1.5; }
+}
+
 /* ── masthead ── */
 .masthead {
   display: flex;

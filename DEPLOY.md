@@ -9,6 +9,7 @@ One container serves everything: API + admin panel (`/panel`) + webview pages (`
 3. Environment: **Docker**. Region: Singapore (closest to India).
 4. Add environment variable:
    - `QR_BASE_URL` = `https://<your-service>.onrender.com/web/scan`
+   - `SSO_SECRET` = a long random string — only needed to enable native-app SSO (see below); omit for a plain demo.
 5. Deploy. First boot auto-seeds demo data (`admin/admin123`, `surya/surya123`, `heritage/heritage123`).
 
 Note: free tier sleeps after idle (first request takes ~30s) and the SQLite file resets on redeploy — fine for a demo, not for production.
@@ -80,8 +81,27 @@ CSV columns: `manufacturer_username, name, shop_name, region, phone,
 username, password`. To give existing (login-less) retailers a login,
 run `python backfill_retailer_logins.py`.
 
+## Native app SSO (Vastra / YourApp)
+
+To let native apps reach loyalty without a second login, set **`SSO_SECRET`**
+(shared with the Vastra/YourApp backends). The parent backend mints a
+short-lived **HS256 JWT**; the app posts it to `POST /auth/sso/manufacturer` or
+`POST /auth/sso/retailer` and receives a normal loyalty token. Optional env:
+`SSO_ISSUERS` (default `vastra,yourapp`), `SSO_AUDIENCE` (default `loyalty`),
+`SSO_MAX_AGE` (default `120` seconds).
+
+Provisioning is required first — the exchange never auto-creates accounts:
+- **Manufacturers:** set `external_id` (the Vastra manufacturer id) when creating each manufacturer.
+- **Retailers:** set `external_id` (the YourApp retailer id) via `POST /retailers` or the `external_id` column in the `/retailers/import` CSV. It is unique per manufacturer.
+
+Unknown or cross-tenant principals get `403`; tampered/expired assertions get
+`401`. If `SSO_SECRET` is unset the SSO endpoints return `503` and are otherwise
+harmless. The `external_id` columns + unique indexes are added automatically on
+boot (`migrate()`/`create_constraints()`), so no manual migration is needed.
+
 ## Before real (non-demo) use
 
 - Rotate the seeded passwords / disable seed.
 - Restrict CORS origins to the real app domains.
+- Set a strong `SSO_SECRET` (and keep it out of source control) if native-app SSO is used.
 - Rotate the Neon credentials if the connection string was shared.

@@ -2,14 +2,16 @@
 
 Non-destructive: ensures the schema (init_db + migrate), then for every
 retailer that has no username yet, assigns one derived from the shop name
-(first word, lowercased) with password <username>123. Collisions get the
-retailer id appended. Safe to run repeatedly; already-set logins are skipped.
+(first word, lowercased) with a cryptographically random temporary password
+(flagged must_change=1). Collisions get the retailer id appended. Safe to run
+repeatedly; already-set logins are skipped. Generated passwords are printed once
+so they can be handed to each retailer.
 
 Usage (local SQLite):   python backfill_retailer_logins.py
 Usage (Neon/Postgres):  set DATABASE_URL, then run the same command.
 """
 
-from app.auth import hash_password
+from app.auth import hash_password, new_temp_password
 from app.database import get_db, init_db, migrate
 
 
@@ -31,19 +33,21 @@ def main() -> None:
             if uname in taken:
                 uname = f"{base}{r['id']}"
             taken.add(uname)
+            password = new_temp_password()
             db.execute(
-                "UPDATE retailers SET username = ?, password_hash = ? "
-                "WHERE id = ?",
-                (uname, hash_password(uname + "123"), r["id"]),
+                "UPDATE retailers SET username = ?, password_hash = ?, "
+                "must_change = 1 WHERE id = ?",
+                (uname, hash_password(password), r["id"]),
             )
-            done.append((uname, r["shop_name"]))
+            done.append((uname, password, r["shop_name"]))
 
     if not done:
         print("All retailers already have logins; nothing to do.")
         return
-    print(f"Set logins for {len(done)} retailer(s):")
-    for uname, shop in done:
-        print(f"  {uname} / {uname}123   ({shop})")
+    print(f"Set logins for {len(done)} retailer(s) "
+          f"(temporary passwords — retailers should change on first login):")
+    for uname, password, shop in done:
+        print(f"  {uname} / {password}   ({shop})")
 
 
 if __name__ == "__main__":

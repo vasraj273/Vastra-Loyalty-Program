@@ -391,7 +391,17 @@ async function redeem(code) {
     $('resSplit').textContent = out.bonus_points > 0
       ? `${out.base_points} base + ${out.bonus_points} scheme bonus`
       : `${out.base_points} base points`;
-    $('resScheme').innerHTML = out.scheme ? `<span class="scheme-tag">${out.scheme.name}</span>` : '';
+    // Build the scheme tag via DOM + textContent so a manufacturer-controlled
+    // scheme name can never inject HTML/script into the retailer's webview
+    // (Fix 6 — was innerHTML with an unescaped name = stored XSS).
+    const schemeEl = $('resScheme');
+    schemeEl.textContent = '';
+    if (out.scheme) {
+      const tag = document.createElement('span');
+      tag.className = 'scheme-tag';
+      tag.textContent = out.scheme.name;
+      schemeEl.appendChild(tag);
+    }
     $('resBalance').textContent = out.new_balance;
     renderLoc(loc);
     $('scanCard').classList.add('hidden');

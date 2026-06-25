@@ -72,3 +72,13 @@ See `/docs` for the full, authoritative endpoint list.
 
 - `QR_BASE_URL` (env) — URL prefix baked into each QR (set to the deployed HTTPS origin + `/web/scan` before any production print run).
 - `DATABASE_URL` (env) — Postgres/Neon connection string; falls back to local SQLite `qr_api.db` when unset. The app creates/migrates tables on boot but **never seeds**.
+- `SSO_SECRET` (env) — shared HMAC secret enabling native-app **SSO** (see below). When unset, the SSO endpoints are inert (`503`); password login is unaffected. Optional companions: `SSO_ISSUERS` (default `vastra,yourapp`), `SSO_AUDIENCE` (default `loyalty`), `SSO_MAX_AGE` (default `120` seconds).
+
+## Native app SSO
+
+Native Vastra/YourApp builds can skip a second login. The parent backend (which already authenticated the user) mints a short-lived **HS256 JWT** and the app exchanges it for a normal loyalty token:
+
+- `POST /auth/sso/manufacturer` — assertion `{iss, aud:"loyalty", role:"manufacturer", sub:"<vastra manufacturer external_id>", iat, exp≤120s}` → same body as `/auth/login`.
+- `POST /auth/sso/retailer` — assertion adds `manufacturer_external_id` and `sub:"<yourapp retailer external_id>"` → same body as `/auth/retailer/login`.
+
+Principals are matched by **`external_id`** and must already be **provisioned** (manufacturers imported by Vastra; retailers created/imported by their manufacturer with `external_id` set — `POST /retailers` and the `/retailers/import` CSV both accept it). The exchange never auto-creates accounts; unknown/cross-tenant principals get `403`, bad/expired assertions `401`. After the exchange the app is an ordinary bearer-token client — every other endpoint is unchanged.

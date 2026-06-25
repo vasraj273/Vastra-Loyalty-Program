@@ -24,8 +24,9 @@ from pydantic import BaseModel, Field
 
 from .auth import (current_admin, current_manufacturer, current_retailer,
                    current_user, hash_password, issue_retailer_token,
-                   issue_token, verify_password)
-from .database import get_db, init_db, migrate
+                   issue_token, new_temp_password, verify_password,
+                   verify_sso_assertion)
+from .database import IS_PG, create_constraints, get_db, init_db, migrate
 from .geo import coords_for, known_places, nearest_city, reverse_address
 from .pdf_service import build_pdf
 from .qr_service import (new_manual_code, new_reference, new_token,
@@ -56,6 +57,7 @@ def _backfill_coords() -> None:
 async def lifespan(app: FastAPI):
     init_db()
     migrate()
+    create_constraints()
     _backfill_coords()
     yield
 
@@ -71,11 +73,57 @@ app.add_middleware(
 )
 
 
+# ---------- rate limiting (Fix 4) ----------
+# Pragmatic per-endpoint limits via slowapi. Authenticated endpoints are keyed
+# by the bearer token (so one retailer can't exhaust another's budget when they
+# share a NAT IP); login endpoints are keyed by client IP. Every limit is
+# overridable by env var, and the whole feature can be switched off with
+# RL_ENABLED=0. In-memory storage by default; set RL_STORAGE_URI (e.g. a redis://
+# URL) when running more than one process.
+import os as _os  # noqa: E402
+
+from slowapi import Limiter, _rate_limit_exceeded_handler  # noqa: E402
+from slowapi.errors import RateLimitExceeded  # noqa: E402
+from slowapi.util import get_remote_address  # noqa: E402
+
+RL_ENABLED = _os.environ.get("RL_ENABLED", "1") != "0"
+RL_LOGIN = _os.environ.get("RL_LOGIN", "10/minute")        # manuf + retailer login
+RL_SCAN = _os.environ.get("RL_SCAN", "60/minute")          # generous for bulk scanning
+RL_CLAIM = _os.environ.get("RL_CLAIM", "20/minute")
+RL_QRGEN = _os.environ.get("RL_QRGEN", "30/minute")
+RL_IMPORT = _os.environ.get("RL_IMPORT", "10/hour")
+
+
+def _client_key(request: Request) -> str:
+    """Rate-limit bucket key: the caller's bearer token (or ?token=) when
+    present, else their IP. Keeps per-retailer limits independent on shared IPs."""
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        tok = auth[7:].strip()
+        if tok:
+            return tok
+    return request.query_params.get("token") or get_remote_address(request)
+
+
+_limiter_kwargs = {"key_func": _client_key, "enabled": RL_ENABLED}
+if _os.environ.get("RL_STORAGE_URI"):
+    _limiter_kwargs["storage_uri"] = _os.environ["RL_STORAGE_URI"]
+limiter = Limiter(**_limiter_kwargs)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
 # ---------- schemas ----------
 
 class LoginIn(BaseModel):
     username: str = Field(min_length=1, max_length=100)
     password: str = Field(min_length=1, max_length=200)
+
+
+class SsoIn(BaseModel):
+    # A parent-app (Vastra / YourApp) signed HS256 JWT. Verified by
+    # auth.verify_sso_assertion; the loyalty token is minted only if it checks out.
+    assertion: str = Field(min_length=1, max_length=4096)
 
 
 class ManufacturerIn(BaseModel):
@@ -102,6 +150,9 @@ class RetailerIn(BaseModel):
     # Manual override; when omitted, resolved from region city name
     lat: float | None = Field(default=None, ge=-90, le=90)
     lng: float | None = Field(default=None, ge=-180, le=180)
+    # Parent-system (YourApp) stable id, set at provisioning time so the SSO
+    # exchange can resolve this retailer. Unique per manufacturer.
+    external_id: str | None = Field(default=None, max_length=200)
 
 
 class SchemeIn(BaseModel):
@@ -148,7 +199,8 @@ class GiftClaimIn(BaseModel):
 # ---------- auth ----------
 
 @app.post("/auth/login")
-def login(body: LoginIn):
+@limiter.limit(RL_LOGIN, key_func=get_remote_address)
+def login(request: Request, body: LoginIn):
     with get_db() as db:
         row = db.execute(
             "SELECT * FROM manufacturers WHERE username = ?",
@@ -175,10 +227,37 @@ def logout(request: Request, user: dict = Depends(current_user)):
     return {"ok": True}
 
 
+@app.post("/auth/sso/manufacturer")
+@limiter.limit(RL_LOGIN, key_func=get_remote_address)
+def sso_manufacturer(request: Request, body: SsoIn):
+    """SSO exchange for the Vastra App: verify a parent-signed assertion and mint
+    a normal loyalty manufacturer token. The manufacturer must already exist
+    (imported by Vastra), matched by external_id; unknown principals are rejected,
+    never created. Returns the same body as /auth/login."""
+    claims = verify_sso_assertion(body.assertion, "manufacturer")
+    external_id = str(claims["sub"]).strip()
+    with get_db() as db:
+        row = db.execute(
+            """SELECT id, username, display_name, is_admin FROM manufacturers
+               WHERE external_id = ?""",
+            (external_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(403, "Manufacturer not provisioned")
+        token = issue_token(db, row["id"])
+    return {
+        "token": token,
+        "display_name": row["display_name"],
+        "username": row["username"],
+        "is_admin": bool(row["is_admin"]),
+    }
+
+
 # ---------- retailer auth (YourApp side) ----------
 
 @app.post("/auth/retailer/login")
-def retailer_login(body: LoginIn):
+@limiter.limit(RL_LOGIN, key_func=get_remote_address)
+def retailer_login(request: Request, body: LoginIn):
     with get_db() as db:
         row = db.execute(
             "SELECT * FROM retailers WHERE username = ?",
@@ -199,7 +278,79 @@ def retailer_login(body: LoginIn):
         "name": row["name"],
         "region": row["region"],
         "manufacturer": manufacturer["display_name"] if manufacturer else None,
+        # Fix 3: tells the client to prompt for a password change on first login
+        # (set for retailers created with a system-generated temp password).
+        "must_change": bool(row["must_change"]),
     }
+
+
+@app.post("/auth/sso/retailer")
+@limiter.limit(RL_LOGIN, key_func=get_remote_address)
+def sso_retailer(request: Request, body: SsoIn):
+    """SSO exchange for YourApp: verify a parent-signed assertion and mint a normal
+    loyalty retailer token. The retailer must already be provisioned by its
+    manufacturer (with external_id); unknown retailers are rejected, never created.
+    manufacturer_external_id scopes the lookup to the correct tenant, so one
+    parent's id space can't resolve into another. Same body as /auth/retailer/login
+    (minus must_change — SSO does not use a loyalty password)."""
+    claims = verify_sso_assertion(body.assertion, "retailer")
+    external_id = str(claims["sub"]).strip()
+    manuf_external = str(claims.get("manufacturer_external_id") or "").strip()
+    if not manuf_external:
+        raise HTTPException(401, "Assertion missing manufacturer_external_id")
+    with get_db() as db:
+        manuf = db.execute(
+            "SELECT id, display_name FROM manufacturers WHERE external_id = ?",
+            (manuf_external,),
+        ).fetchone()
+        if not manuf:
+            raise HTTPException(403, "Manufacturer not provisioned")
+        row = db.execute(
+            """SELECT * FROM retailers
+               WHERE manufacturer_id = ? AND external_id = ?""",
+            (manuf["id"], external_id),
+        ).fetchone()
+        if not row:
+            raise HTTPException(403, "Retailer not provisioned")
+        token = issue_retailer_token(db, row["id"])
+    return {
+        "token": token,
+        "retailer_id": row["id"],
+        "shop_name": row["shop_name"],
+        "name": row["name"],
+        "region": row["region"],
+        "manufacturer": manuf["display_name"],
+    }
+
+
+class RetailerPasswordIn(BaseModel):
+    current_password: str = Field(min_length=1, max_length=200)
+    new_password: str = Field(min_length=8, max_length=200)
+
+
+@app.post("/retailer/password")
+def change_retailer_password(body: RetailerPasswordIn,
+                             retailer: dict = Depends(current_retailer)):
+    """Retailer sets a new password. Verifies the current one, stores only the
+    PBKDF2 hash, and clears the must_change flag. Lets a retailer move off the
+    system-generated temporary password (Fix 3)."""
+    if body.new_password == body.current_password:
+        raise HTTPException(422, "New password must differ from the current one")
+    with get_db() as db:
+        row = db.execute(
+            "SELECT password_hash FROM retailers WHERE id = ?",
+            (retailer["id"],),
+        ).fetchone()
+        if (not row or not row["password_hash"]
+                or not verify_password(body.current_password,
+                                       row["password_hash"])):
+            raise HTTPException(401, "Current password is incorrect")
+        db.execute(
+            "UPDATE retailers SET password_hash = ?, must_change = 0 "
+            "WHERE id = ?",
+            (hash_password(body.new_password), retailer["id"]),
+        )
+    return {"ok": True}
 
 
 @app.post("/auth/retailer/logout")
@@ -230,6 +381,7 @@ def retailer_me(retailer: dict = Depends(current_retailer)):
         "manufacturer": manufacturer["display_name"] if manufacturer else None,
         "location_source": retailer["location_source"],
         "balance": balance,
+        "must_change": bool(retailer["must_change"]),
     }
 
 
@@ -394,16 +546,22 @@ def create_retailer(body: RetailerIn, user: dict = Depends(current_manufacturer)
         if coords:
             lat, lng = coords
             source = "city"
+    external_id = (body.external_id or "").strip() or None
     with get_db() as db:
         distributor_id = _distributor_id_for(db, user["id"], body.distributor_id)
-        cur = db.execute(
-            """INSERT INTO retailers
-               (manufacturer_id, name, shop_name, region, phone, lat, lng,
-                location_source, distributor_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (user["id"], body.name, body.shop_name, region, body.phone,
-             lat, lng, source, distributor_id),
-        )
+        try:
+            cur = db.execute(
+                """INSERT INTO retailers
+                   (manufacturer_id, name, shop_name, region, phone, lat, lng,
+                    location_source, distributor_id, external_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user["id"], body.name, body.shop_name, region, body.phone,
+                 lat, lng, source, distributor_id, external_id),
+            )
+        except Exception as exc:
+            if "UNIQUE" in str(exc):
+                raise HTTPException(409, "external_id already in use")
+            raise
         rid = cur.lastrowid
         username, password = _assign_retailer_login(db, body.shop_name, rid)
         row = db.execute(
@@ -419,18 +577,22 @@ def create_retailer(body: RetailerIn, user: dict = Depends(current_manufacturer)
 
 def _assign_retailer_login(db, shop_name: str, rid: int) -> tuple[str, str]:
     """Derive and store a retailer login: username = first alphanumeric word of
-    the shop name (lowercased), password = <username>123 (the seed.py /
-    backfill_retailer_logins.py convention). A clash gets the id appended so the
-    UNIQUE username constraint always holds. Returns (username, plaintext pw)."""
+    the shop name (lowercased); password = a cryptographically random temporary
+    password (Fix 3 — no longer the guessable ``<username>123``). A username
+    clash gets the id appended so the UNIQUE constraint always holds. The login
+    is flagged must_change=1 so the client can prompt for a reset on first use.
+    Returns (username, plaintext temporary pw) — surfaced once at creation so
+    the panel can show the manufacturer the credentials to hand over."""
     first = (shop_name.split() or ["shop"])[0].lower()
     base = "".join(ch for ch in first if ch.isalnum()) or "shop"
     username = base
     if db.execute("SELECT 1 FROM retailers WHERE username = ?",
                   (username,)).fetchone():
         username = f"{base}{rid}"
-    password = f"{username}123"
+    password = new_temp_password()
     db.execute(
-        "UPDATE retailers SET username = ?, password_hash = ? WHERE id = ?",
+        "UPDATE retailers SET username = ?, password_hash = ?, must_change = 1 "
+        "WHERE id = ?",
         (username, hash_password(password), rid),
     )
     return username, password
@@ -804,13 +966,16 @@ class ImportIn(BaseModel):
 
 
 @app.post("/retailers/import")
-def import_retailers_csv(body: ImportIn,
+@limiter.limit(RL_IMPORT)
+def import_retailers_csv(request: Request, body: ImportIn,
                          user: dict = Depends(current_manufacturer)):
     """Bulk-create retailers from CSV text. Columns (header row, case-insensitive):
-    shop_name (required), name, region, phone, distributor (optional). Each
-    retailer gets an auto-login; the distributor is found-or-created by name and
-    linked. Rows whose shop_name already exists for this manufacturer are skipped.
-    Returns generated credentials so the panel can show them once."""
+    shop_name (required), name, region, phone, distributor, external_id (optional).
+    external_id is the parent-system (YourApp) id used by the SSO exchange; it is
+    unique per manufacturer. Each retailer gets an auto-login; the distributor is
+    found-or-created by name and linked. Rows whose shop_name already exists for
+    this manufacturer are skipped. Returns generated credentials so the panel can
+    show them once."""
     import csv as csvmod
     import io
     mid = user["id"]
@@ -837,6 +1002,15 @@ def import_retailers_csv(body: ImportIn,
             if dup:
                 skipped += 1
                 continue
+            external_id = row.get("external_id", "") or None
+            if external_id and db.execute(
+                """SELECT 1 FROM retailers
+                   WHERE manufacturer_id = ? AND external_id = ?""",
+                (mid, external_id),
+            ).fetchone():
+                skipped += 1
+                errors.append(f"row {i}: external_id '{external_id}' already in use")
+                continue
             region = row.get("region", "")
             coords = coords_for(region) if region else None
             lat, lng = coords if coords else (None, None)
@@ -845,11 +1019,11 @@ def import_retailers_csv(body: ImportIn,
             cur = db.execute(
                 """INSERT INTO retailers
                    (manufacturer_id, name, shop_name, region, phone, lat, lng,
-                    location_source, distributor_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    location_source, distributor_id, external_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (mid, row.get("name", "") or shop, shop, region,
                  row.get("phone", "") or None, lat, lng,
-                 "city" if coords else None, distributor_id),
+                 "city" if coords else None, distributor_id, external_id),
             )
             username, password = _assign_retailer_login(db, shop, cur.lastrowid)
             created += 1
@@ -875,7 +1049,8 @@ def _row_points(row: dict) -> str:
 
 
 @app.post("/products/import")
-def import_products_csv(body: ImportIn,
+@limiter.limit(RL_IMPORT)
+def import_products_csv(request: Request, body: ImportIn,
                         user: dict = Depends(current_manufacturer)):
     """Bulk add/update products from CSV text. Columns (header row,
     case-insensitive): name (required), sku (required), and the points per scan
@@ -932,7 +1107,8 @@ def import_products_csv(body: ImportIn,
 
 
 @app.post("/distributors/import")
-def import_distributors_csv(body: ImportIn,
+@limiter.limit(RL_IMPORT)
+def import_distributors_csv(request: Request, body: ImportIn,
                             user: dict = Depends(current_manufacturer)):
     """Bulk-create distributors from CSV text. Columns (header row,
     case-insensitive): name (required), phone, region. Rows whose name already
@@ -974,7 +1150,8 @@ def import_distributors_csv(body: ImportIn,
 # ---------- QR generation (manufacturer-scoped) ----------
 
 @app.post("/qr/generate", status_code=201)
-def generate_qr_batch(body: GenerateIn,
+@limiter.limit(RL_QRGEN)
+def generate_qr_batch(request: Request, body: GenerateIn,
                       user: dict = Depends(current_manufacturer)):
     with get_db() as db:
         product = db.execute(
@@ -1173,7 +1350,9 @@ def code_image(token: str):
 # ---------- scan & redeem (retailer side, authenticated) ----------
 
 @app.post("/scan")
-def scan(body: ScanIn, retailer: dict = Depends(current_retailer)):
+@limiter.limit(RL_SCAN)
+def scan(request: Request, body: ScanIn,
+         retailer: dict = Depends(current_retailer)):
     """Redeem a code by QR token or 6-char manual code. Points always go to
     the logged-in retailer, so a code can't be credited to another account.
     Single authority for rewards: base points + best active scheme bonus."""
@@ -1190,14 +1369,19 @@ def scan(body: ScanIn, retailer: dict = Depends(current_retailer)):
                WHERE c.token = ? OR c.manual_code = ?""",
             (body.code.strip(), code),
         ).fetchone()
-        if not row:
+        # Fix 5 (enumeration oracle): a non-existent code and a code that
+        # belongs to another manufacturer return the *identical* 404, so an
+        # attacker cannot use the response to tell a real cross-tenant code
+        # from a fake one. "Already redeemed" stays distinct below because the
+        # retailer needs that feedback and it only ever leaks the state of a
+        # code they already legitimately hold.
+        if not row or retailer["manufacturer_id"] != row["manufacturer_id"]:
             raise HTTPException(404, "Invalid code")
-        if retailer["manufacturer_id"] != row["manufacturer_id"]:
-            raise HTTPException(
-                403, "This code belongs to a different manufacturer")
 
         # A box (parent) code registers all of its still-unredeemed children;
-        # a plain code registers just itself.
+        # a plain code registers just itself. The actual race-safe redemption
+        # happens via the conditional UPDATE below — these reads only drive
+        # the not-yet-redeemed error message for the non-concurrent case.
         if row["is_parent"]:
             tokens = [
                 c["token"] for c in db.execute(
@@ -1232,12 +1416,24 @@ def scan(body: ScanIn, retailer: dict = Depends(current_retailer)):
         bonus = scheme["bonus_points"] if scheme else 0
         per = base + bonus
 
+        # Fix 1 (double-spend race): claim each child token with a *conditional*
+        # UPDATE that only matches a still-unredeemed row, then credit points
+        # ONLY for the rows this transaction actually won. Under concurrency the
+        # database serializes these row updates; the loser sees rowcount == 0
+        # (the row was redeemed by the winner) and credits nothing. This makes
+        # the check-and-mark a single atomic database operation instead of the
+        # previous read-then-write TOCTOU. The partial UNIQUE index on
+        # points_ledger(token) is the belt-and-suspenders backstop.
+        credited = []
         for t in tokens:
-            db.execute(
+            cur = db.execute(
                 """UPDATE qr_codes SET redeemed_at = datetime('now'),
-                                       redeemed_by = ? WHERE token = ?""",
+                                       redeemed_by = ?
+                   WHERE token = ? AND redeemed_at IS NULL""",
                 (rid, t),
             )
+            if cur.rowcount != 1:
+                continue  # another concurrent scan already claimed this token
             db.execute(
                 """INSERT INTO points_ledger
                    (manufacturer_id, retailer_id, token, product_id, points,
@@ -1249,14 +1445,23 @@ def scan(body: ScanIn, retailer: dict = Depends(current_retailer)):
                  scheme["id"] if scheme else None, retailer["region"],
                  body.lat, body.lng, retailer["distributor_id"]),
             )
+            credited.append(t)
+
+        # If a concurrent request beat us to every token, nothing was credited.
+        if not credited:
+            raise HTTPException(
+                409, "Box already redeemed" if row["is_parent"]
+                else "Code already redeemed")
         if row["is_parent"]:
+            # Mark the box itself redeemed (conditional, so the loser is a no-op).
             db.execute(
                 """UPDATE qr_codes SET redeemed_at = datetime('now'),
-                                       redeemed_by = ? WHERE token = ?""",
+                                       redeemed_by = ?
+                   WHERE token = ? AND redeemed_at IS NULL""",
                 (rid, row["token"]),
             )
 
-        count = len(tokens)
+        count = len(credited)
         balance = db.execute(
             "SELECT COALESCE(SUM(points), 0) AS total FROM points_ledger"
             " WHERE retailer_id = ?",
@@ -1718,7 +1923,9 @@ def retailer_shop(retailer: dict = Depends(current_retailer)):
 
 
 @app.post("/retailer/claim", status_code=201)
-def claim_gift(body: GiftClaimIn, retailer: dict = Depends(current_retailer)):
+@limiter.limit(RL_CLAIM)
+def claim_gift(request: Request, body: GiftClaimIn,
+               retailer: dict = Depends(current_retailer)):
     """Logged-in retailer claims a gift. Points are deducted immediately; a
     rejected claim refunds them. The manufacturer fulfils the gift offline."""
     rid = retailer["id"]
@@ -1730,6 +1937,15 @@ def claim_gift(body: GiftClaimIn, retailer: dict = Depends(current_retailer)):
             raise HTTPException(404, "Gift not available")
         if gift["manufacturer_id"] != retailer["manufacturer_id"]:
             raise HTTPException(403, "Gift belongs to another manufacturer")
+        # Fix 2 (claim double-spend race): serialize concurrent claims for this
+        # retailer by taking a row lock on the retailer BEFORE reading the
+        # balance. On PostgreSQL, SELECT ... FOR UPDATE makes a second
+        # simultaneous claim block until the first commits, so it then re-reads
+        # the already-reduced balance and is correctly rejected — a wallet can
+        # never go negative. SQLite serializes writers at the database level, so
+        # no explicit lock clause is needed (and it has no FOR UPDATE syntax).
+        if IS_PG:
+            db.execute("SELECT id FROM retailers WHERE id = ? FOR UPDATE", (rid,))
         if _balance(db, rid) < gift["points_cost"]:
             raise HTTPException(409, "Not enough points")
 

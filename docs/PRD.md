@@ -1,6 +1,6 @@
 # Product Requirements Document — Vastra Loyalty Program
 
-**Status:** Live in production · **Last updated:** 2026-06-24 · **Owner:** Vastra team
+**Status:** Live in production · **Last updated:** 2026-06-25 · **Owner:** Vastra team
 
 ## 1. Overview
 
@@ -45,6 +45,13 @@ schemes are unverifiable and easy to abuse.
 - Retailers are created by their manufacturer and get an **auto-generated login**
   (username = first word of shop name, password = `<username>123`). A retailer
   belongs to exactly one manufacturer.
+- **Single sign-on for native apps.** Native Vastra/YourApp builds reach loyalty
+  **without a second login**: the parent app exchanges a signed assertion for a
+  loyalty session (`POST /auth/sso/{manufacturer,retailer}`). Users are matched by
+  a parent-system **`external_id`** and must be provisioned beforehand
+  (manufacturers imported by Vastra; retailers created/imported by their
+  manufacturer with `external_id`) — SSO never creates accounts. The manufacturer
+  web panel keeps its password login; retailer access is SSO-only in production.
 
 ### 4.2 Catalog & rewards
 - Manufacturers define **products** with base loyalty points.

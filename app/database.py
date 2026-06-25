@@ -224,6 +224,14 @@ class _Cursor:
         self._cur = cur
         self.lastrowid = lastrowid
 
+    @property
+    def rowcount(self):
+        # Exposed so application code can branch on how many rows an
+        # UPDATE/DELETE actually affected — used by the conditional
+        # "redeem only if still unredeemed" scan guard. psycopg's cursor
+        # reports rowcount the same way sqlite3 does.
+        return self._cur.rowcount
+
     def fetchone(self):
         return self._cur.fetchone()
 
@@ -312,6 +320,15 @@ _MIGRATIONS = [
     # Reverse-geocoded street address of the shop, refreshed from the latest
     # scan location so the manufacturer can find the shop without asking.
     ("retailers", "address", "TEXT"),
+    # Set to 1 when a retailer is created with a system-generated temporary
+    # password, so the client can prompt for a change on first login. Existing
+    # retailers default to 0 (their current login keeps working unchanged).
+    ("retailers", "must_change", "INTEGER NOT NULL DEFAULT 0"),
+    # SSO mapping keys: the parent system's stable id (Vastra manufacturer id /
+    # YourApp retailer id). Set at provisioning time; the SSO exchange resolves a
+    # signed assertion to a loyalty principal by external_id (see auth.verify_sso).
+    ("manufacturers", "external_id", "TEXT"),
+    ("retailers", "external_id", "TEXT"),
 ]
 
 
@@ -334,6 +351,42 @@ def migrate() -> None:
                     if col not in have:
                         db.execute(
                             f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        except Exception:
+            pass
+
+
+# Database-level guards added after the first schema version. Unlike _MIGRATIONS
+# (plain ADD COLUMN), these can fail if legacy data already violates them, so each
+# runs in its own try/except and a failure is non-fatal: the application-level
+# atomic guards (conditional UPDATE in /scan) keep correctness even if the index
+# could not be created. A failure here means pre-existing duplicate scan rows
+# exist and should be de-duplicated manually before the index will apply.
+_CONSTRAINTS = [
+    # One scan credit per QR token, enforced by the DB. token is NULL for
+    # non-scan ledger rows (gift_redeem/refund/adjustment/transfer), so the
+    # partial index only constrains scans. Supported on both PostgreSQL and
+    # SQLite (>= 3.8). Defence-in-depth behind the conditional-UPDATE guard.
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ledger_scan_token "
+    "ON points_ledger(token) WHERE token IS NOT NULL",
+    # SSO identity mapping must be unique. Manufacturer external_id is globally
+    # unique; retailer external_id is unique *per manufacturer* (the same parent
+    # id space can't leak across tenants). Partial indexes ignore NULLs so rows
+    # provisioned without an external_id (e.g. dev/test logins) are unaffected.
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_manuf_external "
+    "ON manufacturers(external_id) WHERE external_id IS NOT NULL",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_retailer_external "
+    "ON retailers(manufacturer_id, external_id) WHERE external_id IS NOT NULL",
+]
+
+
+def create_constraints() -> None:
+    """Idempotently add database-level guards. Safe to run on every startup;
+    each statement is isolated so a no-op (or a legacy-data conflict) never
+    blocks the rest or aborts boot."""
+    for stmt in _CONSTRAINTS:
+        try:
+            with get_db() as db:
+                db.execute(stmt)
         except Exception:
             pass
 

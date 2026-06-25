@@ -4,7 +4,7 @@ A one-stop orientation to what this project is, who it serves, how it's built, a
 where it stands. For deeper detail see the companion docs linked at the end.
 
 **Status:** Live in production on Render + Neon (Postgres) with real data.
-**Last updated:** 2026-06-24.
+**Last updated:** 2026-06-25.
 
 ---
 
@@ -113,8 +113,14 @@ auto-camera on "Scan another"), rewards **shop**, **claims** history.
 - **Auth:** opaque bearer tokens; two principals (`auth_tokens` for
   manufacturers/admin, `retailer_tokens` for retailers); PBKDF2 passwords. Retailer
   logins are auto-created from the shop name.
+- **SSO (native apps):** `POST /auth/sso/{manufacturer,retailer}` exchange a
+  parent-app HS256 JWT (verified by `verify_sso_assertion`) for the same opaque
+  loyalty tokens — so all other endpoints are unchanged. Principals are matched by
+  `external_id` (on `manufacturers`/`retailers`) and must be pre-provisioned; the
+  exchange never auto-creates. Gated by `SSO_SECRET` (unset → `503`).
 - **Multi-tenancy:** every owned row carries `manufacturer_id`; retailer endpoints
-  derive the retailer from the token, never the body.
+  derive the retailer from the token, never the body. Retailer `external_id` is
+  unique per manufacturer, so a parent id can't resolve across tenants.
 - **Panel:** React + Vite; `panel/src/api.js` is the only fetch layer.
 - **Theme:** Vastra brand palette (blue `#0191D0`, dark blue `#1D466F`, coral
   `#FB624B`, text `#112134`, light base; green/amber kept for approved/pending) in
@@ -128,6 +134,9 @@ auto-camera on "Scan another"), rewards **shop**, **claims** history.
 - **Neon** Postgres holds production data (`DATABASE_URL`). Tables are
   created/migrated on boot; the app **never seeds**.
 - `seed.py` is destructive (local/initial only) and does **not** run `_MIGRATIONS`.
+- **Env vars:** `QR_BASE_URL` (QR payload origin), `DATABASE_URL` (Postgres/Neon),
+  and optionally `SSO_SECRET` + `SSO_ISSUERS`/`SSO_AUDIENCE`/`SSO_MAX_AGE` to enable
+  native-app SSO.
 
 ## 8. Known gaps / backlog
 
