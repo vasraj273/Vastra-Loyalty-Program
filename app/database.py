@@ -100,7 +100,10 @@ CREATE TABLE IF NOT EXISTS scheme_products (
 
 CREATE TABLE IF NOT EXISTS qr_batches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    product_id INTEGER NOT NULL REFERENCES products(id),
+    -- nullable: under the Product SoR model the batch carries a product snapshot
+    -- (product_external_id / product_name / product_sku) instead of a local
+    -- product. product_id is kept only for legacy/transitional rows.
+    product_id INTEGER REFERENCES products(id),
     quantity INTEGER NOT NULL,
     -- points promised per code, frozen at generation time (printed boxes
     -- keep their value even if the product's points change later)
@@ -329,6 +332,19 @@ _MIGRATIONS = [
     # signed assertion to a loyalty principal by external_id (see auth.verify_sso).
     ("manufacturers", "external_id", "TEXT"),
     ("retailers", "external_id", "TEXT"),
+    # Product System of Record migration: Vastra owns products; loyalty stores a
+    # reference (product_external_id) + immutable snapshot (name/sku) and the
+    # batch's own manufacturer_id, so QR generation/reads no longer depend on the
+    # local products table. points_per_code stays frozen on the batch as before.
+    ("qr_batches", "manufacturer_id", "INTEGER"),
+    ("qr_batches", "product_external_id", "TEXT"),
+    ("qr_batches", "product_name", "TEXT"),
+    ("qr_batches", "product_sku", "TEXT"),
+    # Per-scan product snapshot on the ledger (point-in-time, like region /
+    # distributor_id), so analytics/claims read history without joining products.
+    ("points_ledger", "product_external_id", "TEXT"),
+    ("points_ledger", "product_name", "TEXT"),
+    ("points_ledger", "product_sku", "TEXT"),
 ]
 
 
@@ -376,7 +392,22 @@ _CONSTRAINTS = [
     "ON manufacturers(external_id) WHERE external_id IS NOT NULL",
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_retailer_external "
     "ON retailers(manufacturer_id, external_id) WHERE external_id IS NOT NULL",
+    # Product SoR migration: batch tenancy now lives directly on qr_batches, and
+    # analytics group scans by the product reference. Plain (non-unique) indexes.
+    "CREATE INDEX IF NOT EXISTS idx_qr_batches_manuf "
+    "ON qr_batches(manufacturer_id)",
+    "CREATE INDEX IF NOT EXISTS idx_ledger_product_ext "
+    "ON points_ledger(product_external_id)",
 ]
+
+# Existing Postgres/Neon databases created qr_batches.product_id as NOT NULL.
+# The Product SoR model stores external-only batches with a NULL product_id, so
+# relax that constraint in place (non-destructive, idempotent — a no-op once
+# already nullable). SQLite fresh DBs get the nullable column from SCHEMA above;
+# SQLite cannot ALTER a column's nullability, so this PG-only step is skipped there.
+if IS_PG:
+    _CONSTRAINTS.append(
+        "ALTER TABLE qr_batches ALTER COLUMN product_id DROP NOT NULL")
 
 
 def create_constraints() -> None:

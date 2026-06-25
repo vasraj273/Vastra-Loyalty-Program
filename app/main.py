@@ -53,12 +53,50 @@ def _backfill_coords() -> None:
                 )
 
 
+def _backfill_product_snapshots() -> None:
+    """One-time, idempotent backfill of the product reference/snapshot columns
+    introduced by the Product System-of-Record migration. Fills only NULLs from
+    the (transitional) products table so batches/scans created before the
+    migration keep displaying correctly without a live products join. Safe to run
+    on every startup; non-fatal if it cannot complete."""
+    try:
+        with get_db() as db:
+            db.execute(
+                """UPDATE qr_batches SET manufacturer_id = (
+                       SELECT p.manufacturer_id FROM products p
+                       WHERE p.id = qr_batches.product_id)
+                   WHERE manufacturer_id IS NULL AND product_id IS NOT NULL""")
+            db.execute(
+                """UPDATE qr_batches SET product_name = (
+                       SELECT p.name FROM products p
+                       WHERE p.id = qr_batches.product_id)
+                   WHERE product_name IS NULL AND product_id IS NOT NULL""")
+            db.execute(
+                """UPDATE qr_batches SET product_sku = (
+                       SELECT p.sku FROM products p
+                       WHERE p.id = qr_batches.product_id)
+                   WHERE product_sku IS NULL AND product_id IS NOT NULL""")
+            db.execute(
+                """UPDATE points_ledger SET product_name = (
+                       SELECT p.name FROM products p
+                       WHERE p.id = points_ledger.product_id)
+                   WHERE product_name IS NULL AND product_id IS NOT NULL""")
+            db.execute(
+                """UPDATE points_ledger SET product_sku = (
+                       SELECT p.sku FROM products p
+                       WHERE p.id = points_ledger.product_id)
+                   WHERE product_sku IS NULL AND product_id IS NOT NULL""")
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
     migrate()
     create_constraints()
     _backfill_coords()
+    _backfill_product_snapshots()
     yield
 
 
@@ -168,11 +206,22 @@ class SchemeIn(BaseModel):
 
 
 class GenerateIn(BaseModel):
-    product_id: int
+    # New (primary) contract: Vastra is the product System of Record and sends a
+    # reference (product_external_id) + immutable snapshot (name/sku) + the frozen
+    # points value. Loyalty trusts it and never touches the products table.
+    product_external_id: str | None = Field(default=None, max_length=200)
+    product_name: str | None = Field(default=None, max_length=200)
+    product_sku: str | None = Field(default=None, max_length=100)
+    # Transitional/legacy: the loyalty product id used by the admin panel and the
+    # /web/generate page. Used only when product_external_id is absent; resolved
+    # once against the products table to build the same snapshot. Remove once those
+    # clients call the Vastra backend instead.
+    product_id: int | None = Field(default=None)
     quantity: int = Field(ge=1, le=10_000)
     points_per_code: int | None = Field(
         default=None, ge=0,
-        description="Override product's loyalty_points for this batch",
+        description="Points frozen per code. Required with product_external_id; "
+                    "with legacy product_id, defaults to the product's points.",
     )
     items_per_box: int | None = Field(
         default=None, ge=2, le=1000,
@@ -819,9 +868,9 @@ def retailer_wallet(retailer: dict = Depends(current_retailer)):
         history = db.execute(
             """SELECT l.points, l.base_points, l.bonus_points, l.scanned_at,
                       l.entry_type, l.note,
-                      p.name AS product_name, p.sku, s.name AS scheme_name
+                      l.product_name AS product_name,
+                      l.product_sku AS sku, s.name AS scheme_name
                FROM points_ledger l
-               LEFT JOIN products p ON p.id = l.product_id
                LEFT JOIN schemes s ON s.id = l.scheme_id
                WHERE l.retailer_id = ? ORDER BY l.scanned_at DESC LIMIT 100""",
             (rid,),
@@ -1153,20 +1202,50 @@ def import_distributors_csv(request: Request, body: ImportIn,
 @limiter.limit(RL_QRGEN)
 def generate_qr_batch(request: Request, body: GenerateIn,
                       user: dict = Depends(current_manufacturer)):
-    with get_db() as db:
-        product = db.execute(
-            "SELECT * FROM products WHERE id = ? AND manufacturer_id = ?",
-            (body.product_id, user["id"]),
-        ).fetchone()
+    mid = user["id"]
+    # Resolve the product snapshot for this batch.
+    #  Primary path: Vastra (the product System of Record) supplies a reference
+    #  (product_external_id) + snapshot (name/sku) + the frozen points value;
+    #  loyalty trusts it and never reads the products table.
+    #  Transitional path: the panel / /web/generate still send a loyalty
+    #  product_id, looked up once to build the same snapshot.
+    product_id = None
+    if body.product_external_id:
+        if not (body.product_name and body.product_sku
+                and body.points_per_code is not None):
+            raise HTTPException(
+                422, "product_name, product_sku and points_per_code are "
+                     "required with product_external_id")
+        product_external_id = body.product_external_id.strip()
+        product_name, product_sku = body.product_name, body.product_sku
+        points = body.points_per_code
+    elif body.product_id is not None:
+        with get_db() as db:
+            product = db.execute(
+                "SELECT * FROM products WHERE id = ? AND manufacturer_id = ?",
+                (body.product_id, mid),
+            ).fetchone()
         if not product:
             raise HTTPException(404, "Product not found")
-
+        product_id = product["id"]
+        product_external_id = None
+        product_name, product_sku = product["name"], product["sku"]
         points = (body.points_per_code if body.points_per_code is not None
                   else product["loyalty_points"])
+    else:
+        raise HTTPException(
+            422, "product_external_id (or legacy product_id) is required")
+
+    with get_db() as db:
+        # manufacturer_id is stored directly on the batch (no products join);
+        # points_per_code stays frozen exactly as before.
         cur = db.execute(
-            """INSERT INTO qr_batches (product_id, quantity, points_per_code)
-               VALUES (?, ?, ?)""",
-            (body.product_id, body.quantity, points),
+            """INSERT INTO qr_batches
+               (manufacturer_id, product_id, product_external_id,
+                product_name, product_sku, quantity, points_per_code)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (mid, product_id, product_external_id, product_name, product_sku,
+             body.quantity, points),
         )
         batch_id = cur.lastrowid
 
@@ -1214,8 +1293,10 @@ def generate_qr_batch(request: Request, body: GenerateIn,
 
     return {
         "batch_id": batch_id,
-        "product_id": body.product_id,
-        "product_name": product["name"],
+        "product_id": product_id,
+        "product_external_id": product_external_id,
+        "product_name": product_name,
+        "product_sku": product_sku,
         "quantity": body.quantity,
         "points_per_code": points,
         "items_per_box": body.items_per_box,
@@ -1242,9 +1323,9 @@ def generate_qr_batch(request: Request, body: GenerateIn,
 
 def _get_batch(db, batch_id: int, manufacturer_id: int):
     batch = db.execute(
-        """SELECT b.*, p.name AS product_name, p.sku
-           FROM qr_batches b JOIN products p ON p.id = b.product_id
-           WHERE b.id = ? AND p.manufacturer_id = ?""",
+        """SELECT b.*, b.product_sku AS sku
+           FROM qr_batches b
+           WHERE b.id = ? AND b.manufacturer_id = ?""",
         (batch_id, manufacturer_id),
     ).fetchone()
     if not batch:
@@ -1265,9 +1346,9 @@ def save_batch(batch_id: int, user: dict = Depends(current_manufacturer)):
 @app.get("/qr/batches")
 def list_batches(status: str | None = Query(None, pattern="^(pending|saved)$"),
                  user: dict = Depends(current_manufacturer)):
-    sql = """SELECT b.*, p.name AS product_name, p.sku
-             FROM qr_batches b JOIN products p ON p.id = b.product_id
-             WHERE p.manufacturer_id = ?"""
+    sql = """SELECT b.*, b.product_sku AS sku
+             FROM qr_batches b
+             WHERE b.manufacturer_id = ?"""
     args: list = [user["id"]]
     if status:
         sql += " AND b.status = ?"
@@ -1361,11 +1442,12 @@ def scan(request: Request, body: ScanIn,
     with get_db() as db:
         row = db.execute(
             """SELECT c.token, c.redeemed_at, c.is_parent, b.points_per_code,
-                      p.id AS product_id, p.name AS product_name, p.sku,
-                      p.manufacturer_id
+                      b.product_id AS product_id,
+                      b.product_external_id AS product_external_id,
+                      b.product_name AS product_name, b.product_sku AS sku,
+                      b.manufacturer_id
                FROM qr_codes c
                JOIN qr_batches b ON b.id = c.batch_id
-               JOIN products p ON p.id = b.product_id
                WHERE c.token = ? OR c.manual_code = ?""",
             (body.code.strip(), code),
         ).fetchone()
@@ -1436,12 +1518,14 @@ def scan(request: Request, body: ScanIn,
                 continue  # another concurrent scan already claimed this token
             db.execute(
                 """INSERT INTO points_ledger
-                   (manufacturer_id, retailer_id, token, product_id, points,
+                   (manufacturer_id, retailer_id, token, product_id,
+                    product_external_id, product_name, product_sku, points,
                     base_points, bonus_points, scheme_id, region, lat, lng,
                     distributor_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (row["manufacturer_id"], rid, t,
-                 row["product_id"], per, base, bonus,
+                 row["product_id"], row["product_external_id"],
+                 row["product_name"], row["sku"], per, base, bonus,
                  scheme["id"] if scheme else None, retailer["region"],
                  body.lat, body.lng, retailer["distributor_id"]),
             )
@@ -1472,8 +1556,9 @@ def scan(request: Request, body: ScanIn,
         "redeemed": True,
         "is_box": bool(row["is_parent"]),
         "items_registered": count,
-        "product": {"id": row["product_id"], "name": row["product_name"],
-                    "sku": row["sku"]},
+        "product": {"id": row["product_id"],
+                    "external_id": row["product_external_id"],
+                    "name": row["product_name"], "sku": row["sku"]},
         "points_awarded": per * count,
         "base_points": base * count,
         "bonus_points": bonus * count,
@@ -1584,6 +1669,7 @@ def delete_scheme(scheme_id: int, user: dict = Depends(current_manufacturer)):
 @app.get("/claims")
 def list_claims(
     product_id: int | None = None,
+    product_external_id: str | None = None,
     retailer_id: int | None = None,
     region: str | None = None,
     scheme_id: int | None = None,
@@ -1595,9 +1681,12 @@ def list_claims(
 ):
     where = " WHERE l.manufacturer_id = ? AND l.entry_type = 'scan'"
     args: list = [user["id"]]
-    if product_id is not None:
+    if product_id is not None:  # legacy/transitional filter
         where += " AND l.product_id = ?"
         args.append(product_id)
+    if product_external_id is not None:
+        where += " AND l.product_external_id = ?"
+        args.append(product_external_id)
     if retailer_id is not None:
         where += " AND l.retailer_id = ?"
         args.append(retailer_id)
@@ -1638,18 +1727,20 @@ def list_claims(
                        SUM(l.bonus_points) AS bonus_points,
                        l.region, MAX(q.parent_token) AS parent_token,
                        {group_key} AS token,
-                       p.id AS product_id, p.name AS product_name, p.sku,
+                       l.product_id AS product_id,
+                       MAX(l.product_external_id) AS product_external_id,
+                       MAX(l.product_name) AS product_name,
+                       MAX(l.product_sku) AS sku,
                        r.id AS retailer_id, r.name AS retailer_name,
                        r.shop_name, r.lat, r.lng,
                        s.id AS scheme_id, s.name AS scheme_name
                 FROM points_ledger l
                 JOIN qr_codes q ON q.token = l.token
-                JOIN products p ON p.id = l.product_id
                 JOIN retailers r ON r.id = l.retailer_id
                 LEFT JOIN schemes s ON s.id = l.scheme_id
                 {where}
                 GROUP BY {group_key}, l.scanned_at, l.region,
-                         p.id, p.name, p.sku,
+                         l.product_id,
                          r.id, r.name, r.shop_name, r.lat, r.lng,
                          s.id, s.name
                 ORDER BY l.scanned_at DESC LIMIT ? OFFSET ?""",
@@ -1683,8 +1774,7 @@ def dashboard(user: dict = Depends(current_manufacturer)):
                      AS points_awarded,
                  (SELECT COUNT(*) FROM qr_codes c
                   JOIN qr_batches b ON b.id = c.batch_id
-                  JOIN products p ON p.id = b.product_id
-                  WHERE p.manufacturer_id = :m) AS codes_issued,
+                  WHERE b.manufacturer_id = :m) AS codes_issued,
                  (SELECT COUNT(*) FROM gift_claims
                   WHERE manufacturer_id = :m) AS redeem_total,
                  (SELECT COUNT(*) FROM gift_claims
@@ -1704,13 +1794,23 @@ def dashboard(user: dict = Depends(current_manufacturer)):
                ORDER BY scans DESC""",
             (mid,),
         ).fetchall()
+        # Grouped by the product reference from scan ledger snapshots (no products
+        # join). Key falls back external_id -> sku -> legacy product_id so both
+        # new (Vastra) and pre-migration rows group correctly. Note: only products
+        # with scan activity appear (loyalty is no longer the product catalog).
         by_product = db.execute(
-            """SELECT p.id, p.name, p.sku, COUNT(l.id) AS scans,
+            """SELECT COALESCE(l.product_external_id, l.product_sku,
+                               CAST(l.product_id AS TEXT)) AS id,
+                      MAX(l.product_name) AS name,
+                      MAX(l.product_sku) AS sku,
+                      MAX(l.product_external_id) AS product_external_id,
+                      COUNT(l.id) AS scans,
                       COALESCE(SUM(l.points), 0) AS points
-               FROM products p LEFT JOIN points_ledger l
-                 ON l.product_id = p.id AND l.entry_type = 'scan'
-               WHERE p.manufacturer_id = ?
-               GROUP BY p.id ORDER BY scans DESC""",
+               FROM points_ledger l
+               WHERE l.manufacturer_id = ? AND l.entry_type = 'scan'
+               GROUP BY COALESCE(l.product_external_id, l.product_sku,
+                                 CAST(l.product_id AS TEXT))
+               ORDER BY scans DESC""",
             (mid,),
         ).fetchall()
         by_distributor = db.execute(
@@ -1740,8 +1840,7 @@ def dashboard(user: dict = Depends(current_manufacturer)):
             """SELECT substr(c.created_at, 1, 7) AS month, COUNT(*) AS n
                FROM qr_codes c
                JOIN qr_batches b ON b.id = c.batch_id
-               JOIN products p ON p.id = b.product_id
-               WHERE p.manufacturer_id = ?
+               WHERE b.manufacturer_id = ?
                GROUP BY substr(c.created_at, 1, 7)""",
             (mid,),
         ).fetchall()

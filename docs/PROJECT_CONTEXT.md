@@ -48,6 +48,14 @@ One FastAPI service serves three surfaces from a single container:
   codes register all their child items in one scan — and the Claims view collapses
   that box back into a single `📦 Box · N items` row (grouped at query time on
   `COALESCE(parent_token, token)`), so a box scan doesn't flood the list.
+- **Products: Vastra is the System of Record.** Loyalty is not a product catalog —
+  it stores a product **reference** (`product_external_id`) + immutable **snapshot**
+  (`product_name`/`product_sku`) on `qr_batches` and `points_ledger`, and reads
+  those instead of joining `products` on the QR/scan/claims/analytics paths.
+  `POST /qr/generate` is dual-contract (new `product_external_id` + snapshot from
+  the Vastra backend; legacy `product_id` still accepted). The products table,
+  product CRUD, and `scheme_products` remain transitional. See
+  `docs/integration/PRODUCT_INTEGRATION.md`.
 - **Schemes.** Time-bound bonus points on top of base, optionally scoped to
   products; the most generous active scheme wins (no stacking).
 - **Gifts & redemptions.** Retailers claim gifts (points deducted, proof reference

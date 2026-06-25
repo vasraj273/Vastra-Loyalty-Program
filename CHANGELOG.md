@@ -4,6 +4,43 @@ Notable changes to the Loyalty QR API. Dates are when the change went live on
 production (Render + Neon). Schema changes are additive (`_MIGRATIONS`), applied
 by `migrate()` on startup — no reseed, existing data preserved.
 
+## 2026-06-25 (Product System-of-Record: reference + snapshot)
+
+Vastra is now the System of Record for products; the loyalty backend stores a
+product **reference** (`product_external_id`) + immutable **snapshot**
+(`product_name`/`product_sku`) and no longer joins the local `products` table on
+the QR/scan/claims/analytics paths. Phase 1 — dual-contract; the Products page
+and product CRUD remain for transition.
+
+### Added
+- **New `POST /qr/generate` contract (primary):**
+  `{ product_external_id, product_name, product_sku, points_per_code, quantity, items_per_box? }`.
+  Loyalty trusts the Vastra-supplied snapshot and does **no** products lookup.
+  The legacy `{ product_id }` body is still accepted (panel / `/web/generate`).
+- `product_external_id` on the scan response `product` object and as a `/claims`
+  filter.
+- Idempotent startup backfill (`_backfill_product_snapshots`) populating the new
+  columns for pre-migration batches/ledger rows from the transitional products table.
+
+### Changed (read paths now use snapshots, no products join)
+- `/scan`, `/qr/batches`, `/qr/batches/{id}`, `/qr/batches/{id}/print`,
+  `/retailer/wallet`, `/claims`, `/analytics/dashboard`.
+- Batch tenancy now comes from `qr_batches.manufacturer_id` directly.
+- Dashboard `by_product` groups by the ledger product snapshot, so it lists only
+  products **with scan activity** (loyalty is no longer the catalog).
+
+### Schema (additive)
+- New columns: `qr_batches.manufacturer_id` / `product_external_id` /
+  `product_name` / `product_sku`; `points_ledger.product_external_id` /
+  `product_name` / `product_sku`. Indexes `idx_qr_batches_manuf`,
+  `idx_ledger_product_ext`. `qr_batches.product_id` relaxed to nullable
+  (Postgres: idempotent `DROP NOT NULL`; SQLite: nullable in `SCHEMA`).
+
+### Unchanged
+- QR engine (tokens/manual codes/box logic), wallet, points calculation,
+  schemes, claims, analytics math, permissions, auth, SSO. `scheme_products`
+  still references `product_id` (later phase). Product CRUD + Products page kept.
+
 ## 2026-06-25 (native-app SSO)
 
 ### Added

@@ -54,12 +54,24 @@ Tables (`app/database.py` `SCHEMA`, evolved additively via `_MIGRATIONS`):
 | `retailer_tokens` | Retailer bearer tokens | `token`, `retailer_id` |
 | `distributors` | Distributor layer (tracking only, no login/points) | `manufacturer_id`, `name`, `phone`, `region` |
 | `schemes` / `scheme_products` | Time-bound bonus campaigns + scope | `bonus_points`, `start_date`, `end_date` |
-| `qr_batches` | Generation batch | `product_id`, `quantity`, `points_per_code` (frozen) |
+| `qr_batches` | Generation batch | `manufacturer_id`, `product_id` (nullable, legacy), `product_external_id`, `product_name`/`product_sku` (snapshot), `quantity`, `points_per_code` (frozen) |
 | `qr_codes` | Individual codes | `token`, `manual_code`, `batch_id`, `is_parent`, `parent_token`, `redeemed_at`, `redeemed_by` |
-| `points_ledger` | Typed transaction log | `entry_type`, `points`, `base_points`, `bonus_points`, `scheme_id`, `region`, `lat`, `lng`, `distributor_id`, `scanned_at` |
+| `points_ledger` | Typed transaction log | `entry_type`, `points`, `base_points`, `bonus_points`, `scheme_id`, `region`, `lat`, `lng`, `distributor_id`, `product_id` (legacy), `product_external_id`, `product_name`/`product_sku` (snapshot), `scanned_at` |
 | `gifts` / `gift_claims` | Rewards catalog + claims | `points_cost`, `reference`, status |
 
 Every tenant-owned row carries `manufacturer_id`.
+
+**Product reference model (Vastra is the product System of Record).** The
+QR/scan/claims/analytics/wallet paths no longer join the local `products` table:
+`qr_batches` and `points_ledger` carry a product **reference**
+(`product_external_id`) + immutable **snapshot** (`product_name`/`product_sku`),
+and `qr_batches` carries its own `manufacturer_id`. `POST /qr/generate` is
+dual-contract — the primary contract takes `product_external_id` +
+`product_name` + `product_sku` + `points_per_code` from the Vastra backend (no
+products lookup); a legacy `product_id` body is still accepted (panel /
+`/web/generate`) and resolved once into the same snapshot. The `products` table,
+product CRUD, and `scheme_products` (still keyed by `product_id`) remain for
+transition. See `docs/integration/PRODUCT_INTEGRATION.md`.
 
 ## 3. Database backend (dual)
 
@@ -164,9 +176,14 @@ Authoritative list at `/docs`. Principal endpoints:
   `redeem_total`, `redeem_pending`, `redeem_approved`.
 - `by_region` rolls scans/points up by region; blank/NULL region groups under
   `'Unspecified'` via `COALESCE(NULLIF(region, ''), 'Unspecified')`.
+- `by_product` groups scan ledger rows by the product snapshot key
+  (`COALESCE(product_external_id, product_sku, product_id)`) — no `products`
+  join — so it lists only products **with scan activity** (loyalty is no longer
+  the catalog). `codes_issued` and `by_month` generation count via
+  `qr_batches.manufacturer_id` directly (no product join).
 - `by_month` is a `{month:'YYYY-MM', generated, scanned}` series (merged in Python
-  from two queries — generation `COUNT` over `qr_codes.created_at` joined to the
-  manufacturer's products, scans `COUNT` over `points_ledger.scanned_at` where
+  from two queries — generation `COUNT` over `qr_codes.created_at` via the batch's
+  `manufacturer_id`, scans `COUNT` over `points_ledger.scanned_at` where
   `entry_type='scan'`). Month buckets use `substr(x, 1, 7)` (portable across
   SQLite/Postgres — **not** `strftime`).
 - The panel renders `by_month` as two themed SVG bar charts
