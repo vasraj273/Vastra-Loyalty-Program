@@ -47,12 +47,12 @@ Tables (`app/database.py` `SCHEMA`, evolved additively via `_MIGRATIONS`):
 
 | Table | Purpose | Key columns |
 |---|---|---|
-| `manufacturers` | Manufacturer + super-admin accounts | `username`, `password_hash`, `display_name`, `is_admin`, `external_id` (SSO map) |
-| `auth_tokens` | Manufacturer/admin bearer tokens | `token`, `manufacturer_id` |
+| `manufacturers` | Manufacturer + super-admin accounts | `username`, `password_hash`, `display_name`, `is_admin`, `external_id` (SSO map), `blocked` (0/1 emergency lockout) |
+| `auth_tokens` | Manufacturer/admin bearer tokens (single active session — new login deletes old rows) | `token`, `manufacturer_id` |
 | `products` | **Legacy** catalog (read-only; no new rows) | `manufacturer_id`, `name`, `sku`, `loyalty_points` |
 | `product_points` | Manufacturer's own points value per Vastra product | `manufacturer_id`, `product_external_id`, `points` |
-| `retailers` | Shops | `manufacturer_id`, `shop_name`, `region`, `username`, `password_hash`, `lat`, `lng`, `location_source`, `address`, `distributor_id`, `external_id` (SSO map, unique per manufacturer) |
-| `retailer_tokens` | Retailer bearer tokens | `token`, `retailer_id` |
+| `retailers` | Shops | `manufacturer_id`, `shop_name`, `region`, `username`, `password_hash`, `lat`, `lng`, `location_source`, `address`, `distributor_id`, `external_id` (SSO map, unique per manufacturer), `blocked` (0/1 emergency lockout) |
+| `retailer_tokens` | Retailer bearer tokens (single active session — new login deletes old rows) | `token`, `retailer_id` |
 | `distributors` | Distributor layer (tracking only, no login/points) | `manufacturer_id`, `name`, `phone`, `region` |
 | `schemes` / `scheme_products` | Time-bound bonus campaigns + scope | `bonus_points`, `start_date`, `end_date` |
 | `qr_batches` | Generation batch | `manufacturer_id`, `product_id` (nullable, legacy), `product_external_id`, `product_name`/`product_sku` (snapshot), `quantity`, `points_per_code` (frozen) |

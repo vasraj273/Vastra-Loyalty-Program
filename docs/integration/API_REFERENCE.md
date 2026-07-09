@@ -97,7 +97,8 @@ Assertion format: see [SSO_INTEGRATION §4](SSO_INTEGRATION.md#4-jwt-assertion-f
 Manufacturer/super-admin password login (web panel; not used by native SSO apps).
 - **Request:** `{ "username": "acme", "password": "•••" }`
 - **Response 200:** `{ "token": "…", "display_name": "…", "username": "…", "is_admin": false }`
-- **Errors:** `401 Invalid username or password` · `429`.
+- **Errors:** `401 Invalid username or password` · `403 Account is blocked` (emergency lockout) · `429`.
+- **Single active session:** a successful login invalidates this account's previous token (any prior device/session gets `401` on its next call).
 
 ### POST /auth/logout — Auth M/Admin
 - **Request:** none. **Response 200:** `{ "ok": true }` (deletes the bearer token).
@@ -110,7 +111,8 @@ Manufacturer/super-admin password login (web panel; not used by native SSO apps)
 Password login for retailers (dev/test; production retailer access is SSO-only).
 - **Request:** `{ "username": "kumar", "password": "•••" }`
 - **Response 200:** `{ "token": "…", "retailer_id": 12, "shop_name": "…", "name": "…", "region": "…", "manufacturer": "…", "must_change": false }`
-- **Errors:** `401` · `429`.
+- **Errors:** `401` · `403 Account is blocked` (emergency lockout) · `429`.
+- **Single active session:** as with manufacturer login, a new login invalidates the retailer's previous token.
 
 ### POST /auth/retailer/logout — Auth R
 - **Response 200:** `{ "ok": true }`.

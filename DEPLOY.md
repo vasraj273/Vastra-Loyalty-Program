@@ -119,3 +119,17 @@ tab and merged onto Vastra's list at read time. See
 - Set a strong `SSO_SECRET` (and keep it out of source control) if native-app SSO is used.
 - Set `VASTRA_API_BASE_URL`/`VASTRA_API_KEY` once Vastra shares their real API contract (see `app/vastra_client.py` — currently a placeholder mapping).
 - Rotate the Neon credentials if the connection string was shared.
+
+## Emergency: block / unblock an account
+
+Sessions are single-active (a new login invalidates the old token), and any
+account can be frozen by hand in the DB — no deploy needed. Against Neon:
+
+```sql
+UPDATE manufacturers SET blocked = 1 WHERE username = '<user>';   -- block
+UPDATE manufacturers SET blocked = 0 WHERE username = '<user>';   -- restore
+UPDATE retailers     SET blocked = 1 WHERE id = <retailer_id>;    -- block a retailer
+```
+
+A blocked account can't log in, and its current token stops working on the next
+request (both return `403 Account is blocked`). Set `blocked = 0` to restore.

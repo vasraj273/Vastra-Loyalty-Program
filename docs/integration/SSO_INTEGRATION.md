@@ -140,10 +140,13 @@ JWT — do not attempt to decode it.
 
 - **The SSO assertion** is short-lived (≤ `SSO_MAX_AGE`, default 120 s). It is
   consumed once at exchange.
-- **The loyalty token** is currently **long-lived** (no expiry column today); it
-  remains valid until logout deletes it. Treat it as a session token: store it
-  securely, and if a call returns `401`, obtain a **fresh assertion from your
-  parent backend** and re-run the exchange to get a new loyalty token.
+- **The loyalty token** has **no expiry column**, but the server keeps a **single
+  active session** per principal: each SSO exchange (and each password login)
+  deletes that account's previous tokens, so a fresh exchange **invalidates the
+  old token**. Treat it as a session token: store it securely, and if a call
+  returns `401`, obtain a **fresh assertion from your parent backend** and re-run
+  the exchange to get a new loyalty token. (A blocked account returns `403 Account
+  is blocked` at both exchange and on existing tokens — not client-fixable.)
 - There is **no loyalty refresh token**. "Refresh" = re-exchange. How the parent
   app keeps *its own* session alive is out of scope — the only requirement is
   that the parent backend can mint a fresh assertion on demand.

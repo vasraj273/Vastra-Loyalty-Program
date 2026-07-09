@@ -125,7 +125,10 @@ from Vastra (`GET /vastra/products`).
   **Never reseed/drop the Neon DB.** (Gotcha: no `;` inside `SCHEMA` comments.)
 - **Auth:** opaque bearer tokens; two principals (`auth_tokens` for
   manufacturers/admin, `retailer_tokens` for retailers); PBKDF2 passwords. Retailer
-  logins are auto-created from the shop name.
+  logins are auto-created from the shop name. **Single active session** — a new
+  login (password or SSO) deletes the account's prior tokens, so one token per
+  user. **Emergency lockout** — `manufacturers.blocked`/`retailers.blocked`
+  (0/1, set by hand in the DB); `1` refuses login and rejects existing tokens.
 - **SSO (native apps):** `POST /auth/sso/{manufacturer,retailer}` exchange a
   parent-app HS256 JWT (verified by `verify_sso_assertion`) for the same opaque
   loyalty tokens — so all other endpoints are unchanged. Principals are matched by

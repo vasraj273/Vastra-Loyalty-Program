@@ -101,7 +101,11 @@ def verify_password(password: str, stored: str) -> bool:
 
 
 def issue_token(db, manufacturer_id: int) -> str:
+    # Single active session: drop this principal's old tokens first so at most
+    # one row per user survives (a new login on any device invalidates the old).
     token = secrets.token_urlsafe(32)
+    db.execute(
+        "DELETE FROM auth_tokens WHERE manufacturer_id = ?", (manufacturer_id,))
     db.execute(
         "INSERT INTO auth_tokens (token, manufacturer_id) VALUES (?, ?)",
         (token, manufacturer_id),
@@ -111,6 +115,8 @@ def issue_token(db, manufacturer_id: int) -> str:
 
 def issue_retailer_token(db, retailer_id: int) -> str:
     token = secrets.token_urlsafe(32)
+    db.execute(
+        "DELETE FROM retailer_tokens WHERE retailer_id = ?", (retailer_id,))
     db.execute(
         "INSERT INTO retailer_tokens (token, retailer_id) VALUES (?, ?)",
         (token, retailer_id),
@@ -132,7 +138,7 @@ def current_user(request: Request) -> dict:
         raise HTTPException(401, "Not authenticated")
     with get_db() as db:
         row = db.execute(
-            """SELECT m.id, m.username, m.display_name, m.is_admin
+            """SELECT m.id, m.username, m.display_name, m.is_admin, m.blocked
                FROM auth_tokens t
                JOIN manufacturers m ON m.id = t.manufacturer_id
                WHERE t.token = ?""",
@@ -140,6 +146,8 @@ def current_user(request: Request) -> dict:
         ).fetchone()
     if not row:
         raise HTTPException(401, "Invalid or expired token")
+    if row["blocked"]:
+        raise HTTPException(403, "Account is blocked")
     return dict(row)
 
 
@@ -173,4 +181,6 @@ def current_retailer(request: Request) -> dict:
         ).fetchone()
     if not row:
         raise HTTPException(401, "Invalid or expired token")
+    if row["blocked"]:
+        raise HTTPException(403, "Account is blocked")
     return dict(row)

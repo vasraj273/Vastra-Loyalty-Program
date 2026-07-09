@@ -41,6 +41,8 @@ structured form:
 | 403 | `Retailer not provisioned` | Unknown retailer, or `external_id` under the wrong manufacturer (cross-tenant) | Provision the retailer with `external_id` under the correct manufacturer. |
 | 503 | `SSO is not configured` | `SSO_SECRET` unset on the server | Server config; contact DevOps. |
 | 401 | `Invalid username or password` | Password login failure | Show login error (password flows only). |
+| 401 | `Invalid or expired token` | Token no longer in the DB — logged out, **or superseded by a newer login** (single active session), or the account was blocked | Route to login / re-exchange a fresh SSO assertion. |
+| 403 | `Account is blocked` | Emergency lockout (`blocked = 1`) — refused at login **and** on every request with an existing token | Show "account disabled, contact support". Not client-fixable; an admin clears the flag. |
 | 401 | `Current password is incorrect` | `POST /retailer/password` | Re-prompt. |
 | 422 | `New password must differ from the current one` | password change | Re-prompt. |
 

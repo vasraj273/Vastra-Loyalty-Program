@@ -57,6 +57,10 @@ product-list API contract (see [PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#
 - [ ] Fetch assertion from parent backend → `POST /auth/sso/{manufacturer|retailer}`.
 - [ ] Store loyalty token in Keychain / Keystore; send `Authorization: Bearer`.
 - [ ] On `401`: re-exchange a fresh assertion → retry once → else route to login.
+      (Single active session: logging in again elsewhere invalidates this token —
+      a `401` can simply mean the user signed in on another device.)
+- [ ] On `403 Account is blocked`: stop retrying, show an "account disabled" state
+      (emergency lockout cleared only by an admin in the DB).
 - [ ] Logout calls `/auth/logout` or `/auth/retailer/logout`, then clears the token.
 
 **QR generation is not a mobile-app feature** ✅

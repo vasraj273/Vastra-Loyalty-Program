@@ -52,6 +52,11 @@ schemes are unverifiable and easy to abuse.
   (manufacturers imported by Vastra; retailers created/imported by their
   manufacturer with `external_id`) — SSO never creates accounts. The manufacturer
   web panel keeps its password login; retailer access is SSO-only in production.
+- **One active session per user.** A new login (password or SSO) invalidates the
+  previous token, so signing in on another device signs the first one out.
+- **Emergency lockout.** An admin can disable any manufacturer or retailer by
+  setting its `blocked` flag in the DB; a blocked account cannot log in and its
+  existing session stops working on the next request.
 
 ### 4.2 Catalog & rewards
 - **Products come from Vastra's catalog** — the panel pulls the manufacturer's

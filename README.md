@@ -66,6 +66,8 @@ See `/docs` for the full, authoritative endpoint list.
 - **QR contains only a token URL** (`{QR_BASE_URL}/{token}`), not product/retailer data. The retailer is unknown at print time; all detail is joined server-side at scan. The token is a random `uuid4` — opaque, unguessable, validated server-side (so URL tampering just yields a 404).
 - **Points frozen per batch** — printed stickers keep their promised value even if the product's points change later.
 - **Retailer derived from the auth token** at scan time, never from the request body, so points can only be credited to the logged-in retailer.
+- **Single active session** — a new login (password or SSO) deletes the account's prior tokens, so there's one token per user and signing in elsewhere signs the old device out. Logout deletes the token; there's no expiry column.
+- **Emergency lockout** — a `blocked` flag (0/1) on manufacturers and retailers, flipped by hand in the DB; `1` refuses login and rejects the account's existing token on its next request (`403 Account is blocked`).
 - **Offline geocoding** — city↔coordinates use a built-in `CITY_COORDS` table (`app/geo.py`), no external geocoding service.
 
 ## Configuration

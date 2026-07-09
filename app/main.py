@@ -256,6 +256,8 @@ def login(request: Request, body: LoginIn):
         ).fetchone()
         if not row or not verify_password(body.password, row["password_hash"]):
             raise HTTPException(401, "Invalid username or password")
+        if row["blocked"]:
+            raise HTTPException(403, "Account is blocked")
         token = issue_token(db, row["id"])
     return {
         "token": token,
@@ -286,12 +288,14 @@ def sso_manufacturer(request: Request, body: SsoIn):
     external_id = str(claims["sub"]).strip()
     with get_db() as db:
         row = db.execute(
-            """SELECT id, username, display_name, is_admin FROM manufacturers
-               WHERE external_id = ?""",
+            """SELECT id, username, display_name, is_admin, blocked
+               FROM manufacturers WHERE external_id = ?""",
             (external_id,),
         ).fetchone()
         if not row:
             raise HTTPException(403, "Manufacturer not provisioned")
+        if row["blocked"]:
+            raise HTTPException(403, "Account is blocked")
         token = issue_token(db, row["id"])
     return {
         "token": token,
@@ -314,6 +318,8 @@ def retailer_login(request: Request, body: LoginIn):
         if (not row or not row["password_hash"]
                 or not verify_password(body.password, row["password_hash"])):
             raise HTTPException(401, "Invalid username or password")
+        if row["blocked"]:
+            raise HTTPException(403, "Account is blocked")
         token = issue_retailer_token(db, row["id"])
         manufacturer = db.execute(
             "SELECT display_name FROM manufacturers WHERE id = ?",
@@ -360,6 +366,8 @@ def sso_retailer(request: Request, body: SsoIn):
         ).fetchone()
         if not row:
             raise HTTPException(403, "Retailer not provisioned")
+        if row["blocked"]:
+            raise HTTPException(403, "Account is blocked")
         token = issue_retailer_token(db, row["id"])
     return {
         "token": token,

@@ -4,6 +4,25 @@ Notable changes to the Loyalty QR API. Dates are when the change went live on
 production (Render + Neon). Schema changes are additive (`_MIGRATIONS`), applied
 by `migrate()` on startup — no reseed, existing data preserved.
 
+## 2026-07-09 (Session hardening: single active session + emergency lockout)
+
+Two auth changes, both additive and backward-safe (no reseed).
+
+### Changed
+- **Single active session.** `issue_token`/`issue_retailer_token` (`app/auth.py`)
+  now delete the principal's existing tokens before inserting the new one, so at
+  most one token row survives per user. A new login on any device or path
+  (password *or* SSO) invalidates the previous token. Fixes the unbounded growth
+  of `auth_tokens`/`retailer_tokens` from sessions that never call logout.
+
+### Added
+- **Emergency lockout flag.** New `blocked` column (`INTEGER NOT NULL DEFAULT 0`)
+  on `manufacturers` and `retailers` (`_MIGRATIONS`). Flipped by hand in the DB;
+  when `1`, login is refused and `current_user`/`current_retailer` reject the
+  account's existing token — both return `403 Account is blocked`. Set back to
+  `0` to restore. Enforced across `/auth/login`, `/auth/retailer/login`, and both
+  SSO exchange endpoints.
+
 ## 2026-07-08 (Vastra product catalog: pull-based, panel-driven QR generation)
 
 QR generation moved entirely into the loyalty admin panel — the manufacturer

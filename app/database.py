@@ -359,6 +359,11 @@ _MIGRATIONS = [
     ("points_ledger", "product_external_id", "TEXT"),
     ("points_ledger", "product_name", "TEXT"),
     ("points_ledger", "product_sku", "TEXT"),
+    # Emergency lockout flag, flipped by hand in the DB. 1 = blocked: login is
+    # refused and existing tokens are rejected on their next request (= auto
+    # logout). Existing rows default to 0 (active).
+    ("manufacturers", "blocked", "INTEGER NOT NULL DEFAULT 0"),
+    ("retailers", "blocked", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 
