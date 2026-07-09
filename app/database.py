@@ -172,6 +172,19 @@ CREATE TABLE IF NOT EXISTS gift_claims (
     decided_at TEXT
 );
 
+-- Manufacturer-owned points value per Vastra-catalog product. Vastra is the
+-- system of record for the product itself (name/sku/existence); the
+-- manufacturer still controls the loyalty points value, so it's kept here
+-- rather than in Vastra's data. Keyed by product_external_id, not a local
+-- product row -- see docs/integration/PRODUCT_INTEGRATION.md.
+CREATE TABLE IF NOT EXISTS product_points (
+    manufacturer_id INTEGER NOT NULL REFERENCES manufacturers(id),
+    product_external_id TEXT NOT NULL,
+    points INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (manufacturer_id, product_external_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_qr_codes_batch ON qr_codes(batch_id);
 CREATE INDEX IF NOT EXISTS idx_qr_codes_parent ON qr_codes(parent_token);
 CREATE INDEX IF NOT EXISTS idx_ledger_type ON points_ledger(entry_type);
@@ -182,6 +195,7 @@ CREATE INDEX IF NOT EXISTS idx_ledger_manuf ON points_ledger(manufacturer_id);
 CREATE INDEX IF NOT EXISTS idx_products_manuf ON products(manufacturer_id);
 CREATE INDEX IF NOT EXISTS idx_retailers_manuf ON retailers(manufacturer_id);
 CREATE INDEX IF NOT EXISTS idx_distributors_manuf ON distributors(manufacturer_id);
+CREATE INDEX IF NOT EXISTS idx_product_points_manuf ON product_points(manufacturer_id);
 """
 
 # Tables with a serial ``id`` column, for which we emulate sqlite's
@@ -193,8 +207,8 @@ _ID_TABLES = {"manufacturers", "products", "retailers", "qr_batches",
 # All tables, dropped with CASCADE on reset (order irrelevant).
 _DROP_ORDER = ("gift_claims", "gifts", "points_ledger", "qr_codes",
                "qr_batches", "scheme_products", "schemes", "retailer_tokens",
-               "retailers", "distributors", "products", "auth_tokens",
-               "manufacturers")
+               "retailers", "distributors", "product_points", "products",
+               "auth_tokens", "manufacturers")
 
 
 # ---------------------------------------------------------------- Postgres

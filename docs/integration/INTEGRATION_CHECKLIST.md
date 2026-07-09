@@ -5,9 +5,8 @@
 > [API_REFERENCE](API_REFERENCE.md), [DEPLOYMENT_GUIDE](DEPLOYMENT_GUIDE.md),
 > [ERROR_REFERENCE](ERROR_REFERENCE.md), [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md).
 
-Legend: ✅ works today · 🟡 loyalty backend implemented (Phase 1); depends on the
-broader product-ownership rollout — Vastra-originated `/qr/generate` calls,
-product CRUD removal, and the `scheme_products` → `product_external_id` migration.
+Legend: ✅ works today · 🟡 loyalty backend implemented, pending Vastra's real
+product-list API contract (see [PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#8-open-items)).
 
 ---
 
@@ -40,10 +39,15 @@ product CRUD removal, and the `scheme_products` → `product_external_id` migrat
 - [ ] Run the smoke checklist in [DEPLOYMENT_GUIDE §8](DEPLOYMENT_GUIDE.md#8-verification-checklist-post-deploy-smoke).
 - [ ] Confirm provisioning gate: unknown `external_id` → `403`, **no row created**.
 
-**QR generation origination** 🟡
-- [ ] Decide/confirm server-to-server origination (Vastra Backend → Loyalty) and
-      auth (reuse SSO exchange recommended). See [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md).
-- [ ] Resolve trusted product snapshot (name, sku, **points policy**) before calling.
+**Serve the product-list API** 🟡
+- [ ] Expose a product-list endpoint the Loyalty Backend can call server-side
+      (`GET /vastra/products` proxies it via `app/vastra_client.py`); share
+      URL + auth mechanism (`VASTRA_API_BASE_URL` / `VASTRA_API_KEY`).
+- [ ] Confirm response fields (product id, name, sku) and whether the list is
+      scoped per-manufacturer server-side or needs a query param.
+- [ ] QR generation itself is now **panel-driven** (manufacturer logs into the
+      loyalty admin panel directly) — no server-to-server `/qr/generate` call
+      from the Vastra backend is needed. See [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md).
 
 ---
 
@@ -55,11 +59,11 @@ product CRUD removal, and the `scheme_products` → `product_external_id` migrat
 - [ ] On `401`: re-exchange a fresh assertion → retry once → else route to login.
 - [ ] Logout calls `/auth/logout` or `/auth/retailer/logout`, then clears the token.
 
-**Implement QR generation (manufacturer app)** 🟡
-- [ ] Select product **in the Vastra catalog** (never fetch products from loyalty).
-- [ ] Request generation **via the Vastra backend** (don't send points from the app).
-- [ ] Render/print: `GET /qr/batches/{id}/print` (PDF) or per-code PNG
-      `GET /qr/codes/{token}/image`. Offer "Save batch".
+**QR generation is not a mobile-app feature** ✅
+- [ ] Nothing to implement here — the manufacturer generates QR codes from
+      the **loyalty admin panel** (web), not the Vastra App. If the app needs
+      a "Generate QR" entry point, deep-link/redirect to the panel rather than
+      calling loyalty's `/qr/generate` or product endpoints directly.
 
 **Implement scanning (retailer app)** ✅
 - [ ] Camera scanner + manual 6-char fallback field.
@@ -90,6 +94,8 @@ product CRUD removal, and the `scheme_products` → `product_external_id` migrat
 **Environment variables** ✅
 - [ ] `DATABASE_URL` (Neon pooled), `QR_BASE_URL` (HTTPS origin + `/web/scan`).
 - [ ] `SSO_SECRET` (+ optional `SSO_ISSUERS`/`SSO_AUDIENCE`/`SSO_MAX_AGE`).
+- [ ] `VASTRA_API_BASE_URL` + `VASTRA_API_KEY` (+ optional `VASTRA_API_TIMEOUT`) —
+      required for the panel's Products tab / QR generation to load a catalog.
 - [ ] `RL_STORAGE_URI` if running more than one process/replica.
 
 **Deployment** ✅
@@ -144,17 +150,23 @@ product CRUD removal, and the `scheme_products` → `product_external_id` migrat
 - [ ] Rate limits enforced (and shared across replicas if applicable).
 
 **Integration validation**
-- [ ] End-to-end: SSO → generate (via Vastra backend) → print → scan → wallet →
-      claim → approve, across two manufacturers to prove isolation.
+- [ ] End-to-end: login to panel → GET /vastra/products → generate → print →
+      scan (via SSO) → wallet → claim → approve, across two manufacturers to
+      prove isolation.
 - [ ] Clock-skew resilience for assertions.
 - [ ] Rollback drill: redeploy previous image; confirm additive schema is
       backward-compatible.
 
 ---
 
-## 🟡 Gate before product-ownership go-live
+## 🟡 Gate before the Vastra product-list API is live
 
-Confirm the four open decisions in
-[PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#8-open-items-to-confirm-before-implementation)
-and complete the migration in [PRODUCT_INTEGRATION §7](PRODUCT_INTEGRATION.md#7-migration-plan-additive-neon-safe-no-reseeddrop)
-before switching QR generation to the `product_external_id` contract.
+The loyalty side is fully built (`app/vastra_client.py`, `GET
+/vastra/products`, `product_points`, panel Products tab/Generate QR modal).
+What's still needed from Vastra: their real product-list API contract (URL,
+auth mechanism, response field names, per-manufacturer scoping) — see the
+open items in
+[PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#8-open-items). Until
+`VASTRA_API_BASE_URL`/`VASTRA_API_KEY` point at a real endpoint, `GET
+/vastra/products` fails closed with `502` and the panel's Products tab /
+Generate QR flow can't load a catalog.

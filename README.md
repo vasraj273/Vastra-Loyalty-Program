@@ -1,6 +1,6 @@
 # Loyalty QR API
 
-Multi-tenant backend for a manufacturer→retailer loyalty program in the VastraApp ecosystem. Manufacturers generate QR codes in **Vastra** (printed on product/box stickers); retailers scan them in **YourApp** to earn points and redeem gifts. One FastAPI service serves three surfaces:
+Multi-tenant backend for a manufacturer→retailer loyalty program in the VastraApp ecosystem. Manufacturers generate QR codes in the **loyalty admin panel** (product catalog synced from **Vastra**, printed on product/box stickers); retailers scan them in **YourApp** to earn points and redeem gifts. One FastAPI service serves three surfaces:
 
 - **REST API** (`app/`) — source of truth for Vastra, YourApp, and the panel. Docs at `/docs`.
 - **React admin panel** (`panel/`, built to `panel/dist`, served at `/panel`) — manufacturer + super-admin UI.
@@ -40,14 +40,14 @@ npm run build --prefix panel
 
 React + Vite app in `panel/`. A top-right **burger menu** holds the manufacturer tabs: **Dashboard** (two stat rows — funnel totals + redemption requests; region + by-distributor tables; clustered India map of scan locations; and a **QR analytics** section with a year selector and month-wise *generation* and *generated-vs-scanned* SVG bar charts), **Customers** (retailers), **Distributors**, **Products**, **Schemes**, **Gifts**, **Claims**, **Redemptions**. Super admin gets a **Manufacturers** tab instead. `panel/src/api.js` is the only fetch layer.
 
-Every data tab (Customers, Distributors, Products, Reward shop, Claims, Redemptions) has an **↓ Export CSV** button (client-side download, `panel/src/utils/csv.js`). On **Products**, **Generate QR** opens an **in-panel modal** (`components/GenerateQrModal.jsx`) — generate → print PDF / save for later / browse saved batches — so the manufacturer never leaves the panel. The **Claims** tab collapses a box (parent) scan into a single `📦 Box · N items` row.
+Every data tab (Customers, Distributors, Products, Reward shop, Claims, Redemptions) has an **↓ Export CSV** button (client-side download, `panel/src/utils/csv.js`). **Products** lists the manufacturer's live Vastra catalog (name/sku are read-only, points-per-scan is editable inline); **Generate QR** opens an **in-panel modal** (`components/GenerateQrModal.jsx`) — pick a Vastra product, set points, generate → print PDF / save for later / browse saved batches — so the manufacturer never leaves the panel. The **Claims** tab collapses a box (parent) scan into a single `📦 Box · N items` row.
 
 ## Core flow
 
-1. **Products** — `POST /products` with `loyalty_points` (base points awarded per scan).
-2. **Retailers** — `POST /retailers` with name, shop, an **optional** city, and an optional **distributor**. A login is created automatically. The city + precise location are filled/refreshed from the retailer's scans (latest wins). **Bulk import** via an "Import CSV" button on the Customers, Distributors, and Products tabs (`/retailers/import`, `/distributors/import`, `/products/import` — products upsert by SKU and accept a flexible points column like `PointsPerScan`).
+1. **Products** — `GET /vastra/products` lists the manufacturer's Vastra catalog (name/sku from Vastra, server-side proxy — see `app/vastra_client.py`), merged with the manufacturer's own points-per-scan value; `PUT /vastra/products/{external_id}/points` sets/edits it. There is no local product CRUD.
+2. **Retailers** — `POST /retailers` with name, shop, an **optional** city, and an optional **distributor**. A login is created automatically. The city + precise location are filled/refreshed from the retailer's scans (latest wins). **Bulk import** via an "Import CSV" button on the Customers and Distributors tabs (`/retailers/import`, `/distributors/import`).
    - **Distributors** (`/distributors`) sit between manufacturer and retailer (manuf → distributor → retailer) — a tracking layer so the manufacturer sees who supplies whom. Each scan records the retailer's distributor on the ledger (locked at scan time); the dashboard rolls scans/points up by distributor. Distributors have **no login and no points of their own**.
-3. **Generate** (Vastra) — `POST /qr/generate {product_id, quantity, points_per_code?, items_per_box?}` → N unique codes. Each = QR token + 6-char manual fallback (alphabet excludes 0/O/1/I). With `items_per_box`, parent (box) codes wrap children. Points are **frozen per batch** at generation.
+3. **Generate** (panel) — `POST /qr/generate {product_external_id, product_name, product_sku, points_per_code, quantity, items_per_box?}` → N unique codes. Each = QR token + 6-char manual fallback (alphabet excludes 0/O/1/I). With `items_per_box`, parent (box) codes wrap children. Points are **frozen per batch** at generation. The manufacturer picks the product and sets the points value in the panel — no more Vastra-app/server-to-server call for this.
 4. **Save / print** — `POST /qr/batches/{id}/save`; `GET /qr/batches/{id}/print` → A4 PDF (QR + product + manual code). Saved batches print any time.
 5. **Scan** (YourApp) — `POST /scan {code, lat?, lng?}`. The retailer comes from the auth token, never the body. `code` accepts the QR token or manual code (case/dash/space insensitive). One-time redemption; awards batch points (+ best active scheme bonus) and logs a `points_ledger` row with product, region, and the scan's GPS. Scanning a box parent registers all its children at once. Duplicate → `409`.
 6. **Track** (panel) — `GET /analytics/dashboard` (totals incl. redemption-request counts, by region/product/distributor, top retailers, map points, and `by_month` generation-vs-scan series). Wallet/history via `/retailer/wallet`. `GET /claims` groups box scans into one row each; every data tab exports to CSV.
@@ -73,6 +73,7 @@ See `/docs` for the full, authoritative endpoint list.
 - `QR_BASE_URL` (env) — URL prefix baked into each QR (set to the deployed HTTPS origin + `/web/scan` before any production print run).
 - `DATABASE_URL` (env) — Postgres/Neon connection string; falls back to local SQLite `qr_api.db` when unset. The app creates/migrates tables on boot but **never seeds**.
 - `SSO_SECRET` (env) — shared HMAC secret enabling native-app **SSO** (see below). When unset, the SSO endpoints are inert (`503`); password login is unaffected. Optional companions: `SSO_ISSUERS` (default `vastra,yourapp`), `SSO_AUDIENCE` (default `loyalty`), `SSO_MAX_AGE` (default `120` seconds).
+- `VASTRA_API_BASE_URL` / `VASTRA_API_KEY` (env) — Vastra's product-list API origin + credential, called server-side only (`app/vastra_client.py`) to power the panel's Products tab / QR generation. Optional `VASTRA_API_TIMEOUT` (default `5`s). Unset → `GET /vastra/products` fails closed with `502`.
 
 ## Native app SSO
 

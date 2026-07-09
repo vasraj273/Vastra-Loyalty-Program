@@ -2,10 +2,14 @@ import { useEffect, useState } from 'react'
 import { get, post, printUrl } from '../api.js'
 
 // In-panel QR generation — replaces the old standalone /web/generate webview so
-// the manufacturer never leaves the Products page. Backend contract unchanged:
-// POST /qr/generate, then the returned actions (save / print / discard).
+// the manufacturer never leaves the Products page. Sends the primary
+// /qr/generate contract (product_external_id + snapshot + points_per_code):
+// Vastra is the product catalog, so there's no local products-table lookup.
 export default function GenerateQrModal({ products, onClose }) {
-  const [productId, setProductId] = useState(products[0]?.id ?? '')
+  const [productExternalId, setProductExternalId] = useState(
+    products[0]?.external_id ?? '',
+  )
+  const [pointsPerCode, setPointsPerCode] = useState(products[0]?.points ?? 0)
   const [quantity, setQuantity] = useState(10)
   const [itemsPerBox, setItemsPerBox] = useState('')
   const [batch, setBatch] = useState(null) // generation result
@@ -22,13 +26,23 @@ export default function GenerateQrModal({ products, onClose }) {
     return () => document.removeEventListener('keydown', onEsc)
   }, [onClose])
 
+  const selectProduct = (externalId) => {
+    setProductExternalId(externalId)
+    const product = products.find((p) => p.external_id === externalId)
+    setPointsPerCode(product?.points ?? 0)
+  }
+
   const generate = async () => {
     setBusy(true)
     setError(null)
     try {
+      const product = products.find((p) => p.external_id === productExternalId)
       const ipb = Number(itemsPerBox)
       const payload = {
-        product_id: Number(productId),
+        product_external_id: productExternalId,
+        product_name: product.name,
+        product_sku: product.sku,
+        points_per_code: Number(pointsPerCode),
         quantity: Number(quantity),
       }
       if (ipb >= 2) payload.items_per_box = ipb
@@ -87,15 +101,24 @@ export default function GenerateQrModal({ products, onClose }) {
             <label>
               Product
               <select
-                value={productId}
-                onChange={(e) => setProductId(e.target.value)}
+                value={productExternalId}
+                onChange={(e) => selectProduct(e.target.value)}
               >
                 {products.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} — {p.loyalty_points} pts
+                  <option key={p.external_id} value={p.external_id}>
+                    {p.name} — {p.points} pts
                   </option>
                 ))}
               </select>
+            </label>
+            <label>
+              Points per scan
+              <input
+                type="number"
+                min="0"
+                value={pointsPerCode}
+                onChange={(e) => setPointsPerCode(e.target.value)}
+              />
             </label>
             <label>
               Quantity
@@ -123,7 +146,7 @@ export default function GenerateQrModal({ products, onClose }) {
             <div className="btn-row">
               <button
                 className="btn-primary"
-                disabled={busy || !productId}
+                disabled={busy || !productExternalId}
                 onClick={generate}
               >
                 {busy ? 'Generating…' : 'Generate QR codes'}

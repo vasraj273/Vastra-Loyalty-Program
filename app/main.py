@@ -31,6 +31,7 @@ from .geo import coords_for, known_places, nearest_city, reverse_address
 from .pdf_service import build_pdf
 from .qr_service import (new_manual_code, new_reference, new_token,
                          payload_for, render_png)
+from .vastra_client import VastraApiError, fetch_vastra_products
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 PANEL_DIST = Path(__file__).resolve().parent.parent / "panel" / "dist"
@@ -170,10 +171,8 @@ class ManufacturerIn(BaseModel):
     display_name: str = Field(min_length=1, max_length=200)
 
 
-class ProductIn(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    sku: str = Field(min_length=1, max_length=100)
-    loyalty_points: int = Field(ge=0, default=0)
+class ProductPointsIn(BaseModel):
+    points: int = Field(ge=0)
 
 
 class RetailerIn(BaseModel):
@@ -482,25 +481,10 @@ def list_manufacturers(admin: dict = Depends(current_admin)):
 
 
 # ---------- products (manufacturer-scoped) ----------
-
-@app.post("/products", status_code=201)
-def create_product(body: ProductIn, user: dict = Depends(current_manufacturer)):
-    with get_db() as db:
-        try:
-            cur = db.execute(
-                """INSERT INTO products (manufacturer_id, name, sku, loyalty_points)
-                   VALUES (?, ?, ?, ?)""",
-                (user["id"], body.name, body.sku, body.loyalty_points),
-            )
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(409, f"SKU '{body.sku}' already exists")
-            raise
-        row = db.execute(
-            "SELECT * FROM products WHERE id = ?", (cur.lastrowid,)
-        ).fetchone()
-    return dict(row)
-
+# CRUD is gone: Vastra owns the product catalog now (see /vastra/products
+# below). GET /products stays for legacy readers (Schemes, Claims, and the
+# /web/generate demo webview) that still key off the local table's rows —
+# no new rows are written to it going forward.
 
 @app.get("/products")
 def list_products(user: dict = Depends(current_manufacturer)):
@@ -515,72 +499,51 @@ def list_products(user: dict = Depends(current_manufacturer)):
     return [dict(r) for r in rows]
 
 
-class ProductUpdate(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=200)
-    sku: str | None = Field(default=None, min_length=1, max_length=100)
-    loyalty_points: int | None = Field(default=None, ge=0)
+# ---------- Vastra product catalog (manufacturer-scoped) ----------
+# Vastra is the system of record for the product itself; the manufacturer
+# still controls the loyalty points value per product, stored locally in
+# product_points and merged onto Vastra's live list below.
+
+@app.get("/vastra/products")
+def list_vastra_products(user: dict = Depends(current_manufacturer)):
+    try:
+        products = fetch_vastra_products()
+    except VastraApiError as exc:
+        raise HTTPException(502, f"Vastra product service unavailable: {exc}")
+    with get_db() as db:
+        overrides = {
+            r["product_external_id"]: r["points"]
+            for r in db.execute(
+                "SELECT product_external_id, points FROM product_points "
+                "WHERE manufacturer_id = ?", (user["id"],))
+        }
+    return [{**p, "points": overrides.get(p["external_id"], 0)}
+            for p in products]
 
 
-@app.patch("/products/{product_id}")
-def update_product(product_id: int, body: ProductUpdate,
-                   user: dict = Depends(current_manufacturer)):
-    """Demo-only product management; live products will sync from the
-    Vastra ERP. Point changes affect future batches only — already
-    generated batches keep their frozen points_per_code."""
-    fields = {k: v for k, v in body.model_dump().items() if v is not None}
-    if not fields:
-        raise HTTPException(422, "Nothing to update")
+@app.put("/vastra/products/{external_id}/points")
+def set_product_points(external_id: str, body: ProductPointsIn,
+                       user: dict = Depends(current_manufacturer)):
     with get_db() as db:
         row = db.execute(
-            "SELECT id FROM products WHERE id = ? AND manufacturer_id = ?",
-            (product_id, user["id"]),
+            "SELECT 1 FROM product_points WHERE manufacturer_id = ? "
+            "AND product_external_id = ?", (user["id"], external_id),
         ).fetchone()
-        if not row:
-            raise HTTPException(404, "Product not found")
-        sets = ", ".join(f"{k} = ?" for k in fields)
-        try:
+        if row:
             db.execute(
-                f"UPDATE products SET {sets} WHERE id = ?",
-                [*fields.values(), product_id],
+                "UPDATE product_points SET points = ?, "
+                "updated_at = datetime('now') WHERE manufacturer_id = ? "
+                "AND product_external_id = ?",
+                (body.points, user["id"], external_id),
             )
-        except Exception as exc:
-            if "UNIQUE" in str(exc):
-                raise HTTPException(409, "SKU already exists")
-            raise
-        out = db.execute(
-            "SELECT * FROM products WHERE id = ?", (product_id,)
-        ).fetchone()
-    return dict(out)
-
-
-@app.delete("/products/{product_id}", status_code=204)
-def delete_product(product_id: int,
-                   user: dict = Depends(current_manufacturer)):
-    with get_db() as db:
-        row = db.execute(
-            "SELECT id FROM products WHERE id = ? AND manufacturer_id = ?",
-            (product_id, user["id"]),
-        ).fetchone()
-        if not row:
-            raise HTTPException(404, "Product not found")
-        scans = db.execute(
-            "SELECT COUNT(*) AS n FROM points_ledger WHERE product_id = ?",
-            (product_id,),
-        ).fetchone()["n"]
-        if scans:
-            raise HTTPException(
-                409, "Product has redeemed scans; cannot delete")
-        batches = db.execute(
-            "SELECT COUNT(*) AS n FROM qr_batches WHERE product_id = ?",
-            (product_id,),
-        ).fetchone()["n"]
-        if batches:
-            raise HTTPException(
-                409, "Product has QR batches (possibly printed); "
-                     "discard its batches first")
-        db.execute(
-            "DELETE FROM scheme_products WHERE product_id = ?", (product_id,))
-        db.execute("DELETE FROM products WHERE id = ?", (product_id,))
+        else:
+            db.execute(
+                "INSERT INTO product_points "
+                "(manufacturer_id, product_external_id, points) "
+                "VALUES (?, ?, ?)",
+                (user["id"], external_id, body.points),
+            )
+    return {"external_id": external_id, "points": body.points}
 
 
 # ---------- retailers (manufacturer-scoped) ----------
@@ -1080,79 +1043,6 @@ def import_retailers_csv(request: Request, body: ImportIn,
                 {"shop_name": shop, "username": username, "password": password})
     return {"created": created, "skipped": skipped,
             "errors": errors, "credentials": credentials}
-
-
-# Header names accepted for the points-per-scan value (compared lowercased), so
-# a CSV exported as "PointsPerScan", "Points", etc. still maps correctly.
-_POINTS_ALIASES = ("loyalty_points", "loyalty points", "pointsperscan",
-                   "points_per_scan", "points per scan", "points",
-                   "points_per_code", "pointspercode", "points/scan")
-
-
-def _row_points(row: dict) -> str:
-    """Pull the points value from a CSV row under any accepted column name."""
-    for key in _POINTS_ALIASES:
-        if row.get(key, ""):
-            return row[key]
-    return ""
-
-
-@app.post("/products/import")
-@limiter.limit(RL_IMPORT)
-def import_products_csv(request: Request, body: ImportIn,
-                        user: dict = Depends(current_manufacturer)):
-    """Bulk add/update products from CSV text. Columns (header row,
-    case-insensitive): name (required), sku (required), and the points per scan
-    under any of: loyalty_points / PointsPerScan / points / points_per_scan
-    (optional, default 0). Extra columns (e.g. category, MRP) are ignored. A SKU
-    you already own is **updated** (name + points); a SKU owned by another
-    account is skipped."""
-    import csv as csvmod
-    import io
-    mid = user["id"]
-    reader = csvmod.DictReader(io.StringIO(body.csv))
-    headers = {(h or "").strip().lower() for h in (reader.fieldnames or [])}
-    for req in ("name", "sku"):
-        if req not in headers:
-            raise HTTPException(422, f"CSV must have a '{req}' column")
-    created = updated = skipped = 0
-    errors: list[str] = []
-    with get_db() as db:
-        for i, raw in enumerate(reader, start=2):
-            row = {(k or "").strip().lower(): (v or "").strip()
-                   for k, v in raw.items()}
-            name, sku = row.get("name", ""), row.get("sku", "")
-            if not name or not sku:
-                errors.append(f"row {i}: missing name or sku")
-                continue
-            raw_pts = _row_points(row)
-            try:
-                pts = max(0, int(float(raw_pts))) if raw_pts else 0
-            except ValueError:
-                errors.append(f"row {i}: invalid points '{raw_pts}'")
-                continue
-            existing = db.execute(
-                "SELECT id, manufacturer_id FROM products WHERE LOWER(sku) = LOWER(?)",
-                (sku,)).fetchone()
-            if existing:
-                if existing["manufacturer_id"] != mid:
-                    skipped += 1
-                    errors.append(f"row {i}: SKU '{sku}' belongs to another account")
-                    continue
-                db.execute(
-                    "UPDATE products SET name = ?, loyalty_points = ? WHERE id = ?",
-                    (name, pts, existing["id"]),
-                )
-                updated += 1
-            else:
-                db.execute(
-                    """INSERT INTO products (manufacturer_id, name, sku, loyalty_points)
-                       VALUES (?, ?, ?, ?)""",
-                    (mid, name, sku, pts),
-                )
-                created += 1
-    return {"created": created, "updated": updated,
-            "skipped": skipped, "errors": errors}
 
 
 @app.post("/distributors/import")

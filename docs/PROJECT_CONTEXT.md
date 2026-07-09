@@ -13,8 +13,9 @@ where it stands. For deeper detail see the companion docs linked at the end.
 A **multi-tenant loyalty-program backend** for the VastraApp ecosystem. The market
 flow is **manufacturer → distributor → retailer**:
 
-- **Manufacturers** (textile makers) generate QR codes in their **Vastra** app and
-  print them on product/box stickers.
+- **Manufacturers** (textile makers) generate QR codes in the **loyalty admin
+  panel** — picking from their Vastra-catalog products — and print them on
+  product/box stickers.
 - **Retailers** (shops) scan those codes in **YourApp** when they receive stock,
   earning loyalty **points** they later redeem for **gifts**.
 - Manufacturers get analytics on who is selling what, where, and through which
@@ -48,13 +49,16 @@ One FastAPI service serves three surfaces from a single container:
   codes register all their child items in one scan — and the Claims view collapses
   that box back into a single `📦 Box · N items` row (grouped at query time on
   `COALESCE(parent_token, token)`), so a box scan doesn't flood the list.
-- **Products: Vastra is the System of Record.** Loyalty is not a product catalog —
-  it stores a product **reference** (`product_external_id`) + immutable **snapshot**
-  (`product_name`/`product_sku`) on `qr_batches` and `points_ledger`, and reads
-  those instead of joining `products` on the QR/scan/claims/analytics paths.
-  `POST /qr/generate` is dual-contract (new `product_external_id` + snapshot from
-  the Vastra backend; legacy `product_id` still accepted). The products table,
-  product CRUD, and `scheme_products` remain transitional. See
+- **Products: Vastra is the System of Record, pulled server-side.** Loyalty is
+  not a product catalog — it pulls Vastra's live product list server-side
+  (`GET /vastra/products`, proxied via `app/vastra_client.py`, credentials
+  stay server-side) to power the panel's product picker, and stores a
+  **reference** (`product_external_id`) + immutable **snapshot**
+  (`product_name`/`product_sku`) on `qr_batches` and `points_ledger`. The
+  manufacturer's points-per-scan value is loyalty's own data (`product_points`
+  table), set/edited from the panel and merged onto Vastra's list at read
+  time. Product CRUD/import is **removed**; `GET /products` and
+  `scheme_products` remain only for legacy local rows. See
   `docs/integration/PRODUCT_INTEGRATION.md`.
 - **Schemes.** Time-bound bonus points on top of base, optionally scoped to
   products; the most generous active scheme wins (no stacking).
@@ -79,8 +83,9 @@ Dashboard (two stat rows — funnel totals + redemption requests; region +
 by-distributor tables; clustered India scan map; and a **QR analytics** section
 with a year selector + month-wise generation and generated-vs-scanned bar charts),
 Customers (retailers — with assign-distributor, per-row map link, **Import CSV**),
-Distributors (**Import CSV**), Products (**Import CSV** + **Generate QR** as an
-in-panel modal), Schemes, Gifts, Claims, Redemptions. Super admin sees a
+Distributors (**Import CSV**), Products (Vastra-sourced list, per-product
+points editable inline, **Generate QR** as an in-panel modal), Schemes,
+Gifts, Claims, Redemptions. Super admin sees a
 Manufacturers tab instead. Every data tab has an **Export CSV** button
 (client-side download, `panel/src/utils/csv.js`).
 
@@ -91,8 +96,8 @@ auto-camera on "Scan another"), rewards **shop**, **claims** history.
 
 **Bulk import (CSV-as-JSON, no file-upload dependency):**
 `/retailers/import` (auto-logins + find-or-create distributor),
-`/products/import` (flexible points column, upserts by SKU),
-`/distributors/import`.
+`/distributors/import`. There is no products import — the catalog comes
+from Vastra (`GET /vastra/products`).
 
 ## 5. How location works (current behavior)
 

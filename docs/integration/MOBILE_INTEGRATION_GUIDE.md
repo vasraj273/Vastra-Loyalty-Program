@@ -13,8 +13,10 @@
   Keystore-backed `EncryptedSharedPreferences`. Never plain prefs/UserDefaults.
 - **The loyalty token is opaque** — do not decode it. On `401`, re-exchange a
   fresh assertion (see SSO doc). There is no loyalty refresh token.
-- **Products are selected in the Vastra catalog, not fetched from loyalty.** The
-  mobile app never calls loyalty to list products. (See
+- **QR generation is not a mobile-app feature.** The manufacturer generates
+  QR codes from the **loyalty admin panel** (web), not the Vastra App — the
+  panel pulls Vastra's product list server-side. The Vastra App never calls
+  loyalty's `/qr/generate` or product endpoints. (See
   [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md).)
 - **Idempotency:** `/scan` and `/retailer/claim` are **not** safe to blind-retry
   on an ambiguous network failure (they change balances). See §Retry behavior.
@@ -32,41 +34,21 @@ sequenceDiagram
   VB-->>VA: manufacturer JWT
   VA->>L: POST /auth/sso/manufacturer → token
   VA->>L: GET /analytics/dashboard (home)
-  Note over VA,VB: product chosen in Vastra catalog
-  VA->>VB: generate N codes for product
-  VB->>L: POST /qr/generate (product_external_id + snapshot)
-  VB-->>VA: batch result
-  VA->>L: GET /qr/batches/{id}/print (PDF)
   VA->>L: GET /gift-claims (review redemptions)
 ```
+
+> **QR generation has moved out of this flow entirely.** It's no longer
+> something the Vastra App does — the manufacturer switches to the **loyalty
+> admin panel** (web) to pick a product (from a list the panel pulls from
+> Vastra server-side), set points, and generate/print codes. See
+> [PRODUCT_INTEGRATION §4](PRODUCT_INTEGRATION.md#4-how-qr-generation-works-now).
+> If the Vastra App still needs a "Generate QR" entry point, it should deep-link
+> or redirect to the panel rather than call loyalty endpoints directly.
 
 ### Open Loyalty
 - **API:** `POST /auth/sso/manufacturer` → store token. Then `GET /analytics/dashboard` for the landing screen.
 - **UX:** show a spinner during exchange; cache the dashboard and refresh on pull-to-refresh.
 - **Loading state:** skeleton cards for the stat rows.
-
-### Generate QR
-- **API (target):** the app asks the **Vastra backend** to generate; the Vastra
-  backend calls `POST /qr/generate` with trusted product data and returns the
-  result. The app does **not** call loyalty `/qr/generate` directly and does
-  **not** send the points value. (Current backend still accepts `product_id`
-  directly — see [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md) for the migration.)
-- **Inputs from the user:** product (already selected in the Vastra catalog),
-  quantity, optional box size.
-- **Response:** `batch_id`, per-code `token`/`manual_code`/`payload`, and
-  `actions` (save/print/discard).
-- **UX:** confirm quantity before generating (it's a real print run); show a
-  success screen with the batch id and a "Print" CTA. Offer "Save batch".
-- **Loading state:** disable the Generate button while in-flight; large
-  quantities take longer (single synchronous call).
-
-### Download / Print QR
-- **API:** `GET /qr/batches/{id}/print` → `application/pdf` (binary). Single QR
-  images via `GET /qr/codes/{token}/image` → PNG (no auth needed).
-- **UX:** open the PDF in the OS share/print sheet. For an in-app preview, render
-  PNGs from `payload`/`token`. There is **no ZIP** endpoint — if you need a
-  bundle, render client-side or request a backend addition.
-- **Loading state:** "Preparing PDF…"; the PDF can be large for big batches.
 
 ### Analytics
 - **API:** `GET /analytics/dashboard` (everything in one call: totals,

@@ -25,6 +25,9 @@
 | `SSO_ISSUERS` | No | `vastra,yourapp` | Allowed JWT `iss` values (comma-separated). |
 | `SSO_AUDIENCE` | No | `loyalty` | Required JWT `aud`. |
 | `SSO_MAX_AGE` | No | `120` | Max assertion age (seconds); bounds replay. |
+| `VASTRA_API_BASE_URL` | **Yes (to power the panel's product picker)** | — | Vastra's product-list API origin, called server-side only. Unset → `GET /vastra/products` fails closed with `502`. |
+| `VASTRA_API_KEY` | Depends on Vastra's contract | — | Credential for the Vastra product-list API; never sent to the browser. |
+| `VASTRA_API_TIMEOUT` | No | `5` | Timeout (seconds) for the outbound call to Vastra. |
 | `RL_ENABLED` | No | `1` | Master switch for rate limiting (`0` disables). |
 | `RL_LOGIN` | No | `10/minute` | Limit for login + SSO endpoints. |
 | `RL_SCAN` | No | `60/minute` | Limit for `/scan`. |
@@ -81,8 +84,11 @@ flowchart LR
 
 1. Provision Neon Postgres; copy the **pooled** connection string.
 2. Create the Docker web service from the repo; region close to users (India).
-3. Set env: `DATABASE_URL`, `QR_BASE_URL=https://<host>/web/scan`, `SSO_SECRET`
-   (+ optional `SSO_*`, `RL_*`, `RL_STORAGE_URI` if multi-replica).
+3. Set env: `DATABASE_URL`, `QR_BASE_URL=https://<host>/web/scan`, `SSO_SECRET`,
+   `VASTRA_API_BASE_URL` + `VASTRA_API_KEY` (needed for the panel's Products
+   tab / QR generation to work — otherwise `GET /vastra/products` returns
+   `502`) (+ optional `SSO_*`, `VASTRA_API_TIMEOUT`, `RL_*`, `RL_STORAGE_URI`
+   if multi-replica).
 4. Deploy. On boot the app creates/migrates tables (no seed) and starts serving.
 5. Import production **manufacturers** (with `external_id`) and have each
    manufacturer provision **retailers** (with `external_id`). See
@@ -132,6 +138,7 @@ There is no dedicated `/health` endpoint. Recommended liveness/readiness probes:
 - [ ] `DATABASE_URL` = Neon **pooled** string.
 - [ ] `QR_BASE_URL` = deployed HTTPS origin + `/web/scan` (set **before** any print run).
 - [ ] `SSO_SECRET` set (strong, secret); `SSO_*` aligned with parent backends.
+- [ ] `VASTRA_API_BASE_URL` + `VASTRA_API_KEY` set once Vastra shares their real API contract (`app/vastra_client.py` is a placeholder until then) — otherwise the panel's Products tab / QR generation can't load a catalog.
 - [ ] `RL_STORAGE_URI` set if running >1 replica.
 - [ ] HTTPS enforced; CORS restricted to real app/panel origins.
 - [ ] Manufacturers imported with `external_id`; retailers provisioned with `external_id`.

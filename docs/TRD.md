@@ -49,7 +49,8 @@ Tables (`app/database.py` `SCHEMA`, evolved additively via `_MIGRATIONS`):
 |---|---|---|
 | `manufacturers` | Manufacturer + super-admin accounts | `username`, `password_hash`, `display_name`, `is_admin`, `external_id` (SSO map) |
 | `auth_tokens` | Manufacturer/admin bearer tokens | `token`, `manufacturer_id` |
-| `products` | Catalog | `manufacturer_id`, `name`, `sku`, `loyalty_points` |
+| `products` | **Legacy** catalog (read-only; no new rows) | `manufacturer_id`, `name`, `sku`, `loyalty_points` |
+| `product_points` | Manufacturer's own points value per Vastra product | `manufacturer_id`, `product_external_id`, `points` |
 | `retailers` | Shops | `manufacturer_id`, `shop_name`, `region`, `username`, `password_hash`, `lat`, `lng`, `location_source`, `address`, `distributor_id`, `external_id` (SSO map, unique per manufacturer) |
 | `retailer_tokens` | Retailer bearer tokens | `token`, `retailer_id` |
 | `distributors` | Distributor layer (tracking only, no login/points) | `manufacturer_id`, `name`, `phone`, `region` |
@@ -61,17 +62,21 @@ Tables (`app/database.py` `SCHEMA`, evolved additively via `_MIGRATIONS`):
 
 Every tenant-owned row carries `manufacturer_id`.
 
-**Product reference model (Vastra is the product System of Record).** The
-QR/scan/claims/analytics/wallet paths no longer join the local `products` table:
-`qr_batches` and `points_ledger` carry a product **reference**
-(`product_external_id`) + immutable **snapshot** (`product_name`/`product_sku`),
-and `qr_batches` carries its own `manufacturer_id`. `POST /qr/generate` is
-dual-contract — the primary contract takes `product_external_id` +
-`product_name` + `product_sku` + `points_per_code` from the Vastra backend (no
-products lookup); a legacy `product_id` body is still accepted (panel /
-`/web/generate`) and resolved once into the same snapshot. The `products` table,
-product CRUD, and `scheme_products` (still keyed by `product_id`) remain for
-transition. See `docs/integration/PRODUCT_INTEGRATION.md`.
+**Product reference model (Vastra is the product System of Record, pulled
+server-side).** The QR/scan/claims/analytics/wallet paths no longer join the
+local `products` table: `qr_batches` and `points_ledger` carry a product
+**reference** (`product_external_id`) + immutable **snapshot**
+(`product_name`/`product_sku`), and `qr_batches` carries its own
+`manufacturer_id`. QR generation is panel-driven: the panel calls `GET
+/vastra/products` (a server-side proxy, `app/vastra_client.py`, merging in
+the manufacturer's `product_points` override) to power the product picker,
+then `POST /qr/generate` with the primary contract
+(`product_external_id`/`product_name`/`product_sku`/`points_per_code`, no
+products lookup). A legacy `product_id` body is still accepted (`/web/generate`
+only) and resolved once into the same snapshot. Product CRUD/import is
+**removed**; `GET /products` and `scheme_products` (still keyed by
+`product_id`) remain only for legacy local rows. See
+`docs/integration/PRODUCT_INTEGRATION.md`.
 
 ## 3. Database backend (dual)
 
@@ -128,11 +133,12 @@ Authoritative list at `/docs`. Principal endpoints:
   `/auth/retailer/logout`, `GET /auth/me`, `/retailer/me`;
   **SSO** `POST /auth/sso/manufacturer`, `POST /auth/sso/retailer`.
 - **Admin:** `GET|POST /admin/manufacturers`.
-- **Catalog:** `GET|POST /products`, `PATCH|DELETE /products/{id}`,
-  `POST /products/import`; `GET|POST /schemes`, `DELETE /schemes/{id}`;
+- **Catalog:** `GET /products` (legacy, read-only — see §Product integration),
+  `GET /vastra/products`, `PUT /vastra/products/{external_id}/points`;
+  `GET|POST /schemes`, `DELETE /schemes/{id}`;
   `GET|POST /gifts`, `PATCH|DELETE /gifts/{id}`.
 - **Bulk import (CSV-as-JSON):** `POST /retailers/import`,
-  `POST /distributors/import`, `POST /products/import`.
+  `POST /distributors/import`. (No products import — the catalog is Vastra's.)
 - **Retailers:** `GET|POST /retailers`, `PATCH|DELETE /retailers/{id}`,
   `POST /retailers/{id}/adjust`, `POST /retailers/transfer`,
   `POST /retailers/import` (CSV-as-JSON bulk create), `POST /retailer/location`.
@@ -208,17 +214,16 @@ Authoritative list at `/docs`. Principal endpoints:
 - The panel walks every page (`limit`/`offset`) to build the Claims CSV export.
 
 ### 6.1c CSV imports
-- All three imports (`/retailers/import`, `/distributors/import`,
-  `/products/import`) take CSV text as JSON (stdlib `csv`, no `python-multipart`)
-  and return `created`/`skipped`/`errors`.
+- Both imports (`/retailers/import`, `/distributors/import`) take CSV text as
+  JSON (stdlib `csv`, no `python-multipart`) and return `created`/`skipped`/`errors`.
 - `/retailers/import` accepts an optional `external_id` column (the SSO mapping
   id, unique per manufacturer; a duplicate within the manufacturer is skipped with
   an error). `POST /retailers` likewise accepts `external_id` on the body.
-- `/products/import` reads the points value under several header aliases
-  (`_row_points`: `PointsPerScan`, `points`, `points_per_scan`, `loyalty_points`,
-  …) and **upserts by SKU** — a product you already own is *updated* (name +
-  points) instead of skipped; a SKU owned by another account is skipped. Also
-  returns `updated`.
+- There is no products import — the catalog is Vastra's, pulled server-side via
+  `GET /vastra/products` (`app/vastra_client.py`). The manufacturer's own
+  points-per-scan value is set via `PUT /vastra/products/{external_id}/points`,
+  stored in `product_points` (upsert, no CSV bulk path). See
+  `docs/integration/PRODUCT_INTEGRATION.md`.
 
 ### 6.2 Location
 - **Shop pin + address, latest-wins:** `POST /retailer/location` (called once per

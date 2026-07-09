@@ -44,17 +44,25 @@ flowchart TB
 
   VApp --> VBack
   RApp --> RBack
-  VBack -->|"SSO assertion + QR generation"| API
+  API -->|"pulls product list, server-side\n(VASTRA_API_KEY)"| VBack
   RApp -->|"SSO assertion, scan, wallet, claims"| API
   RBack -->|"mints retailer SSO assertion"| RApp
-  VBack -->|"mints manufacturer SSO assertion"| VApp
 ```
+
+QR generation is no longer a Vastra-App/Vastra-Backend-originated flow — the
+manufacturer logs into the Loyalty Admin Panel directly (plain password
+login) and generates codes from there. The panel's product picker is powered
+by loyalty **pulling** Vastra's product list server-side (`GET
+/vastra/products` proxies `app/vastra_client.py`); the browser panel never
+calls Vastra directly. Manufacturer SSO (`VBack` minting an assertion for
+`VApp`) still exists in the codebase but its continued purpose is unclear now
+that QR generation doesn't need it — see [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md) §8.
 
 ## 3. Responsibility of each system
 
 | System | Responsibility |
 |---|---|
-| **Vastra Backend** | System of Record for **products** and **manufacturer identity**. Authenticates manufacturers, mints SSO assertions, and (target architecture) originates QR generation with trusted product data. |
+| **Vastra Backend** | System of Record for **products** and **manufacturer identity**. Serves its product list to the Loyalty Backend (server-side pull, read-only) so the panel can power QR generation; no longer originates QR generation itself. Manufacturer SSO assertion minting still exists but its continued purpose (beyond the now-removed generation flow) is unclear. |
 | **YourApp Backend** | Identity provider for **retailers**. Authenticates retailers and mints retailer SSO assertions. |
 | **Loyalty Backend** | System of Record for the **loyalty domain**: QR batches/codes, the points ledger & wallets, schemes, gifts, claims, and analytics. Validates and redeems QR codes; enforces multi-tenancy. |
 | **Loyalty Admin Panel** | Web client of the Loyalty API for manufacturers + super admin. |
@@ -69,7 +77,7 @@ id. "Snapshot" = point-in-time copy stored in loyalty so history never changes.
 |---|---|---|---|---|
 | **Manufacturers** | Vastra | Vastra, Loyalty, Panel | Vastra (provision); Loyalty (panel password, tokens) | Ref via `external_id`; `display_name` local copy |
 | **Retailers** | Split: identity = YourApp/Vastra; loyalty profile = Loyalty | all | Upstream (identity); Loyalty (region, location, distributor) | Ref via `external_id` |
-| **Products** | **Vastra** | Vastra, Loyalty (snapshot), Panel | **Vastra only** (loyalty CRUD transitional) | ✅ Ref via `product_external_id` + **snapshot** (see [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md)) |
+| **Products** | **Vastra** (catalog); **Loyalty** (points value) | Vastra, Loyalty (snapshot + live pull), Panel | Vastra (catalog, pulled server-side by Loyalty); Loyalty/manufacturer (`product_points`, points only) | ✅ Ref via `product_external_id` + **snapshot**; live catalog pulled via `GET /vastra/products` (see [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md)) |
 | **QR Batches** | Loyalty | Loyalty, Panel, Vastra App | Loyalty (triggered by Vastra) | Owned; embeds product snapshot |
 | **QR Codes** | Loyalty | Loyalty, scanners | Loyalty (generate; redeem) | Owned outright |
 | **Schemes** | Loyalty | Loyalty, Panel | Loyalty (manufacturer) | Owned; references products by id |
@@ -88,23 +96,27 @@ snapshot the historical.
 ```mermaid
 sequenceDiagram
   actor M as Manufacturer
-  participant VA as Vastra App
-  participant VB as Vastra Backend
+  participant P as Loyalty Admin Panel
   participant L as Loyalty API
-  M->>VA: Open loyalty section
-  VA->>VB: Request SSO assertion
-  VB-->>VA: Signed manufacturer JWT (HS256)
-  VA->>L: POST /auth/sso/manufacturer {assertion}
-  L-->>VA: loyalty token
-  M->>VA: Select product, request N QR codes
-  VA->>VB: Generate request (product chosen in Vastra catalog)
-  VB->>L: POST /qr/generate (product_external_id + snapshot)
-  L-->>VB: batch + codes
-  VB-->>VA: batch result
-  VA->>L: GET /qr/batches/{id}/print (PDF)
-  M->>VA: View analytics / claims
-  VA->>L: GET /analytics/dashboard, /claims, /gift-claims
+  participant VB as Vastra Backend
+  M->>P: Log in (password)
+  P->>L: POST /auth/login
+  L-->>P: loyalty token
+  P->>L: GET /vastra/products
+  L->>VB: GET /products (server-side, VASTRA_API_KEY)
+  VB-->>L: product list
+  L-->>P: product list + this manufacturer's points overrides
+  M->>P: Select product, set/adjust points, request N QR codes
+  P->>L: POST /qr/generate (product_external_id + snapshot + points_per_code)
+  L-->>P: batch + codes
+  P->>L: GET /qr/batches/{id}/print (PDF)
+  M->>P: View analytics / claims
+  P->>L: GET /analytics/dashboard, /claims, /gift-claims
 ```
+
+Vastra Backend's role in this flow is now limited to serving its product
+list to Loyalty (a plain, read-only, server-side GET) — it no longer
+originates or participates in the QR-generation request itself.
 
 ## 6. Retailer flow (high level)
 
@@ -143,15 +155,21 @@ flowchart LR
   end
   VA -. "holds loyalty token only" .-> L
   RA -. "holds loyalty token only" .-> L
-  VB == "shared SSO_SECRET (HMAC)\n+ trusted product data" ==> L
+  L == "VASTRA_API_KEY (server-side)\npulls product list" ==> VB
   RB == "shared SSO_SECRET (HMAC)" ==> RA
 ```
 
 Key boundary rules:
 - **The shared `SSO_SECRET` lives only on backends**, never in a mobile app.
-- **Mobile devices are untrusted**: they never assert their own identity to
-  loyalty (it comes from the signed token) and never supply economically
-  sensitive data such as a QR's points value.
+  (Its use for manufacturer QR generation is gone — see §3; retailer SSO is
+  unaffected.)
+- **`VASTRA_API_KEY` lives only on the Loyalty Backend**, never in the panel
+  browser bundle — the panel calls `GET /vastra/products` on Loyalty, which
+  makes the actual call to Vastra server-side.
+- **Mobile/browser clients are untrusted**: the panel never asserts a
+  points-per-scan value on Vastra's behalf and never holds Vastra
+  credentials; the manufacturer's chosen points value is their own loyalty
+  data, authenticated by their own loyalty session.
 - **Retailer identity at scan time comes only from the loyalty token**, never
   from the request body — points can only be credited to the authenticated
   retailer.

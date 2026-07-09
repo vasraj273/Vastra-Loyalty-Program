@@ -2,7 +2,11 @@
 
 > Reflects the **current implemented backend** ✅, including the Product
 > System-of-Record migration (`product_external_id` + snapshots) — now live as a
-> dual-contract `/qr/generate` (new primary + legacy `product_id` fallback). See
+> dual-contract `/qr/generate` (new primary + legacy `product_id` fallback),
+> and the **pull-based Vastra product catalog** (`GET /vastra/products`,
+> proxied server-side) that powers QR generation from the admin panel.
+> Product CRUD/import (`POST`/`PATCH`/`DELETE /products`, `POST
+> /products/import`) has been **removed**. See
 > [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md).
 > Authoritative machine-readable schema: `/openapi.json` (Swagger UI at `/docs`).
 
@@ -34,6 +38,8 @@
 | Provisioning | `POST /admin/manufacturers` | Admin |
 | Provisioning | `POST /retailers` | M |
 | Provisioning | `POST /retailers/import` | M |
+| Catalog | `GET /vastra/products` | M |
+| Catalog | `PUT /vastra/products/{external_id}/points` | M |
 | QR | `POST /qr/generate` | M |
 | QR | `POST /qr/batches/{id}/save` | M |
 | QR | `GET /qr/batches` | M |
@@ -55,9 +61,12 @@
 | Analytics | `GET /analytics/dashboard` | M |
 | Location | `POST /retailer/location` | R |
 
-> Other manufacturer-management endpoints (distributors, products CRUD, list
-> retailers, adjust/transfer, etc.) exist and are visible at `/docs`. Products
-> CRUD is slated for removal per [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md).
+> Other manufacturer-management endpoints (distributors, list retailers,
+> adjust/transfer, `GET /products` legacy read, etc.) exist and are visible
+> at `/docs`. Products CRUD (`POST`/`PATCH`/`DELETE /products`, `POST
+> /products/import`) has been **removed** — the catalog is Vastra's, pulled
+> via `GET /vastra/products` below. See
+> [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md).
 
 ---
 
@@ -136,11 +145,30 @@ Password login for retailers (dev/test; production retailer access is SSO-only).
 
 ---
 
+## Vastra product catalog (manufacturer side)
+
+### GET /vastra/products — Auth M
+- **Purpose:** the admin panel's product picker. Proxies Vastra's
+  product-list API server-side (`app/vastra_client.py`) and merges in each
+  product's stored points override. The panel never calls Vastra directly.
+- **Response 200:** `[{ "external_id": "VP-1", "name": "Silk Saree", "sku": "SS-001", "points": 50 }]`
+- **Errors:** `502 Vastra product service unavailable: <detail>` (Vastra
+  unreachable, or `VASTRA_API_BASE_URL` unset) · `401`.
+
+### PUT /vastra/products/{external_id}/points — Auth M
+- **Purpose:** set/update the manufacturer's own points-per-scan value for a
+  Vastra-catalog product (upsert into `product_points`).
+- **Request:** `{ "points": 50 }`
+- **Response 200:** `{ "external_id": "VP-1", "points": 50 }`
+- **Errors:** `401`.
+
+---
+
 ## QR generation & batches
 
 ### POST /qr/generate — Auth M → 201
 - **Purpose:** generate a batch of QR codes for a product. **Rate limit:** `RL_QRGEN` (default `30/minute`).
-- **Request (new, primary — originated by the Vastra backend):**
+- **Request (new, primary — used by the panel; product picked via `GET /vastra/products` above):**
 ```json
 { "product_external_id": "VP-9281", "product_name": "Silk Saree",
   "product_sku": "SS-001", "points_per_code": 50,

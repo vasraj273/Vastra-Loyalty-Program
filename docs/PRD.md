@@ -54,7 +54,9 @@ schemes are unverifiable and easy to abuse.
   web panel keeps its password login; retailer access is SSO-only in production.
 
 ### 4.2 Catalog & rewards
-- Manufacturers define **products** with base loyalty points.
+- **Products come from Vastra's catalog** — the panel pulls the manufacturer's
+  live product list server-side (no local product management); the
+  manufacturer sets/edits each product's **base loyalty points** in the panel.
 - **Schemes** add a time-bound bonus on top of base points (optionally scoped to
   specific products). Overlapping schemes do not stack — the most generous active
   one wins.
@@ -133,13 +135,14 @@ schemes are unverifiable and easy to abuse.
 ## 5. Key user flows
 
 1. **Onboard manufacturer** — super admin creates account → manufacturer logs in.
-2. **Set up rewards** — manufacturer adds products, schemes, gifts, retailers, and
-   distributors (retailer logins auto-created; city + distributor optional). Each of
-   Products, Distributors, and Customers also supports **bulk CSV import** (the
-   retailer CSV auto-creates + links distributors; the product CSV upserts by SKU
-   and accepts a flexible points column).
+2. **Set up rewards** — manufacturer sets points on their Vastra-sourced
+   products, adds schemes, gifts, retailers, and distributors (retailer logins
+   auto-created; city + distributor optional). Distributors and Customers also
+   support **bulk CSV import** (the retailer CSV auto-creates + links
+   distributors). There is no product CSV import — the catalog is Vastra's.
 3. **Generate & print** — in the Products tab, **Generate QR** opens an in-panel
-   modal: pick product → quantity → generate → save → print A4 PDF of QR labels.
+   modal: pick a Vastra-catalog product → set/confirm points → quantity →
+   generate → save → print A4 PDF of QR labels.
 4. **Earn** — retailer logs into YourApp → scans QR (or types manual code) →
    points awarded with scheme bonus (shown with a count-up + confetti animation);
    location captured. "Scan another" reopens the camera right away.

@@ -26,6 +26,7 @@ structured form:
 | `409` | Conflict (state/business rule) | No (refresh) | Show the state; refresh the view. |
 | `422` | Validation | No | Fix input; field-level feedback. |
 | `429` | Rate limited | Yes (backoff) | Exponential backoff + jitter. |
+| `502` | Vastra product service unavailable | No (server/config) | Show "catalog unavailable, try again shortly"; alert DevOps if persistent. |
 | `503` | SSO not configured | No (server) | "Service unavailable"; alert DevOps. |
 | `5xx` | Server error | GET: yes; writes: verify first | Backoff for GETs; verify state for writes. |
 
@@ -43,11 +44,17 @@ structured form:
 | 401 | `Current password is incorrect` | `POST /retailer/password` | Re-prompt. |
 | 422 | `New password must differ from the current one` | password change | Re-prompt. |
 
+## Vastra product catalog
+
+| HTTP | `detail` | Meaning | Client behavior |
+|---|---|---|---|
+| 502 | `Vastra product service unavailable: <detail>` | `GET /vastra/products` couldn't reach Vastra, or `VASTRA_API_BASE_URL` is unset | Show "catalog unavailable"; retry with backoff. |
+
 ## QR generation & batches
 
 | HTTP | `detail` | Meaning | Client behavior |
 |---|---|---|---|
-| 404 | `Product not found` | Product missing or belongs to another manufacturer | Re-select a valid product (current model). |
+| 404 | `Product not found` | Legacy `{product_id}` body (panel-generated-batch path, `/web/generate` only) refers to a product missing or belonging to another manufacturer | Re-select a valid product. Does not apply to the primary `product_external_id` contract, which never looks up a local product. |
 | 404 | `Batch not found` | Unknown batch, or not owned by caller | Refresh batch list. |
 | 404 | `Code not found` | `GET /qr/codes/{token}/image` for unknown token | Show placeholder. |
 | 422 | (validation) | `quantity` out of 1–10000, `items_per_box` out of 2–1000, etc. | Fix inputs. |
@@ -80,7 +87,6 @@ structured form:
 | HTTP | `detail` | Meaning | Client behavior |
 |---|---|---|---|
 | 409 | `Username already taken` | `POST /admin/manufacturers` | Pick another username. |
-| 409 | `SKU '<x>' already exists` / `SKU already exists` | Product create/update (current model) | Pick another SKU. |
 | 409 | `external_id already in use` | `POST /retailers` duplicate per manufacturer | Use a unique `external_id`. |
 | 404 | `Retailer not found` | Unknown/again not owned | Refresh. |
 | 400 | `Distributor not found` | `distributor_id` not owned by caller | Fix the reference. |

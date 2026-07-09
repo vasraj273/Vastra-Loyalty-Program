@@ -22,11 +22,13 @@ later change. Schemes add a time-bound bonus *on top* at scan time.
 
 ```mermaid
 sequenceDiagram
-  participant C as Caller (Vastra App/Backend)
+  participant C as Caller (Loyalty Admin Panel)
   participant L as Loyalty API
   participant DB as DB
   C->>L: POST /qr/generate {product, quantity, points_per_code?, items_per_box?}
-  L->>DB: validate product belongs to manufacturer
+  opt legacy product_id body only
+    L->>DB: validate product belongs to manufacturer
+  end
   L->>DB: INSERT qr_batches (status=pending, points_per_code frozen)
   L->>DB: INSERT N child qr_codes (unique token + manual_code)
   opt items_per_box set
@@ -36,6 +38,13 @@ sequenceDiagram
   C->>L: GET /qr/batches/{id}/print  (A4 PDF)
   C->>L: POST /qr/batches/{id}/save  (pending → saved)
 ```
+
+The caller is now the **loyalty admin panel** (manufacturer logs in
+directly) — see [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md) for how the
+panel sources the product list from Vastra beforehand. With the primary
+`product_external_id` contract, loyalty does **not** validate the product
+against a local table (it has none); that validation only happens for the
+legacy `product_id` body.
 
 - `quantity`: 1–10,000 per call. `items_per_box`: 2–1,000.
 - Manual codes use an unambiguous alphabet (no `0/O/1/I`).

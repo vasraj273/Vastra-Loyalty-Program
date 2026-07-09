@@ -4,6 +4,39 @@ Notable changes to the Loyalty QR API. Dates are when the change went live on
 production (Render + Neon). Schema changes are additive (`_MIGRATIONS`), applied
 by `migrate()` on startup — no reseed, existing data preserved.
 
+## 2026-07-08 (Vastra product catalog: pull-based, panel-driven QR generation)
+
+QR generation moved entirely into the loyalty admin panel — the manufacturer
+logs in directly (no Vastra-app/server-to-server call), and the panel's
+product picker now pulls Vastra's live catalog server-side instead of a
+local `products` table. Local product CRUD/import is removed; the
+manufacturer's points-per-scan value is loyalty's own data now.
+
+### Added
+- `app/vastra_client.py` — server-side client for Vastra's product-list API
+  (`VASTRA_API_BASE_URL`/`VASTRA_API_KEY`/`VASTRA_API_TIMEOUT` env vars).
+  Real contract still TBD with the Vastra team; this is a best-effort scaffold.
+- `product_points` table (`manufacturer_id`, `product_external_id`, `points`)
+  — the manufacturer's own loyalty-points value per Vastra product.
+- `GET /vastra/products` (merges Vastra's live list with stored points
+  overrides) and `PUT /vastra/products/{external_id}/points` (upsert).
+- Panel: Products tab now lists the Vastra-sourced catalog with inline
+  points editing only; `GenerateQrModal` sends the primary `/qr/generate`
+  contract (`product_external_id` + snapshot + `points_per_code`).
+
+### Removed
+- `POST /products`, `PATCH /products/{id}`, `DELETE /products/{id}`,
+  `POST /products/import` and their panel UI (add/edit/delete/CSV import).
+  `GET /products` is kept, read-only, for the Schemes/Claims tabs and
+  `/web/generate` (legacy local rows only — no new rows are written).
+
+### Known follow-ups
+- `scheme_products.product_id` still FKs the legacy local `products` table —
+  new Vastra-sourced products can't get scheme-specific bonuses until it
+  migrates to `product_external_id`.
+- Manufacturer SSO's (`POST /auth/sso/manufacturer`) continued purpose is
+  unclear now that QR generation no longer needs it.
+
 ## 2026-06-25 (Product System-of-Record: reference + snapshot)
 
 Vastra is now the System of Record for products; the loyalty backend stores a

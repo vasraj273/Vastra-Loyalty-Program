@@ -10,6 +10,7 @@ One container serves everything: API + admin panel (`/panel`) + webview pages (`
 4. Add environment variable:
    - `QR_BASE_URL` = `https://<your-service>.onrender.com/web/scan`
    - `SSO_SECRET` = a long random string — only needed to enable native-app SSO (see below); omit for a plain demo.
+   - `VASTRA_API_BASE_URL` / `VASTRA_API_KEY` — only needed to power the panel's product picker (see "Vastra product catalog" below); omit for a plain demo (the Products tab shows a 502 until set).
 5. Deploy. First boot auto-seeds demo data (`admin/admin123`, `surya/surya123`, `heritage/heritage123`).
 
 Note: free tier sleeps after idle (first request takes ~30s) and the SQLite file resets on redeploy — fine for a demo, not for production.
@@ -99,9 +100,22 @@ Unknown or cross-tenant principals get `403`; tampered/expired assertions get
 harmless. The `external_id` columns + unique indexes are added automatically on
 boot (`migrate()`/`create_constraints()`), so no manual migration is needed.
 
+## Vastra product catalog
+
+The Products tab and QR generation read the manufacturer's product catalog
+from Vastra, not from a local table. Set **`VASTRA_API_BASE_URL`** (Vastra's
+product-list API origin) and **`VASTRA_API_KEY`** (credential, server-side
+only — never sent to the browser) to enable it; optional `VASTRA_API_TIMEOUT`
+(seconds, default `5`). Unset → `GET /vastra/products` fails closed with a
+`502`. The manufacturer's per-product points value is loyalty's own data
+(`product_points` table), not Vastra's — it's set/edited from the Products
+tab and merged onto Vastra's list at read time. See
+`docs/integration/PRODUCT_INTEGRATION.md`.
+
 ## Before real (non-demo) use
 
 - Rotate the seeded passwords / disable seed.
 - Restrict CORS origins to the real app domains.
 - Set a strong `SSO_SECRET` (and keep it out of source control) if native-app SSO is used.
+- Set `VASTRA_API_BASE_URL`/`VASTRA_API_KEY` once Vastra shares their real API contract (see `app/vastra_client.py` — currently a placeholder mapping).
 - Rotate the Neon credentials if the connection string was shared.
