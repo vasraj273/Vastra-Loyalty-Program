@@ -56,6 +56,7 @@
 | Claims | `POST /gift-claims/{id}/approve` | M |
 | Claims | `POST /gift-claims/{id}/reject` | M |
 | Catalog | `GET /claims` | M |
+| Catalog | `GET /scans/lookup` · `POST /scans/reverse` | M |
 | Catalog | `GET /gifts` · `POST /gifts` · `PATCH /gifts/{id}` | M |
 | Catalog | `GET /schemes` · `POST /schemes` | M |
 | Analytics | `GET /analytics/dashboard` | M |
@@ -253,6 +254,7 @@ Discards a batch and its codes. **Errors:** `404 Batch not found`.
 
 ### GET /retailer/wallet — Auth R
 - **Response 200:** `{ "retailer_id": 12, "shop_name": "…", "region": "…", "balance": 555, "history": [ { "points": 75, "base_points": 50, "bonus_points": 25, "scanned_at": "…", "entry_type": "scan", "note": null, "product_name": "Silk Saree", "sku": "SS-001", "scheme_name": "Diwali Bonus" } ] }`
+- `entry_type` values: `scan`, `gift_redeem`, `refund`, `adjustment`, `transfer`, and (scan reversal) `scan_reversed` (+N, the undone scan) with its paired `reversal` (−N, `note` set) — the pair nets to zero.
 - History is the latest 100 entries (all ledger types).
 
 ### GET /retailer/shop — Auth R
@@ -283,6 +285,18 @@ Refunds the points. **Response 200:** `{ "claim_id": 5, "status": "rejected", "r
 ### GET /claims — Auth M
 - **Purpose:** scan history (box scans collapsed to one row). Filters: `product_id` (legacy), `product_external_id`, `retailer_id`, `region`, `scheme_id`, `from`, `to`, `limit` (1–500, default 50), `offset`.
 - **Response 200:** `{ "total": 214, "limit": 50, "offset": 0, "claims": [ { "id", "scanned_at", "item_count", "points", "base_points", "bonus_points", "region", "parent_token", "token", "product_id", "product_external_id", "product_name", "sku", "retailer_id", "retailer_name", "shop_name", "lat", "lng", "scheme_id", "scheme_name" } ] }`
+
+### GET /scans/lookup — Auth M
+- **Purpose:** find who redeemed a code before reversing it. `?code=` accepts the full QR token or the 6-char manual code; a child code redeemed via its box resolves to the whole box.
+- **Response 200 (redeemed):** `{ "redeemed": true, "reversible": true, "reason": null, "token", "manual_code", "is_box", "item_count", "product_name", "sku", "points_per_code", "scanned_at", "points", "base_points", "bonus_points", "scheme_name", "retailer": { "id", "name", "shop_name" }, "retailer_balance" }` — `reversible: false` + `reason` when the wallet can't cover the deduction or no active scan credit exists.
+- **Response 200 (unredeemed):** `{ "redeemed": false, "reversible": false, "reason": "Code has not been scanned yet", … }`
+- **Errors:** `404 Invalid code` (unknown or another manufacturer's — indistinguishable).
+
+### POST /scans/reverse — Auth M
+- **Purpose:** undo a scan credited to the wrong retailer: deducts exactly the credited points (base + bonus at scan time) via negative `reversal` ledger rows, flips the originals to `scan_reversed`, and re-enables the code(s) (box scans reverse whole) so the rightful retailer can rescan.
+- **Request:** `{ "code": "<token or manual code>", "note": "optional, ≤300" }`
+- **Response 200:** `{ "reversed": true, "is_box", "items", "points_deducted", "retailer_id", "new_balance", "token" }`
+- **Errors:** `404 Invalid code` · `409 Code is not redeemed` · `409 Scan already reversed` · `409 Retailer's balance is below the scanned points…` (no negative balances).
 
 ---
 

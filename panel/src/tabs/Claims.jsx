@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
-import { get } from '../api.js'
+import { get, post } from '../api.js'
+import { useConfirm } from '../confirm.jsx'
 import { downloadCSV, today } from '../utils/csv.js'
 
 const PAGE = 20
 const EXPORT_PAGE = 500
+const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
 
 export default function Claims() {
   const [data, setData] = useState(null)
@@ -12,6 +14,13 @@ export default function Claims() {
   const [error, setError] = useState(null)
   const [page, setPage] = useState(0)
   const [exporting, setExporting] = useState(false)
+  const [lookupCode, setLookupCode] = useState('')
+  const [lookup, setLookup] = useState(null)
+  const [actionError, setActionError] = useState(null)
+  const [notice, setNotice] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [refresh, setRefresh] = useState(0)
+  const confirm = useConfirm()
   const [filters, setFilters] = useState({
     product_id: '',
     retailer_id: '',
@@ -41,7 +50,54 @@ export default function Claims() {
     params.set('limit', PAGE)
     params.set('offset', page * PAGE)
     get(`/claims?${params}`).then(setData).catch((e) => setError(e.message))
-  }, [filters, page])
+  }, [filters, page, refresh])
+
+  const doLookup = async () => {
+    if (!lookupCode.trim()) return
+    setBusy(true)
+    setActionError(null)
+    setNotice(null)
+    setLookup(null)
+    try {
+      setLookup(await get(`/scans/lookup?code=${encodeURIComponent(lookupCode.trim())}`))
+    } catch (e) {
+      setActionError(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Shared by the lookup card and the per-row action. `info` carries whatever
+  // scan details we have for the confirm message.
+  const doReverse = async (code, info) => {
+    const items = info.item_count > 1 ? ` (📦 box · ${info.item_count} items)` : ''
+    const ok = await confirm({
+      title: 'Reverse this scan?',
+      message:
+        `Deduct ${fmt(info.points)} points from ${info.shop_name}${items} ` +
+        'and re-enable the QR code so the rightful retailer can scan it again.',
+      confirmLabel: 'Reverse scan',
+      danger: true,
+    })
+    if (!ok) return
+    setBusy(true)
+    setActionError(null)
+    setNotice(null)
+    try {
+      const res = await post('/scans/reverse', { code })
+      setNotice(
+        `Reversed — ${fmt(res.points_deducted)} points deducted, ` +
+        'code can be scanned again.',
+      )
+      setLookup(null)
+      setLookupCode('')
+      setRefresh((n) => n + 1)
+    } catch (e) {
+      setActionError(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   // Claims are server-paginated, so walk every page (with the current filters)
   // before building the CSV. Rows are already box-grouped by the API.
@@ -98,6 +154,73 @@ export default function Claims() {
   return (
     <div className="claims">
       <h2 className="page-title">Claims &amp; Redemptions</h2>
+
+      {/* Find a specific scan by sticker code (full QR token or 6-char
+          manual code) — the entry point when a retailer reports someone
+          else scanned their product. */}
+      <div className="filters panel-card">
+        <label style={{ flex: 1, minWidth: 220 }}>
+          Find scan by code
+          <input
+            type="text"
+            placeholder="QR token or 6-char code"
+            value={lookupCode}
+            onChange={(e) => setLookupCode(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && doLookup()}
+          />
+        </label>
+        <button className="btn-secondary" disabled={busy || !lookupCode.trim()} onClick={doLookup}>
+          Look up
+        </button>
+        {notice && <span className="sub">{notice}</span>}
+        {actionError && <span className="error" style={{ margin: 0 }}>{actionError}</span>}
+      </div>
+
+      {lookup && (
+        <div className="filters panel-card">
+          {lookup.redeemed ? (
+            <>
+              <span>
+                <strong>{lookup.retailer?.shop_name ?? `Retailer #${lookup.retailer?.id}`}</strong>
+                <span className="sub"> scanned {lookup.product_name}</span>
+                {lookup.is_box && (
+                  <span className="scheme-tag" style={{ marginLeft: 6 }}>
+                    📦 Box · {lookup.item_count} items
+                  </span>
+                )}
+              </span>
+              <span className="mono nowrap sub">{lookup.scanned_at}</span>
+              <span>
+                <strong>{fmt(lookup.points)} pts</strong>
+                {lookup.bonus_points > 0 && (
+                  <span className="sub"> ({fmt(lookup.base_points)}+{fmt(lookup.bonus_points)}
+                    {lookup.scheme_name ? ` · ${lookup.scheme_name}` : ''})
+                  </span>
+                )}
+              </span>
+              <button
+                className="btn-secondary"
+                disabled={busy || !lookup.reversible}
+                title={lookup.reversible ? undefined : lookup.reason}
+                onClick={() =>
+                  doReverse(lookup.token, {
+                    points: lookup.points,
+                    shop_name: lookup.retailer?.shop_name,
+                    item_count: lookup.item_count,
+                  })
+                }
+              >
+                ↩ Reverse scan
+              </button>
+              {!lookup.reversible && <span className="sub">{lookup.reason}</span>}
+            </>
+          ) : (
+            <span className="sub">
+              {lookup.product_name} · not scanned yet — worth {fmt(lookup.points_per_code)} pts
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="filters panel-card">
         <label>
@@ -156,6 +279,7 @@ export default function Claims() {
               <th className="num">Points</th>
               <th>Scheme</th>
               <th>Code</th>
+              <th />
             </tr>
           </thead>
           <tbody>
@@ -194,6 +318,16 @@ export default function Claims() {
                 <td className="mono sub">
                   {c.token.slice(0, 8)}…
                   {c.item_count > 1 && ` (${c.item_count} codes)`}
+                </td>
+                <td>
+                  <button
+                    className="btn-ghost"
+                    disabled={busy}
+                    title="Deduct these points and re-enable the QR code"
+                    onClick={() => doReverse(c.token, c)}
+                  >
+                    ↩ Reverse
+                  </button>
                 </td>
               </tr>
             ))}

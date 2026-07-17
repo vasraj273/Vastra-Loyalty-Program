@@ -40,9 +40,13 @@ One FastAPI service serves three surfaces from a single container:
 ## 3. Core concepts
 
 - **Points & the wallet ledger.** `points_ledger` is a typed transaction log
-  (`scan`, `gift_redeem`, `refund`, `adjustment`, `transfer`). A retailer's
+  (`scan`, `gift_redeem`, `refund`, `adjustment`, `transfer`, `scan_reversed`,
+  `reversal`). A retailer's
   **balance = SUM(points)**; scan analytics filter `entry_type='scan'`. Always add
-  a ledger row rather than mutating a balance.
+  a ledger row rather than mutating a balance. A manufacturer can **reverse** a
+  scan credited to the wrong retailer (`POST /scans/reverse`): the scan rows flip
+  to `scan_reversed`, negative `reversal` rows deduct the exact credited points,
+  and the code is re-enabled for the rightful retailer to rescan.
 - **QR codes.** Each encodes a `{QR_BASE_URL}/{token}` URL; the token is a random,
   opaque `uuid4`. A 6-char `manual_code` is the typed fallback. **Points are frozen
   per batch at generation**, so old stickers keep their promised value. Box (parent)

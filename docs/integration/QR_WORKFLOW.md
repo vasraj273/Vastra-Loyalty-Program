@@ -124,7 +124,18 @@ Every scan writes one `points_ledger` row per credited code with:
 `SUM(points_ledger.points)` for the retailer — never a stored field.
 
 Ledger entry types: `scan` (+), `gift_redeem` (−), `refund` (+), `adjustment`
-(±), `transfer` (±). See [SYSTEM_ARCHITECTURE §8](SYSTEM_ARCHITECTURE.md#8-data-ownership-principles).
+(±), `transfer` (±), `scan_reversed` (+, a scan undone by the manufacturer,
+excluded from scan analytics), `reversal` (−, the offsetting deduction written
+when a scan is reversed). See [SYSTEM_ARCHITECTURE §8](SYSTEM_ARCHITECTURE.md#8-data-ownership-principles).
+
+**Scan reversal.** If the wrong retailer scans a code (e.g. the buyer's shipment
+was scanned by someone else), the manufacturer looks the code up
+(`GET /scans/lookup?code=`, QR token or manual code) and reverses it
+(`POST /scans/reverse`): the original scan rows become `scan_reversed`, negative
+`reversal` rows deduct exactly the credited points (rejected with 409 if the
+wallet can't cover them), and the code's `redeemed_at`/`redeemed_by` are cleared
+so the rightful retailer can scan it fresh (scheme bonus recomputed at rescan
+time). Box scans reverse as a whole box.
 
 ## 8. Claims relationship
 

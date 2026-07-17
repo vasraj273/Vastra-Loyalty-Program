@@ -1523,8 +1523,9 @@ def scan(request: Request, body: ScanIn,
         # database serializes these row updates; the loser sees rowcount == 0
         # (the row was redeemed by the winner) and credits nothing. This makes
         # the check-and-mark a single atomic database operation instead of the
-        # previous read-then-write TOCTOU. The partial UNIQUE index on
-        # points_ledger(token) is the belt-and-suspenders backstop.
+        # previous read-then-write TOCTOU. The partial UNIQUE index
+        # uq_ledger_active_scan_token (one entry_type='scan' row per token)
+        # is the belt-and-suspenders backstop.
         credited = []
         for t in tokens:
             cur = db.execute(
@@ -1771,6 +1772,210 @@ def list_claims(
         "offset": offset,
         "claims": [dict(r) for r in rows],
     }
+
+
+# ---------- scan reversal (manufacturer-scoped) ----------
+# A retailer sometimes scans a code that another retailer bought. The
+# manufacturer can look the code up, see who was credited, deduct exactly
+# those points and re-open the code so the rightful retailer can scan it.
+# Mechanics: the original ledger rows flip entry_type 'scan'->'scan_reversed'
+# (so every entry_type='scan' filter — claims, dashboard, retailer stats —
+# excludes them with no query changes) and an offsetting negative 'reversal'
+# row per item keeps balance = SUM(points) and the audit trail intact.
+
+def _resolve_scan_group(db, manufacturer_id: int, code: str) -> dict:
+    """Look up a code (QR token or 6-char manual code) owned by this
+    manufacturer and expand it to the token group a reversal must cover:
+    a box parent covers the whole box, a child redeemed *via its box* also
+    covers the whole box (a box scan is the only path that marks the parent
+    redeemed), anything else covers just itself. For redeemed box groups the
+    children are limited to those claimed by the box scanner, so items a
+    different retailer scanned individually beforehand are untouched."""
+    norm = code.strip().replace("-", "").replace(" ", "").upper()
+    row = db.execute(
+        """SELECT c.token, c.manual_code, c.is_parent, c.parent_token,
+                  c.redeemed_at, c.redeemed_by, b.points_per_code,
+                  b.product_name, b.product_sku AS sku, b.manufacturer_id
+           FROM qr_codes c
+           JOIN qr_batches b ON b.id = c.batch_id
+           WHERE c.token = ? OR c.manual_code = ?""",
+        (code.strip(), norm),
+    ).fetchone()
+    # Same enumeration-proof 404 as /scan: an unknown code and another
+    # manufacturer's code are indistinguishable from the response.
+    if not row or row["manufacturer_id"] != manufacturer_id:
+        raise HTTPException(404, "Invalid code")
+
+    box = None
+    if row["is_parent"]:
+        box = row
+    elif row["parent_token"]:
+        p = db.execute(
+            """SELECT token, redeemed_at, redeemed_by FROM qr_codes
+               WHERE token = ?""",
+            (row["parent_token"],),
+        ).fetchone()
+        if p and p["redeemed_at"]:
+            box = p
+
+    if box:
+        tokens = [
+            c["token"] for c in db.execute(
+                """SELECT token FROM qr_codes
+                   WHERE parent_token = ? AND redeemed_by = ?""",
+                (box["token"], box["redeemed_by"]),
+            )
+        ] if box["redeemed_at"] else []
+        return {
+            "group_token": box["token"], "manual_code": row["manual_code"],
+            "is_box": True, "tokens": tokens,
+            "redeemed_at": box["redeemed_at"],
+            "redeemed_by": box["redeemed_by"],
+            "points_per_code": row["points_per_code"],
+            "product_name": row["product_name"], "sku": row["sku"],
+        }
+    return {
+        "group_token": row["token"], "manual_code": row["manual_code"],
+        "is_box": False, "tokens": [row["token"]],
+        "redeemed_at": row["redeemed_at"], "redeemed_by": row["redeemed_by"],
+        "points_per_code": row["points_per_code"],
+        "product_name": row["product_name"], "sku": row["sku"],
+    }
+
+
+def _scan_rows(db, group: dict):
+    """The still-active scan ledger rows a reversal of this group would undo."""
+    if not group["tokens"]:
+        return []
+    qs = ",".join("?" * len(group["tokens"]))
+    return db.execute(
+        f"""SELECT id, retailer_id, token, points, base_points, bonus_points,
+                   scheme_id, product_id, product_external_id, product_name,
+                   product_sku, region, distributor_id, scanned_at
+            FROM points_ledger
+            WHERE token IN ({qs}) AND entry_type = 'scan'
+              AND retailer_id = ?""",
+        (*group["tokens"], group["redeemed_by"]),
+    ).fetchall()
+
+
+@app.get("/scans/lookup")
+def lookup_scan(code: str, user: dict = Depends(current_manufacturer)):
+    """Who redeemed this code, when, and for how many points — the read-only
+    companion of POST /scans/reverse (drives the panel's lookup box)."""
+    with get_db() as db:
+        g = _resolve_scan_group(db, user["id"], code)
+        out = {
+            "token": g["group_token"], "manual_code": g["manual_code"],
+            "is_box": g["is_box"], "product_name": g["product_name"],
+            "sku": g["sku"], "points_per_code": g["points_per_code"],
+        }
+        if not g["redeemed_at"]:
+            return {**out, "redeemed": False, "reversible": False,
+                    "reason": "Code has not been scanned yet"}
+        rows = _scan_rows(db, g)
+        if not rows:
+            return {**out, "redeemed": True, "reversible": False,
+                    "reason": "No active scan credit found for this code"}
+        total = sum(r["points"] for r in rows)
+        rid = rows[0]["retailer_id"]
+        retailer = db.execute(
+            "SELECT id, name, shop_name FROM retailers WHERE id = ?", (rid,)
+        ).fetchone()
+        scheme = db.execute(
+            "SELECT name FROM schemes WHERE id = ?", (rows[0]["scheme_id"],)
+        ).fetchone() if rows[0]["scheme_id"] else None
+        balance = _balance(db, rid)
+        return {
+            **out, "redeemed": True,
+            "reversible": balance >= total,
+            "reason": None if balance >= total
+            else "Retailer's balance is below the scanned points",
+            "item_count": len(rows),
+            "scanned_at": g["redeemed_at"],
+            "points": total,
+            "base_points": sum(r["base_points"] for r in rows),
+            "bonus_points": sum(r["bonus_points"] for r in rows),
+            "scheme_name": scheme["name"] if scheme else None,
+            "retailer": dict(retailer) if retailer else {"id": rid},
+            "retailer_balance": balance,
+        }
+
+
+class ReverseIn(BaseModel):
+    code: str
+    note: str | None = Field(None, max_length=300)
+
+
+@app.post("/scans/reverse")
+def reverse_scan(body: ReverseIn, user: dict = Depends(current_manufacturer)):
+    """Undo a scan credited to the wrong retailer: deduct exactly the points
+    the ledger recorded (base + bonus at scan time) and re-open the code(s)
+    so the rightful retailer can scan them again. Box scans reverse whole."""
+    with get_db() as db:
+        g = _resolve_scan_group(db, user["id"], body.code)
+        rows = _scan_rows(db, g)
+        if not rows:
+            raise HTTPException(409, "Code is not redeemed")
+        rid = rows[0]["retailer_id"]
+        total = sum(r["points"] for r in rows)
+        # ponytail: no negative balances for now — the expected flow is to
+        # reject the retailer's pending gift claim first (refund) and then
+        # reverse. Relax to allow a negative wallet if that ever changes.
+        if _balance(db, rid) < total:
+            raise HTTPException(
+                409, "Retailer's balance is below the scanned points; "
+                     "reject their pending gift claims first")
+        # Atomic claim of the reversal (mirrors /scan's conditional UPDATE):
+        # a concurrent reversal of the same group loses on rowcount and rolls
+        # back, so points are never deducted twice.
+        ids = [r["id"] for r in rows]
+        qs = ",".join("?" * len(ids))
+        cur = db.execute(
+            f"""UPDATE points_ledger SET entry_type = 'scan_reversed'
+                WHERE id IN ({qs}) AND entry_type = 'scan'""",
+            ids,
+        )
+        if cur.rowcount != len(ids):
+            raise HTTPException(409, "Scan already reversed")
+        note = (body.note or "").strip() or "Reversed — scanned by wrong retailer"
+        for r in rows:
+            db.execute(
+                """INSERT INTO points_ledger
+                   (manufacturer_id, retailer_id, entry_type, token,
+                    product_id, product_external_id, product_name,
+                    product_sku, points, base_points, bonus_points,
+                    scheme_id, region, distributor_id, note, created_by)
+                   VALUES (?, ?, 'reversal', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                           ?, ?)""",
+                (user["id"], rid, r["token"], r["product_id"],
+                 r["product_external_id"], r["product_name"],
+                 r["product_sku"], -r["points"], -r["base_points"],
+                 -r["bonus_points"], r["scheme_id"], r["region"],
+                 r["distributor_id"], note, user["id"]),
+            )
+        # Re-open the codes so the rightful retailer can scan them.
+        qs = ",".join("?" * len(g["tokens"]))
+        db.execute(
+            f"""UPDATE qr_codes SET redeemed_at = NULL, redeemed_by = NULL
+                WHERE token IN ({qs})""",
+            g["tokens"],
+        )
+        if g["is_box"]:
+            db.execute(
+                """UPDATE qr_codes SET redeemed_at = NULL, redeemed_by = NULL
+                   WHERE token = ?""",
+                (g["group_token"],),
+            )
+        return {
+            "reversed": True,
+            "is_box": g["is_box"],
+            "items": len(rows),
+            "points_deducted": total,
+            "retailer_id": rid,
+            "new_balance": _balance(db, rid),
+            "token": g["group_token"],
+        }
 
 
 # ---------- dashboard (manufacturer-scoped) ----------

@@ -129,6 +129,10 @@ CREATE TABLE IF NOT EXISTS qr_codes (
 --   refund      +points  gift claim rejected
 --   adjustment  +/-      manual correction by manufacturer (note set)
 --   transfer    +/-      points moved between retailers (counterparty set)
+--   scan_reversed +points  a scan undone by the manufacturer (was 'scan',
+--                          excluded from scan analytics by the entry_type filter)
+--   reversal    -points  offsetting deduction written when a scan is reversed
+--                        (token/note/created_by set)
 -- Balance for a retailer = SUM(points). Scan analytics filter entry_type='scan'.
 CREATE TABLE IF NOT EXISTS points_ledger (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -401,12 +405,16 @@ def migrate() -> None:
 # could not be created. A failure here means pre-existing duplicate scan rows
 # exist and should be de-duplicated manually before the index will apply.
 _CONSTRAINTS = [
-    # One scan credit per QR token, enforced by the DB. token is NULL for
-    # non-scan ledger rows (gift_redeem/refund/adjustment/transfer), so the
-    # partial index only constrains scans. Supported on both PostgreSQL and
-    # SQLite (>= 3.8). Defence-in-depth behind the conditional-UPDATE guard.
-    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ledger_scan_token "
-    "ON points_ledger(token) WHERE token IS NOT NULL",
+    # One *active* scan credit per QR token, enforced by the DB. Scoped to
+    # entry_type = 'scan' so a reversed scan ('scan_reversed'), its negative
+    # 'reversal' row, and a later legitimate rescan can all share the token.
+    # The old token-only index (uq_ledger_scan_token) predates scan reversal
+    # and would block those rows, so it is dropped first (idempotent no-op
+    # once gone). Supported on both PostgreSQL and SQLite (>= 3.8).
+    # Defence-in-depth behind the conditional-UPDATE guards.
+    "DROP INDEX IF EXISTS uq_ledger_scan_token",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ledger_active_scan_token "
+    "ON points_ledger(token) WHERE token IS NOT NULL AND entry_type = 'scan'",
     # SSO identity mapping must be unique. Manufacturer external_id is globally
     # unique; retailer external_id is unique *per manufacturer* (the same parent
     # id space can't leak across tenants). Partial indexes ignore NULLs so rows

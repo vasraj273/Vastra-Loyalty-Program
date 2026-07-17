@@ -165,6 +165,13 @@ Authoritative list at `/docs`. Principal endpoints:
    with base/bonus split, scheme, region, the scan's `lat/lng`, and the retailer's
    current `distributor_id` (point-in-time attribution).
 - **Balance = `SUM(points)`**; scan analytics filter `entry_type='scan'`.
+- **Scan reversal** (`GET /scans/lookup`, `POST /scans/reverse`, manufacturer):
+  original scan rows flip to `entry_type='scan_reversed'` (auto-excluded from all
+  scan analytics), offsetting negative `reversal` rows deduct the exact credited
+  points (409 if the wallet can't cover them), and the code(s) are re-enabled
+  (`redeemed_at`/`redeemed_by` cleared) for the rightful retailer. Box scans
+  reverse as a whole. Unique scan index is scoped to `entry_type='scan'`
+  (`uq_ledger_active_scan_token`).
 
 ### 6.1b Distributors
 - `distributors` (manufacturer-scoped) is tracking-only: no login, wallet, or
