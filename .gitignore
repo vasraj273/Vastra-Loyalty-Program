@@ -15,4 +15,10 @@ qr_api.db
 .claude-flow/
 .swarm/
 ruvector.db
-.claude/settings.local.json
+.claude/
+.playwright-mcp/
+skill-observations/
+.pytest_cache/
+
+# stray lockfile from running npm at repo root (real one lives in panel/)
+/package-lock.json

@@ -364,6 +364,10 @@ _MIGRATIONS = [
     # logout). Existing rows default to 0 (active).
     ("manufacturers", "blocked", "INTEGER NOT NULL DEFAULT 0"),
     ("retailers", "blocked", "INTEGER NOT NULL DEFAULT 0"),
+    # Vastra OTP login: the access_token Vastra mints at loyalty-verifyotp,
+    # stored server-side only (never sent to the browser) and used to pull the
+    # org's design list. Wiped on logout; refreshed on every OTP login.
+    ("manufacturers", "vastra_access_token", "TEXT"),
 ]
 
 

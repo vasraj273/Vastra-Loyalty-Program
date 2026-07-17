@@ -31,7 +31,9 @@ from .geo import coords_for, known_places, nearest_city, reverse_address
 from .pdf_service import build_pdf
 from .qr_service import (new_manual_code, new_reference, new_token,
                          payload_for, render_png)
-from .vastra_client import VastraApiError, fetch_vastra_products
+from .vastra_client import (VastraApiError, VastraRejection,
+                            fetch_vastra_products, send_login_otp,
+                            verify_login_otp)
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 PANEL_DIST = Path(__file__).resolve().parent.parent / "panel" / "dist"
@@ -274,6 +276,12 @@ def logout(request: Request, user: dict = Depends(current_user)):
     with get_db() as db:
         if token:
             db.execute("DELETE FROM auth_tokens WHERE token = ?", (token,))
+        # Security: after logout the DB holds no live credentials for this
+        # account — the stored Vastra access_token goes too (a fresh one is
+        # minted on the next OTP login; no-op for password/admin logins).
+        db.execute(
+            "UPDATE manufacturers SET vastra_access_token = NULL WHERE id = ?",
+            (user["id"],))
     return {"ok": True}
 
 
@@ -302,6 +310,104 @@ def sso_manufacturer(request: Request, body: SsoIn):
         "display_name": row["display_name"],
         "username": row["username"],
         "is_admin": bool(row["is_admin"]),
+    }
+
+
+# ---------- manufacturer auth via Vastra OTP ----------
+# The manufacturer logs in with their existing Vastra credentials: Vastra
+# texts an OTP to the organization's registered mobile, we verify it with
+# Vastra server-side, then find-or-create the manufacturer by
+# external_id = organization_Id (first login auto-provisions — no second
+# account) and mint the same opaque token /auth/login issues.
+
+class VastraOtpSendIn(BaseModel):
+    mobile: str = Field(min_length=8, max_length=15, pattern=r"^[0-9]+$")
+    country_code: str = Field(default="+91", min_length=2, max_length=5,
+                              pattern=r"^\+[0-9]+$")
+    is_resend: int = Field(default=0, ge=0, le=1)
+
+
+class VastraOtpVerifyIn(BaseModel):
+    mobile: str = Field(min_length=8, max_length=15, pattern=r"^[0-9]+$")
+    country_code: str = Field(default="+91", min_length=2, max_length=5,
+                              pattern=r"^\+[0-9]+$")
+    otp: str = Field(min_length=3, max_length=10, pattern=r"^[0-9]+$")
+
+
+def _vastra_username(db, org: dict, external_id: str) -> str:
+    """Derive a unique panel username for an auto-provisioned manufacturer
+    (mirrors _assign_retailer_login: readable base, id-suffix on clash)."""
+    raw = org.get("org_url") or org.get("organization_name") or ""
+    base = "".join(c for c in raw.lower() if c.isalnum()) or f"vastra{external_id}"
+    username = base
+    if db.execute("SELECT 1 FROM manufacturers WHERE username = ?",
+                  (username,)).fetchone():
+        username = f"{base}{external_id}"
+    return username
+
+
+@app.post("/auth/vastra/send-otp")
+@limiter.limit(RL_LOGIN, key_func=get_remote_address)
+def vastra_send_otp(request: Request, body: VastraOtpSendIn):
+    """Step 1: have Vastra text an OTP to the org's registered mobile."""
+    try:
+        message = send_login_otp(body.country_code, body.mobile, body.is_resend)
+    except VastraRejection as exc:
+        raise HTTPException(403, exc.message)
+    except VastraApiError as exc:
+        raise HTTPException(502, f"Vastra login service unavailable: {exc}")
+    return {"ok": True, "message": message}
+
+
+@app.post("/auth/vastra/verify-otp")
+@limiter.limit(RL_LOGIN, key_func=get_remote_address)
+def vastra_verify_otp(request: Request, body: VastraOtpVerifyIn):
+    """Step 2: verify the OTP with Vastra, log the manufacturer in.
+    Stores Vastra's access_token server-side (used to pull the org's design
+    list; wiped again on logout). Returns the same body as /auth/login."""
+    try:
+        org = verify_login_otp(body.country_code, body.mobile, body.otp)
+    except VastraRejection as exc:
+        raise HTTPException(401, exc.message)
+    except VastraApiError as exc:
+        raise HTTPException(502, f"Vastra login service unavailable: {exc}")
+    external_id = str(org["organization_Id"]).strip()
+    display_name = ((org.get("organization_name") or "").strip()
+                    or f"Vastra org {external_id}")
+    with get_db() as db:
+        row = db.execute(
+            """SELECT id, username, is_admin, blocked
+               FROM manufacturers WHERE external_id = ?""",
+            (external_id,),
+        ).fetchone()
+        if row and row["blocked"]:
+            raise HTTPException(403, "Account is blocked")
+        if row:
+            mid, username = row["id"], row["username"]
+            is_admin = bool(row["is_admin"])
+            db.execute(
+                """UPDATE manufacturers
+                   SET display_name = ?, vastra_access_token = ?
+                   WHERE id = ?""",
+                (display_name, org["access_token"], mid))
+        else:
+            username = _vastra_username(db, org, external_id)
+            # Random throwaway password: OTP-provisioned accounts log in via
+            # Vastra only; nobody ever knows this password.
+            cur = db.execute(
+                """INSERT INTO manufacturers
+                   (username, password_hash, display_name, external_id,
+                    vastra_access_token)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (username, hash_password(new_temp_password()), display_name,
+                 external_id, org["access_token"]))
+            mid, is_admin = cur.lastrowid, False
+        token = issue_token(db, mid)
+    return {
+        "token": token,
+        "display_name": display_name,
+        "username": username,
+        "is_admin": is_admin,
     }
 
 
@@ -514,8 +620,23 @@ def list_products(user: dict = Depends(current_manufacturer)):
 
 @app.get("/vastra/products")
 def list_vastra_products(user: dict = Depends(current_manufacturer)):
+    with get_db() as db:
+        row = db.execute(
+            "SELECT vastra_access_token FROM manufacturers WHERE id = ?",
+            (user["id"],)).fetchone()
+    vastra_token = row["vastra_access_token"] if row else None
+    if not vastra_token:
+        # Password-login accounts (or a session that outlived a logout wipe)
+        # have no Vastra credential to pull the catalog with.
+        raise HTTPException(
+            409, "No Vastra session — log in with Vastra OTP to load the "
+                 "product catalog")
     try:
-        products = fetch_vastra_products()
+        products = fetch_vastra_products(vastra_token)
+    except VastraRejection as exc:
+        raise HTTPException(
+            502, f"Vastra rejected the product request: {exc.message} — "
+                 "logging out and back in refreshes the Vastra session")
     except VastraApiError as exc:
         raise HTTPException(502, f"Vastra product service unavailable: {exc}")
     with get_db() as db:
