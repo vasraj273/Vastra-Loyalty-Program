@@ -85,7 +85,7 @@ sequenceDiagram
   participant P as Loyalty Panel
   participant L as Loyalty API
   participant V as Vastra product-list API
-  M->>P: log in (existing panel password login)
+  M->>P: log in (Vastra mobile + OTP — stores the Vastra access_token)
   P->>L: GET /vastra/products
   L->>V: GET /products (server-side, VASTRA_API_KEY)
   V-->>L: [{external_id, name, sku}, ...]
@@ -104,10 +104,17 @@ sequenceDiagram
 - **CORS:** the panel's CORS allowlist only covers its own origins; proxying
   avoids needing Vastra to CORS-allow the panel domain.
 
-**Authentication:** unchanged — the panel already authenticates the
-manufacturer via plain password login (`POST /auth/login`);
-`current_manufacturer` enforces tenancy on every endpoint below, same as
-before.
+**Authentication:** the panel authenticates the manufacturer via **Vastra
+mobile + OTP** (`POST /auth/vastra/send-otp` → `POST /auth/vastra/verify-otp`,
+proxied to Vastra's `loyalty-signup`/`loyalty-verifyotp`). Verify matches the
+manufacturer by `external_id` (= Vastra `organization_Id`) or auto-provisions
+one, and stores Vastra's `access_token` server-side
+(`manufacturers.vastra_access_token`) — that token is what `GET
+/vastra/products` sends to Vastra's design API, and it is wiped on logout.
+Plain password login (`POST /auth/login`) still works for the panel but has no
+Vastra token, so the Products tab answers `409 No Vastra session` until the
+manufacturer logs in via OTP. `current_manufacturer` enforces tenancy on every
+endpoint below, same as before.
 
 ## 5. Endpoints (implemented)
 
@@ -189,10 +196,22 @@ changed.
 
 ## 8. Open items
 
-1. **Vastra's real product-list API contract is unknown** (URL, auth
-   mechanism, response field names, per-manufacturer scoping). Set via
-   `VASTRA_API_BASE_URL`/`VASTRA_API_KEY`; `app/vastra_client.py`'s field
-   mapping is a best-effort placeholder until Vastra shares a spec.
+1. ✅ **Resolved (2026-07-16): Vastra's API contract verified live against
+   staging.** `app/vastra_client.py` now implements the real endpoints:
+   `POST /user/loyalty-signup` / `POST /user/loyalty-verifyotp` (OTP login;
+   org profile with `organization_Id`/`organization_name`/`access_token`) and
+   `GET /design/get-design-ids` (the org's designs = loyalty "products",
+   authenticated with the per-org `access_token`; scoping is per organization,
+   so no extra tenant filter is needed). All Vastra responses use a
+   `{"status": true|false, "data"|"error": …}` envelope. Config:
+   `VASTRA_API_BASE_URL` (staging: the internal `:3000/api/v2` origin — the
+   public staging host 301s POSTs away), `VASTRA_API_KEY` (staging value `1`),
+   `VASTRA_UDID`/`VASTRA_DEVICE_TYPE` (required device headers, fixed values
+   accepted). Remaining sub-item: `get-design-ids` returns no `design_name`,
+   so product names fall back to the design number until Vastra confirms a
+   names-bearing endpoint; **access-token expiry policy still unconfirmed**
+   with Vastra's dev team (on expiry the Products tab 502s with a
+   "log out and back in" hint).
 2. **`scheme_products.product_id` FK gap.** It's a hard FK to the legacy
    local `products.id`. Since manufacturers no longer create local product
    rows, **new Vastra-sourced products can't get product-specific scheme

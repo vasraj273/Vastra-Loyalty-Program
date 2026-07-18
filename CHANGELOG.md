@@ -4,6 +4,66 @@ Notable changes to the Loyalty QR API. Dates are when the change went live on
 production (Render + Neon). Schema changes are additive (`_MIGRATIONS`), applied
 by `migrate()` on startup — no reseed, existing data preserved.
 
+## 2026-07-18 (YourApp server-to-server scan, phone-verified)
+
+### Added
+- **`POST /yourapp/scan`** — YourApp's backend scans on a retailer's behalf
+  with no retailer session: body `{phone, code, lat?, lng?}`, auth via the
+  shared `X-API-Key` header (new env `YOURAPP_API_KEY`; unset → `503`). The
+  retailer is resolved by **phone number** (digits-only, last-10 match) among
+  the retailers of the scanned code's manufacturer — unknown phone `403`,
+  duplicate phones `409`, blocked `403`. Same response shape as `/scan`; when
+  lat/lng are sent the shop pin/city/address refresh exactly like
+  `POST /retailer/location` (best-effort, never fails the scan).
+- **`POST /yourapp/qr/lookup`** — read-only code preview for YourApp's
+  backend (same `X-API-Key` auth): product snapshot, base/bonus/total points
+  (current best active scheme), `status: available|redeemed`, box item count,
+  and the redeeming shop. Never redeems.
+- **CSV import phone guard** — `POST /retailers/import` now rejects rows whose
+  normalized phone duplicates another retailer of the same manufacturer
+  (phone is an identity key for `/yourapp/scan`; missing phone stays allowed).
+
+### Changed
+- `/scan`'s redemption core was extracted into shared helpers (`_find_code`,
+  `_best_scheme`, `_redeem_code`) used by both scan endpoints — behavior of
+  `/scan` is unchanged. `POST /retailer/location`'s pin-refresh logic became
+  the shared `_refresh_retailer_pin`. No schema changes.
+
+## 2026-07-17 (Scan reversal + Vastra OTP login)
+
+### Added
+- **Scan reversal** (manufacturer). `GET /scans/lookup?code=` (who scanned a
+  code, when, for how many points) and `POST /scans/reverse`: flips the
+  original ledger rows to `entry_type='scan_reversed'` (auto-excluded from all
+  scan analytics/claims), writes offsetting negative `reversal` rows deducting
+  exactly the credited points (base + bonus at scan time; refused with `409`
+  if the wallet can't cover it — no negative balances), and clears
+  `redeemed_at`/`redeemed_by` so the rightful retailer can rescan. Box scans
+  reverse whole (a child code redeemed via its box resolves to the box).
+  Panel: Claims tab gained a **Find scan by code** lookup box and a per-row
+  **↩ Reverse** action (confirm-dialog gated).
+- **Manufacturer OTP login via Vastra** (panel Login is dual-mode: password or
+  mobile + OTP). `POST /auth/vastra/send-otp` / `POST /auth/vastra/verify-otp`
+  proxy Vastra's `loyalty-signup`/`loyalty-verifyotp` (`app/vastra_client.py`,
+  contract verified against staging 2026-07-16). Verify matches by
+  `external_id` (= Vastra `organization_Id`) or auto-provisions the account,
+  and stores Vastra's `access_token` in `manufacturers.vastra_access_token`
+  (new `_MIGRATIONS` column). Env: `VASTRA_API_BASE_URL`, `VASTRA_API_KEY`,
+  `VASTRA_API_TIMEOUT` (default 10s), `VASTRA_UDID`, `VASTRA_DEVICE_TYPE`.
+
+### Changed
+- **`GET /vastra/products` now authenticates to Vastra with the stored per-org
+  `access_token`** (from OTP login) instead of a global credential; sessions
+  without one (password login, or after logout) get
+  `409 No Vastra session`. `/auth/logout` wipes the stored Vastra token.
+- **Ledger scan-token unique index rescoped.** `uq_ledger_scan_token`
+  (one ledger row per token) dropped and replaced by
+  `uq_ledger_active_scan_token` (`WHERE token IS NOT NULL AND
+  entry_type = 'scan'`) so a reversed scan, its reversal row, and a rescan can
+  share the token — still one *active* scan credit per code. Idempotent
+  `_CONSTRAINTS` swap, applied automatically on boot.
+- Panel masthead (logo + name + burger menu) is now sticky on scroll.
+
 ## 2026-07-09 (Session hardening: single active session + emergency lockout)
 
 Two auth changes, both additive and backward-safe (no reseed).

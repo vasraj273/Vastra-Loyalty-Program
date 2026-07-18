@@ -27,7 +27,7 @@ structured form:
 | `422` | Validation | No | Fix input; field-level feedback. |
 | `429` | Rate limited | Yes (backoff) | Exponential backoff + jitter. |
 | `502` | Vastra product service unavailable | No (server/config) | Show "catalog unavailable, try again shortly"; alert DevOps if persistent. |
-| `503` | SSO not configured | No (server) | "Service unavailable"; alert DevOps. |
+| `503` | Feature not configured (SSO / YourApp key) | No (server) | "Service unavailable"; alert DevOps. |
 | `5xx` | Server error | GET: yes; writes: verify first | Backoff for GETs; verify state for writes. |
 
 ## SSO & auth
@@ -45,12 +45,17 @@ structured form:
 | 403 | `Account is blocked` | Emergency lockout (`blocked = 1`) — refused at login **and** on every request with an existing token | Show "account disabled, contact support". Not client-fixable; an admin clears the flag. |
 | 401 | `Current password is incorrect` | `POST /retailer/password` | Re-prompt. |
 | 422 | `New password must differ from the current one` | password change | Re-prompt. |
+| 403 | `<Vastra's message>` | `POST /auth/vastra/send-otp` — Vastra refused the number (not eligible for loyalty login) | Show Vastra's message verbatim. |
+| 401 | `<Vastra's message>` | `POST /auth/vastra/verify-otp` — bad/expired OTP | Re-prompt; offer resend (`is_resend: 1`). |
+| 502 | `Vastra login service unavailable: <detail>` | OTP endpoints couldn't reach Vastra, or `VASTRA_API_BASE_URL` unset | Show "login via Vastra unavailable"; offer password login. |
 
 ## Vastra product catalog
 
 | HTTP | `detail` | Meaning | Client behavior |
 |---|---|---|---|
 | 502 | `Vastra product service unavailable: <detail>` | `GET /vastra/products` couldn't reach Vastra, or `VASTRA_API_BASE_URL` is unset | Show "catalog unavailable"; retry with backoff. |
+| 409 | `No Vastra session — log in with Vastra OTP to load the product catalog` | The session has no stored `vastra_access_token` (password login, or wiped by logout) | Prompt the manufacturer to log in via Vastra OTP. |
+| 502 | `Vastra rejected the product request: <Vastra's message> — logging out and back in refreshes the Vastra session` | Stored Vastra token expired/revoked | Log out and back in via OTP. |
 
 ## QR generation & batches
 
@@ -73,6 +78,27 @@ structured form:
 
 > There is **no "expired code" error** — QR codes never expire. Only the scheme
 > *bonus* is time-bounded (it silently contributes 0 when no scheme is active).
+
+### YourApp server-to-server (`POST /yourapp/qr/lookup`, `POST /yourapp/scan`)
+
+| HTTP | `detail` | Meaning | Client behavior |
+|---|---|---|---|
+| 503 | `YourApp integration is not configured` | `YOURAPP_API_KEY` unset on the server | Server config; contact DevOps. |
+| 401 | `Invalid API key` | `X-API-Key` header missing or wrong | Fix the shared secret (config); do not retry as-is. |
+| 422 | `Invalid phone number` | Fewer than 10 digits after normalization | Send the retailer's full 10-digit number. |
+| 403 | `Phone number not registered` | No retailer of the scanned code's manufacturer has this phone | Onboard the retailer (CSV import with phone) under the right manufacturer. |
+| 403 | `Account is blocked` | Retailer emergency lockout (`blocked = 1`) | "Account disabled, contact support." |
+| 409 | `Multiple retailers share this phone number` | Duplicate normalized phone within the manufacturer | Data cleanup: fix the duplicate phones in the Customers tab. |
+| 404 / 409 | as `/scan` above | Same redemption core — invalid code, already redeemed | Same as `/scan`. |
+
+### Scan reversal (`GET /scans/lookup`, `POST /scans/reverse` — manufacturer)
+
+| HTTP | `detail` | Meaning | Client behavior |
+|---|---|---|---|
+| 404 | `Invalid code` | Unknown code **or** another manufacturer's (same anti-enumeration 404 as `/scan`) | "Code not found." |
+| 409 | `Code is not redeemed` | Reversing a code with no active scan credit (never scanned, or already reversed and not rescanned) | Refresh via lookup. |
+| 409 | `Scan already reversed` | A concurrent reversal won the race | Refresh; nothing to do. |
+| 409 | `Retailer's balance is below the scanned points; reject their pending gift claims first` | Deduction would push the wallet negative (not allowed) | Reject the retailer's pending gift claims (refunds restore balance), then reverse. |
 
 ## Wallet, rewards & claims
 

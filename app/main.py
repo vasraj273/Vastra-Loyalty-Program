@@ -154,6 +154,54 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
+# ---------- YourApp server-to-server integration ----------
+# YourApp's backend calls /yourapp/* directly (no retailer session): a shared
+# secret in the X-API-Key header authenticates the caller, and the retailer is
+# identified by the phone number registered in `retailers` (imported from
+# YourApp's own user data via CSV). Env-only config mirroring SSO_SECRET:
+# unset -> endpoints fail closed with 503.
+import hmac as _hmac  # noqa: E402
+
+YOURAPP_API_KEY = _os.environ.get("YOURAPP_API_KEY", "")
+
+
+def require_yourapp_key(request: Request) -> None:
+    if not YOURAPP_API_KEY:
+        raise HTTPException(503, "YourApp integration is not configured")
+    supplied = request.headers.get("x-api-key", "")
+    if not _hmac.compare_digest(supplied, YOURAPP_API_KEY):
+        raise HTTPException(401, "Invalid API key")
+
+
+def _norm_phone(s: str | None) -> str:
+    """Digits only, last 10 kept — matches Indian numbers regardless of a
+    +91/0 prefix, spaces, or dashes."""
+    digits = "".join(ch for ch in (s or "") if ch.isdigit())
+    return digits[-10:]
+
+
+def _retailer_by_phone(db, manufacturer_id: int, phone: str) -> dict:
+    """Resolve a retailer of one manufacturer by registered phone number.
+    Comparison is on normalized digits, in Python, so stored formatting never
+    matters (retailer counts per manufacturer are small). Tenancy comes from
+    the scanned code's batch, so a phone can never credit across tenants."""
+    want = _norm_phone(phone)
+    if len(want) < 10:
+        raise HTTPException(422, "Invalid phone number")
+    matches = [dict(r) for r in db.execute(
+        """SELECT * FROM retailers
+           WHERE manufacturer_id = ? AND phone IS NOT NULL""",
+        (manufacturer_id,),
+    ) if _norm_phone(r["phone"]) == want]
+    if not matches:
+        raise HTTPException(403, "Phone number not registered")
+    if len(matches) > 1:
+        raise HTTPException(409, "Multiple retailers share this phone number")
+    if matches[0]["blocked"]:
+        raise HTTPException(403, "Account is blocked")
+    return matches[0]
+
+
 # ---------- schemas ----------
 
 class LoginIn(BaseModel):
@@ -987,26 +1035,31 @@ class LocationIn(BaseModel):
     lng: float = Field(ge=-180, le=180)
 
 
-@app.post("/retailer/location")
-def set_retailer_location(body: LocationIn,
-                          retailer: dict = Depends(current_retailer)):
+def _refresh_retailer_pin(rid: int, lat: float, lng: float) -> dict:
     """Refresh the shop's exact pin, city, and street address from where the
     retailer actually scanned — **latest wins**, every scanning session. A wrong
     city entered at registration self-corrects to the real one, and the
     manufacturer gets a precise, visitable address. The address is reverse-
     geocoded best-effort; if that lookup fails we keep the previous address (the
-    'View on map' link still works from the fresh coordinates)."""
-    rid = retailer["id"]
-    city = nearest_city(body.lat, body.lng)
-    address = reverse_address(body.lat, body.lng)
+    'View on map' link still works from the fresh coordinates). Shared by
+    POST /retailer/location (webview) and /yourapp/scan (server-to-server)."""
+    city = nearest_city(lat, lng)
+    address = reverse_address(lat, lng)
     with get_db() as db:
         db.execute(
             """UPDATE retailers SET lat = ?, lng = ?, location_source = 'gps',
                    region = COALESCE(?, region), address = COALESCE(?, address)
                WHERE id = ?""",
-            (body.lat, body.lng, city, address, rid),
+            (lat, lng, city, address, rid),
         )
-    return {"updated": True, "region": city, "address": address}
+    return {"region": city, "address": address}
+
+
+@app.post("/retailer/location")
+def set_retailer_location(body: LocationIn,
+                          retailer: dict = Depends(current_retailer)):
+    out = _refresh_retailer_pin(retailer["id"], body.lat, body.lng)
+    return {"updated": True, **out}
 
 
 # ---------- distributors (manufacturer-scoped) ----------
@@ -1128,6 +1181,16 @@ def import_retailers_csv(request: Request, body: ImportIn,
     errors: list[str] = []
     credentials: list[dict] = []
     with get_db() as db:
+        # Phone identifies the retailer on /yourapp/scan, so it must stay
+        # unique (normalized) within the manufacturer. Missing phone is still
+        # allowed (webview-only retailers).
+        phones_in_use = {
+            _norm_phone(r["phone"]) for r in db.execute(
+                """SELECT phone FROM retailers
+                   WHERE manufacturer_id = ? AND phone IS NOT NULL""",
+                (mid,),
+            )
+        }
         for i, raw in enumerate(reader, start=2):  # row 1 is the header
             row = {(k or "").strip().lower(): (v or "").strip()
                    for k, v in raw.items()}
@@ -1152,6 +1215,16 @@ def import_retailers_csv(request: Request, body: ImportIn,
                 skipped += 1
                 errors.append(f"row {i}: external_id '{external_id}' already in use")
                 continue
+            phone = row.get("phone", "") or None
+            norm = _norm_phone(phone) if phone else ""
+            if norm:
+                if norm in phones_in_use:
+                    skipped += 1
+                    errors.append(
+                        f"row {i}: phone '{phone}' already in use by another "
+                        "retailer")
+                    continue
+                phones_in_use.add(norm)
             region = row.get("region", "")
             coords = coords_for(region) if region else None
             lat, lng = coords if coords else (None, None)
@@ -1163,7 +1236,7 @@ def import_retailers_csv(request: Request, body: ImportIn,
                     location_source, distributor_id, external_id)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (mid, row.get("name", "") or shop, shop, region,
-                 row.get("phone", "") or None, lat, lng,
+                 phone, lat, lng,
                  "city" if coords else None, distributor_id, external_id),
             )
             username, password = _assign_retailer_login(db, shop, cur.lastrowid)
@@ -1449,128 +1522,135 @@ def code_image(token: str):
 
 # ---------- scan & redeem (retailer side, authenticated) ----------
 
-@app.post("/scan")
-@limiter.limit(RL_SCAN)
-def scan(request: Request, body: ScanIn,
-         retailer: dict = Depends(current_retailer)):
-    """Redeem a code by QR token or 6-char manual code. Points always go to
-    the logged-in retailer, so a code can't be credited to another account.
-    Single authority for rewards: base points + best active scheme bonus."""
+def _find_code(db, raw_code: str):
+    """Look up a code (QR token or 6-char manual code, dashes/spaces ok) with
+    its batch fields. Returns the row or None."""
+    code = raw_code.strip().replace("-", "").replace(" ", "").upper()
+    return db.execute(
+        """SELECT c.token, c.redeemed_at, c.redeemed_by, c.is_parent,
+                  b.points_per_code,
+                  b.product_id AS product_id,
+                  b.product_external_id AS product_external_id,
+                  b.product_name AS product_name, b.product_sku AS sku,
+                  b.manufacturer_id
+           FROM qr_codes c
+           JOIN qr_batches b ON b.id = c.batch_id
+           WHERE c.token = ? OR c.manual_code = ?""",
+        (raw_code.strip(), code),
+    ).fetchone()
+
+
+def _best_scheme(db, manufacturer_id: int, product_id):
+    """The most generous active scheme of this manufacturer covering the
+    product (no stacking). None when no scheme applies."""
+    return db.execute(
+        """SELECT s.id, s.name, s.bonus_points FROM schemes s
+           WHERE s.manufacturer_id = ?
+             AND date('now') BETWEEN s.start_date AND s.end_date
+             AND (NOT EXISTS (SELECT 1 FROM scheme_products sp
+                              WHERE sp.scheme_id = s.id)
+                  OR EXISTS (SELECT 1 FROM scheme_products sp
+                             WHERE sp.scheme_id = s.id
+                               AND sp.product_id = ?))
+           ORDER BY s.bonus_points DESC LIMIT 1""",
+        (manufacturer_id, product_id),
+    ).fetchone()
+
+
+def _redeem_code(db, retailer: dict, row, lat, lng) -> dict:
+    """Race-safe redemption core, shared by /scan (webview, token-derived
+    retailer) and /yourapp/scan (server-to-server, phone-derived retailer).
+    ``row`` is a _find_code result (or None). Points always go to the passed
+    retailer. Single authority for rewards: base points + best scheme bonus."""
     rid = retailer["id"]
-    code = body.code.strip().replace("-", "").replace(" ", "").upper()
-    with get_db() as db:
-        row = db.execute(
-            """SELECT c.token, c.redeemed_at, c.is_parent, b.points_per_code,
-                      b.product_id AS product_id,
-                      b.product_external_id AS product_external_id,
-                      b.product_name AS product_name, b.product_sku AS sku,
-                      b.manufacturer_id
-               FROM qr_codes c
-               JOIN qr_batches b ON b.id = c.batch_id
-               WHERE c.token = ? OR c.manual_code = ?""",
-            (body.code.strip(), code),
-        ).fetchone()
-        # Fix 5 (enumeration oracle): a non-existent code and a code that
-        # belongs to another manufacturer return the *identical* 404, so an
-        # attacker cannot use the response to tell a real cross-tenant code
-        # from a fake one. "Already redeemed" stays distinct below because the
-        # retailer needs that feedback and it only ever leaks the state of a
-        # code they already legitimately hold.
-        if not row or retailer["manufacturer_id"] != row["manufacturer_id"]:
-            raise HTTPException(404, "Invalid code")
+    # Fix 5 (enumeration oracle): a non-existent code and a code that
+    # belongs to another manufacturer return the *identical* 404, so an
+    # attacker cannot use the response to tell a real cross-tenant code
+    # from a fake one. "Already redeemed" stays distinct below because the
+    # retailer needs that feedback and it only ever leaks the state of a
+    # code they already legitimately hold.
+    if not row or retailer["manufacturer_id"] != row["manufacturer_id"]:
+        raise HTTPException(404, "Invalid code")
 
-        # A box (parent) code registers all of its still-unredeemed children;
-        # a plain code registers just itself. The actual race-safe redemption
-        # happens via the conditional UPDATE below — these reads only drive
-        # the not-yet-redeemed error message for the non-concurrent case.
-        if row["is_parent"]:
-            tokens = [
-                c["token"] for c in db.execute(
-                    """SELECT token FROM qr_codes
-                       WHERE parent_token = ? AND redeemed_at IS NULL""",
-                    (row["token"],),
-                )
-            ]
-            if not tokens:
-                raise HTTPException(409, "Box already redeemed")
-        else:
-            if row["redeemed_at"]:
-                raise HTTPException(409, "Code already redeemed")
-            tokens = [row["token"]]
-
-        # Base points always apply; the most generous active scheme of this
-        # manufacturer covering the product adds its bonus (no stacking). All
-        # children of a box share one product, so the per-item value is equal.
-        scheme = db.execute(
-            """SELECT s.id, s.name, s.bonus_points FROM schemes s
-               WHERE s.manufacturer_id = ?
-                 AND date('now') BETWEEN s.start_date AND s.end_date
-                 AND (NOT EXISTS (SELECT 1 FROM scheme_products sp
-                                  WHERE sp.scheme_id = s.id)
-                      OR EXISTS (SELECT 1 FROM scheme_products sp
-                                 WHERE sp.scheme_id = s.id
-                                   AND sp.product_id = ?))
-               ORDER BY s.bonus_points DESC LIMIT 1""",
-            (row["manufacturer_id"], row["product_id"]),
-        ).fetchone()
-        base = row["points_per_code"]
-        bonus = scheme["bonus_points"] if scheme else 0
-        per = base + bonus
-
-        # Fix 1 (double-spend race): claim each child token with a *conditional*
-        # UPDATE that only matches a still-unredeemed row, then credit points
-        # ONLY for the rows this transaction actually won. Under concurrency the
-        # database serializes these row updates; the loser sees rowcount == 0
-        # (the row was redeemed by the winner) and credits nothing. This makes
-        # the check-and-mark a single atomic database operation instead of the
-        # previous read-then-write TOCTOU. The partial UNIQUE index
-        # uq_ledger_active_scan_token (one entry_type='scan' row per token)
-        # is the belt-and-suspenders backstop.
-        credited = []
-        for t in tokens:
-            cur = db.execute(
-                """UPDATE qr_codes SET redeemed_at = datetime('now'),
-                                       redeemed_by = ?
-                   WHERE token = ? AND redeemed_at IS NULL""",
-                (rid, t),
+    # A box (parent) code registers all of its still-unredeemed children;
+    # a plain code registers just itself. The actual race-safe redemption
+    # happens via the conditional UPDATE below — these reads only drive
+    # the not-yet-redeemed error message for the non-concurrent case.
+    if row["is_parent"]:
+        tokens = [
+            c["token"] for c in db.execute(
+                """SELECT token FROM qr_codes
+                   WHERE parent_token = ? AND redeemed_at IS NULL""",
+                (row["token"],),
             )
-            if cur.rowcount != 1:
-                continue  # another concurrent scan already claimed this token
-            db.execute(
-                """INSERT INTO points_ledger
-                   (manufacturer_id, retailer_id, token, product_id,
-                    product_external_id, product_name, product_sku, points,
-                    base_points, bonus_points, scheme_id, region, lat, lng,
-                    distributor_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (row["manufacturer_id"], rid, t,
-                 row["product_id"], row["product_external_id"],
-                 row["product_name"], row["sku"], per, base, bonus,
-                 scheme["id"] if scheme else None, retailer["region"],
-                 body.lat, body.lng, retailer["distributor_id"]),
-            )
-            credited.append(t)
+        ]
+        if not tokens:
+            raise HTTPException(409, "Box already redeemed")
+    else:
+        if row["redeemed_at"]:
+            raise HTTPException(409, "Code already redeemed")
+        tokens = [row["token"]]
 
-        # If a concurrent request beat us to every token, nothing was credited.
-        if not credited:
-            raise HTTPException(
-                409, "Box already redeemed" if row["is_parent"]
-                else "Code already redeemed")
-        if row["is_parent"]:
-            # Mark the box itself redeemed (conditional, so the loser is a no-op).
-            db.execute(
-                """UPDATE qr_codes SET redeemed_at = datetime('now'),
-                                       redeemed_by = ?
-                   WHERE token = ? AND redeemed_at IS NULL""",
-                (rid, row["token"]),
-            )
+    # All children of a box share one product, so the per-item value is equal.
+    scheme = _best_scheme(db, row["manufacturer_id"], row["product_id"])
+    base = row["points_per_code"]
+    bonus = scheme["bonus_points"] if scheme else 0
+    per = base + bonus
 
-        count = len(credited)
-        balance = db.execute(
-            "SELECT COALESCE(SUM(points), 0) AS total FROM points_ledger"
-            " WHERE retailer_id = ?",
-            (rid,),
-        ).fetchone()["total"]
+    # Fix 1 (double-spend race): claim each child token with a *conditional*
+    # UPDATE that only matches a still-unredeemed row, then credit points
+    # ONLY for the rows this transaction actually won. Under concurrency the
+    # database serializes these row updates; the loser sees rowcount == 0
+    # (the row was redeemed by the winner) and credits nothing. This makes
+    # the check-and-mark a single atomic database operation instead of the
+    # previous read-then-write TOCTOU. The partial UNIQUE index
+    # uq_ledger_active_scan_token (one entry_type='scan' row per token)
+    # is the belt-and-suspenders backstop.
+    credited = []
+    for t in tokens:
+        cur = db.execute(
+            """UPDATE qr_codes SET redeemed_at = datetime('now'),
+                                   redeemed_by = ?
+               WHERE token = ? AND redeemed_at IS NULL""",
+            (rid, t),
+        )
+        if cur.rowcount != 1:
+            continue  # another concurrent scan already claimed this token
+        db.execute(
+            """INSERT INTO points_ledger
+               (manufacturer_id, retailer_id, token, product_id,
+                product_external_id, product_name, product_sku, points,
+                base_points, bonus_points, scheme_id, region, lat, lng,
+                distributor_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (row["manufacturer_id"], rid, t,
+             row["product_id"], row["product_external_id"],
+             row["product_name"], row["sku"], per, base, bonus,
+             scheme["id"] if scheme else None, retailer["region"],
+             lat, lng, retailer["distributor_id"]),
+        )
+        credited.append(t)
+
+    # If a concurrent request beat us to every token, nothing was credited.
+    if not credited:
+        raise HTTPException(
+            409, "Box already redeemed" if row["is_parent"]
+            else "Code already redeemed")
+    if row["is_parent"]:
+        # Mark the box itself redeemed (conditional, so the loser is a no-op).
+        db.execute(
+            """UPDATE qr_codes SET redeemed_at = datetime('now'),
+                                   redeemed_by = ?
+               WHERE token = ? AND redeemed_at IS NULL""",
+            (rid, row["token"]),
+        )
+
+    count = len(credited)
+    balance = db.execute(
+        "SELECT COALESCE(SUM(points), 0) AS total FROM points_ledger"
+        " WHERE retailer_id = ?",
+        (rid,),
+    ).fetchone()["total"]
 
     return {
         "redeemed": True,
@@ -1589,6 +1669,99 @@ def scan(request: Request, body: ScanIn,
                      "region": retailer["region"]},
         "new_balance": balance,
     }
+
+
+@app.post("/scan")
+@limiter.limit(RL_SCAN)
+def scan(request: Request, body: ScanIn,
+         retailer: dict = Depends(current_retailer)):
+    """Redeem a code by QR token or 6-char manual code. Points always go to
+    the logged-in retailer, so a code can't be credited to another account."""
+    with get_db() as db:
+        return _redeem_code(db, retailer, _find_code(db, body.code),
+                            body.lat, body.lng)
+
+
+# ---------- YourApp server-to-server scan (phone-verified) ----------
+
+class YourAppScanIn(BaseModel):
+    phone: str = Field(min_length=10, max_length=20,
+                       description="Retailer's registered phone (as in YourApp)")
+    code: str = Field(min_length=1, max_length=64)
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lng: float | None = Field(default=None, ge=-180, le=180)
+
+
+class YourAppLookupIn(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+
+
+@app.post("/yourapp/qr/lookup")
+@limiter.limit(RL_SCAN)
+def yourapp_qr_lookup(request: Request, body: YourAppLookupIn,
+                      _key: None = Depends(require_yourapp_key)):
+    """Read-only code preview for YourApp's backend: what the code is worth
+    and whether it was already scanned. Never redeems, never changes state.
+    Points are per item; a box (is_box) credits base/bonus/total per child."""
+    with get_db() as db:
+        row = _find_code(db, body.code)
+        if not row:
+            raise HTTPException(404, "Invalid code")
+        scheme = _best_scheme(db, row["manufacturer_id"], row["product_id"])
+        items = 1
+        if row["is_parent"]:
+            items = db.execute(
+                "SELECT COUNT(*) AS n FROM qr_codes WHERE parent_token = ?",
+                (row["token"],),
+            ).fetchone()["n"]
+        redeemed_by_shop = None
+        if row["redeemed_by"]:
+            shop = db.execute(
+                "SELECT shop_name FROM retailers WHERE id = ?",
+                (row["redeemed_by"],),
+            ).fetchone()
+            redeemed_by_shop = shop["shop_name"] if shop else None
+    base = row["points_per_code"]
+    bonus = scheme["bonus_points"] if scheme else 0
+    return {
+        "status": "redeemed" if row["redeemed_at"] else "available",
+        "is_box": bool(row["is_parent"]),
+        "items": items,
+        "product": {"external_id": row["product_external_id"],
+                    "name": row["product_name"], "sku": row["sku"]},
+        "base_points": base,
+        "bonus_points": bonus,
+        "total_points": base + bonus,
+        "scheme": ({"id": scheme["id"], "name": scheme["name"]}
+                   if scheme else None),
+        "redeemed_at": row["redeemed_at"],
+        "redeemed_by_shop": redeemed_by_shop,
+    }
+
+
+@app.post("/yourapp/scan")
+@limiter.limit(RL_SCAN)
+def yourapp_scan(request: Request, body: YourAppScanIn,
+                 _key: None = Depends(require_yourapp_key)):
+    """Scan on behalf of a retailer, called by YourApp's backend. The retailer
+    is identified by phone number, verified against the phone registered in
+    this system (imported from YourApp data) — scoped to the scanned code's
+    manufacturer, so a phone can never credit across tenants. Same response
+    shape as /scan."""
+    with get_db() as db:
+        row = _find_code(db, body.code)
+        if not row:
+            raise HTTPException(404, "Invalid code")
+        retailer = _retailer_by_phone(db, row["manufacturer_id"], body.phone)
+        result = _redeem_code(db, retailer, row, body.lat, body.lng)
+    if body.lat is not None and body.lng is not None:
+        # Same latest-wins shop-pin refresh the webview does via
+        # POST /retailer/location; best-effort, never fails the scan.
+        try:
+            _refresh_retailer_pin(retailer["id"], body.lat, body.lng)
+        except Exception:
+            pass
+    return result
 
 
 # ---------- schemes / campaigns (manufacturer-scoped) ----------

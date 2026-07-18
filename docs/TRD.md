@@ -47,7 +47,7 @@ Tables (`app/database.py` `SCHEMA`, evolved additively via `_MIGRATIONS`):
 
 | Table | Purpose | Key columns |
 |---|---|---|
-| `manufacturers` | Manufacturer + super-admin accounts | `username`, `password_hash`, `display_name`, `is_admin`, `external_id` (SSO map), `blocked` (0/1 emergency lockout) |
+| `manufacturers` | Manufacturer + super-admin accounts | `username`, `password_hash`, `display_name`, `is_admin`, `external_id` (SSO/OTP map = Vastra `organization_Id`), `blocked` (0/1 emergency lockout), `vastra_access_token` (stored server-side by OTP login, wiped on logout) |
 | `auth_tokens` | Manufacturer/admin bearer tokens (single active session — new login deletes old rows) | `token`, `manufacturer_id` |
 | `products` | **Legacy** catalog (read-only; no new rows) | `manufacturer_id`, `name`, `sku`, `loyalty_points` |
 | `product_points` | Manufacturer's own points value per Vastra product | `manufacturer_id`, `product_external_id`, `points` |
@@ -109,8 +109,19 @@ adapter translates to psycopg at runtime.
   retailer endpoints derive the retailer from the token, never the body — points
   can only be credited to the logged-in retailer. Cross-manufacturer scans → 403.
 - **Retailer login auto-creation:** on `POST /retailers`, username = first
-  alphanumeric word of the shop name (lowercased), password = `<username>123`,
-  id appended on clash (`username` is UNIQUE).
+  alphanumeric word of the shop name (lowercased), id appended on clash
+  (`username` is UNIQUE); password = a random temporary one, returned once in
+  the creation response, with `must_change=1` so clients prompt a reset.
+- **Manufacturer OTP login via Vastra (panel):** `POST /auth/vastra/send-otp`
+  (Vastra texts the org's registered mobile) → `POST /auth/vastra/verify-otp`
+  (proxied to Vastra's `loyalty-signup`/`loyalty-verifyotp`,
+  `app/vastra_client.py`). Matches the manufacturer by `external_id` or
+  **auto-provisions** one (random throwaway password — OTP accounts log in via
+  Vastra only); refreshes `display_name`; stores Vastra's `access_token` in
+  `manufacturers.vastra_access_token` for `GET /vastra/products` (no stored
+  token → `409`). `/auth/logout` deletes the session token *and* the stored
+  Vastra token. Vastra rejection → `401`/`403` (Vastra's message), transport
+  or missing `VASTRA_API_BASE_URL` → `502`.
 - **SSO token exchange (native apps):** `POST /auth/sso/manufacturer` and
   `POST /auth/sso/retailer` verify a parent-app **HS256 JWT**
   (`verify_sso_assertion` in `app/auth.py`) and mint the *same* opaque bearer
@@ -124,6 +135,16 @@ adapter translates to psycopg at runtime.
   so a parent id space can't resolve across tenants. Enabled by env `SSO_SECRET`
   (unset → endpoints return `503`); `SSO_ISSUERS`/`SSO_AUDIENCE`/`SSO_MAX_AGE`
   default to `vastra,yourapp` / `loyalty` / `120`s.
+- **YourApp server-to-server scan (phone-verified):** `POST /yourapp/qr/lookup`
+  and `POST /yourapp/scan` skip the retailer session entirely — YourApp's
+  backend authenticates with a shared secret (`X-API-Key` header, env
+  `YOURAPP_API_KEY`, checked via `hmac.compare_digest`; unset → `503`). The
+  retailer is resolved by **phone number** (`_retailer_by_phone`: digits-only,
+  last-10 match, in Python) among the retailers of the *scanned code's*
+  manufacturer (`qr_batches.manufacturer_id`), so tenancy comes from the code.
+  No match → `403`, duplicate phones → `409`, `blocked` → `403`. Because phone
+  is an identity key, `POST /retailers/import` rejects rows whose normalized
+  phone duplicates another retailer of the same manufacturer.
 
 ## 5. API surface
 
@@ -131,7 +152,8 @@ Authoritative list at `/docs`. Principal endpoints:
 
 - **Auth:** `POST /auth/login`, `/auth/logout`, `/auth/retailer/login`,
   `/auth/retailer/logout`, `GET /auth/me`, `/retailer/me`;
-  **SSO** `POST /auth/sso/manufacturer`, `POST /auth/sso/retailer`.
+  **SSO** `POST /auth/sso/manufacturer`, `POST /auth/sso/retailer`;
+  **Vastra OTP** `POST /auth/vastra/send-otp`, `POST /auth/vastra/verify-otp`.
 - **Admin:** `GET|POST /admin/manufacturers`.
 - **Catalog:** `GET /products` (legacy, read-only — see §Product integration),
   `GET /vastra/products`, `PUT /vastra/products/{external_id}/points`;
@@ -146,16 +168,24 @@ Authoritative list at `/docs`. Principal endpoints:
 - **QR:** `POST /qr/generate`, `GET /qr/batches`, `GET /qr/batches/{id}`,
   `POST /qr/batches/{id}/save`, `GET /qr/batches/{id}/print`,
   `DELETE /qr/batches/{id}`, `GET /qr/codes/{token}/image`.
-- **Scan & rewards:** `POST /scan`, `GET /retailer/wallet`, `/retailer/shop`,
+- **Scan & rewards:** `POST /scan`,
+  **YourApp server-to-server** `POST /yourapp/qr/lookup`, `POST /yourapp/scan`
+  (auth `X-API-Key`); `GET /retailer/wallet`, `/retailer/shop`,
   `POST /retailer/claim`, `GET /retailer/claims`; `GET /claims`,
-  `GET /gift-claims`, `POST /gift-claims/{id}/approve|reject`.
+  `GET /gift-claims`, `POST /gift-claims/{id}/approve|reject`;
+  **scan reversal** `GET /scans/lookup`, `POST /scans/reverse`.
 - **Analytics:** `GET /analytics/dashboard`.
 - **Public/webview:** `GET /public/cities`, `/web`, `/web/scan[/{token}]`,
   `/web/shop`, `/web/claims`, `/web/generate`.
 
 ## 6. Core algorithms
 
-### 6.1 Points on scan (`POST /scan`)
+### 6.1 Points on scan (`POST /scan`, `POST /yourapp/scan`)
+Both endpoints share one redemption core (`_redeem_code` + `_find_code` in
+`app/main.py`); `/scan` resolves the retailer from the bearer token,
+`/yourapp/scan` from the phone number (see §4). `/yourapp/qr/lookup` reuses
+`_find_code` + `_best_scheme` for a read-only preview (product snapshot,
+base/bonus/total points, `available`/`redeemed`) that never changes state.
 1. Resolve code by `token` or `manual_code`; reject unknown (404), already-redeemed
    (409), cross-manufacturer (403).
 2. Determine codes to register (a parent box → all unredeemed children).
@@ -227,7 +257,9 @@ Authoritative list at `/docs`. Principal endpoints:
   id, unique per manufacturer; a duplicate within the manufacturer is skipped with
   an error). `POST /retailers` likewise accepts `external_id` on the body.
 - There is no products import — the catalog is Vastra's, pulled server-side via
-  `GET /vastra/products` (`app/vastra_client.py`). The manufacturer's own
+  `GET /vastra/products` (`app/vastra_client.py`, authenticated with the
+  manufacturer's stored `vastra_access_token` from OTP login; password-only
+  session → `409`). The manufacturer's own
   points-per-scan value is set via `PUT /vastra/products/{external_id}/points`,
   stored in `product_points` (upsert, no CSV bulk path). See
   `docs/integration/PRODUCT_INTEGRATION.md`.
@@ -275,6 +307,7 @@ Authoritative list at `/docs`. Principal endpoints:
 | `SSO_ISSUERS` | Allowed JWT `iss` values (comma-separated). Default `vastra,yourapp`. |
 | `SSO_AUDIENCE` | Required JWT `aud`. Default `loyalty`. |
 | `SSO_MAX_AGE` | Max assertion age in seconds (`iat` freshness, bounds replay). Default `120`. |
+| `YOURAPP_API_KEY` | Shared secret for the YourApp server-to-server scan endpoints (`X-API-Key` header on `/yourapp/qr/lookup` + `/yourapp/scan`). Unset → they return `503`. |
 
 ## 8. Deployment
 

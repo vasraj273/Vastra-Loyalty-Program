@@ -31,8 +31,22 @@ product-list API contract (see [PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#
 - [ ] Confirm `external_id` is unique per manufacturer.
 - [ ] Verify `POST /auth/sso/retailer` (with `manufacturer_external_id`) returns a token.
 
+**YourApp server-to-server scan (phone-verified)** ✅
+- [ ] Obtain `YOURAPP_API_KEY` (shared secret; server-side only, never in an
+      app bundle) and send it as the `X-API-Key` header.
+- [ ] Import every retailer with their **YourApp phone number** (CSV `phone`
+      column) — phone identifies the retailer on `/yourapp/scan`, matched on
+      the last 10 digits within the scanned code's manufacturer.
+- [ ] Call `POST /yourapp/qr/lookup {code}` for a pre-scan preview (product,
+      points, `status: available|redeemed`) — read-only, safe to call freely.
+- [ ] Call `POST /yourapp/scan {phone, code, lat?, lng?}` to redeem; same
+      response shape as `/scan`.
+- [ ] Handle `403 Phone number not registered`, `409 Multiple retailers share
+      this phone number` (data cleanup), and the standard `404`/`409` scan states.
+
 **Configure secrets**
 - [ ] `SSO_SECRET` distributed only to Vastra + YourApp backends + loyalty env.
+- [ ] `YOURAPP_API_KEY` distributed only to YourApp's backend + loyalty env.
 - [ ] No secret committed to source control or shipped in app bundles.
 
 **Verify APIs**
@@ -100,6 +114,8 @@ product-list API contract (see [PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#
 - [ ] `SSO_SECRET` (+ optional `SSO_ISSUERS`/`SSO_AUDIENCE`/`SSO_MAX_AGE`).
 - [ ] `VASTRA_API_BASE_URL` + `VASTRA_API_KEY` (+ optional `VASTRA_API_TIMEOUT`) —
       required for the panel's Products tab / QR generation to load a catalog.
+- [ ] `YOURAPP_API_KEY` — required for the YourApp server-to-server scan
+      endpoints (`/yourapp/*` return `503` without it).
 - [ ] `RL_STORAGE_URI` if running more than one process/replica.
 
 **Deployment** ✅
@@ -139,6 +155,11 @@ product-list API contract (see [PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#
 - [ ] Re-scan same code → 409. Box scan → all children credited once.
 - [ ] Concurrent scans of one code credit it **exactly once** (double-spend test).
 - [ ] Cross-manufacturer code → 404 (identical to unknown code).
+- [ ] `/yourapp/qr/lookup` on a fresh code → `available` with correct points;
+      after scanning → `redeemed` (and never changes state itself).
+- [ ] `/yourapp/scan` with registered phone (`+91`-formatted) → credited to the
+      right retailer; unregistered phone → 403; wrong/missing `X-API-Key` → 401;
+      key unset on server → 503.
 
 **Test cases — wallet/rewards/claims** ✅
 - [ ] Claim a gift → points debited + reference; reject → points refunded.
@@ -154,7 +175,7 @@ product-list API contract (see [PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#
 - [ ] Rate limits enforced (and shared across replicas if applicable).
 
 **Integration validation**
-- [ ] End-to-end: login to panel → GET /vastra/products → generate → print →
+- [ ] End-to-end: login to panel via Vastra OTP → GET /vastra/products → generate → print →
       scan (via SSO) → wallet → claim → approve, across two manufacturers to
       prove isolation.
 - [ ] Clock-skew resilience for assertions.

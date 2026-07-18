@@ -51,7 +51,9 @@ schemes are unverifiable and easy to abuse.
   a parent-system **`external_id`** and must be provisioned beforehand
   (manufacturers imported by Vastra; retailers created/imported by their
   manufacturer with `external_id`) — SSO never creates accounts. The manufacturer
-  web panel keeps its password login; retailer access is SSO-only in production.
+  web panel logs in with **Vastra mobile + OTP** (which also enables the Vastra
+  product catalog; password login remains as a fallback without catalog access);
+  retailer access is SSO-only in production.
 - **One active session per user.** A new login (password or SSO) invalidates the
   previous token, so signing in on another device signs the first one out.
 - **Emergency lockout.** An admin can disable any manufacturer or retailer by
@@ -75,6 +77,13 @@ schemes are unverifiable and easy to abuse.
   promised value even if product points later change.
 - Scanning (QR token or manual code) credits the **logged-in retailer** only,
   once per code; scanning a box parent registers all its children at once.
+- **YourApp in-app scanning (server-to-server):** retailers already live in
+  YourApp, so they never sign up twice — the manufacturer imports them (with
+  their YourApp **phone number**) via CSV, and YourApp's backend scans on
+  their behalf: a preview call shows what the code is worth and whether it was
+  already scanned, then the scan call credits the retailer matched by phone
+  number. Protected by a shared server-side secret; a phone that isn't
+  registered under the code's manufacturer is rejected.
 - QR generation happens **in the panel** (a modal on the Products tab: generate →
   print PDF → save for later → browse saved batches), so the manufacturer never
   leaves the admin UI.

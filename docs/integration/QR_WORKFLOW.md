@@ -92,6 +92,15 @@ sequenceDiagram
 written **per child**, and the response sums them (`items_registered`,
 `points_awarded`). Already-fully-redeemed box → `409`.
 
+**Server-to-server variant:** YourApp's backend can run the same redemption
+without a retailer session via `POST /yourapp/scan {phone, code, lat?, lng?}`
+(auth `X-API-Key` = `YOURAPP_API_KEY`; the retailer is matched by registered
+phone, last 10 digits, within the scanned code's manufacturer), and preview a
+code first with the read-only `POST /yourapp/qr/lookup {code}` (product,
+points, `available`/`redeemed` — never redeems). Both share this exact
+redemption core, so all the states above are identical. See
+[API_REFERENCE](API_REFERENCE.md).
+
 ## 5. Duplicate prevention (double-spend safety)
 
 Redemption is race-safe by design — **not** a read-then-write check:

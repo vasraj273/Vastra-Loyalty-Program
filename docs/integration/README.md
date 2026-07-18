@@ -23,6 +23,7 @@ integrate **without reading the source code**.
 | 7 | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) | Env vars, migrations, SSO config, health, rollback, prod checklist |
 | 8 | [ERROR_REFERENCE.md](ERROR_REFERENCE.md) | Every API error, meaning, client behavior, retry guidance |
 | 9 | [INTEGRATION_CHECKLIST.md](INTEGRATION_CHECKLIST.md) | Practical checklists: Backend / Mobile / DevOps / QA |
+| 10 | [YOURAPP_SCAN_API.md](YOURAPP_SCAN_API.md) | **Handoff spec for the YourApp team** — the two server-to-server scan endpoints (phone-verified), self-contained ✅ |
 
 ## Reading order
 

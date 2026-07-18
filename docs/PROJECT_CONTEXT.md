@@ -138,6 +138,21 @@ from Vastra (`GET /vastra/products`).
   loyalty tokens — so all other endpoints are unchanged. Principals are matched by
   `external_id` (on `manufacturers`/`retailers`) and must be pre-provisioned; the
   exchange never auto-creates. Gated by `SSO_SECRET` (unset → `503`).
+- **Manufacturer OTP login (panel):** dual-mode Login screen — password, or Vastra
+  mobile + OTP (`POST /auth/vastra/send-otp` → `POST /auth/vastra/verify-otp`,
+  proxied to Vastra's `loyalty-signup`/`loyalty-verifyotp` via
+  `app/vastra_client.py`). Matches by `external_id` (= Vastra `organization_Id`)
+  or **auto-provisions** the manufacturer; stores Vastra's `access_token`
+  server-side (`manufacturers.vastra_access_token`) — required by
+  `GET /vastra/products` (password-only session → `409`). Wiped on logout.
+- **YourApp server-to-server scan (phone-verified):** `POST /yourapp/qr/lookup`
+  (read-only code preview: product, points, `available`/`redeemed`) and
+  `POST /yourapp/scan` (`phone` + `code` + optional `lat`/`lng`) are called by
+  YourApp's backend with a shared secret (`X-API-Key` = env `YOURAPP_API_KEY`;
+  unset → `503`) — no retailer session. The retailer is matched by registered
+  **phone number** (last-10-digit match) within the scanned code's
+  manufacturer; both endpoints share `/scan`'s redemption core, and the scan
+  refreshes the shop pin like `POST /retailer/location`.
 - **Multi-tenancy:** every owned row carries `manufacturer_id`; retailer endpoints
   derive the retailer from the token, never the body. Retailer `external_id` is
   unique per manufacturer, so a parent id can't resolve across tenants.
@@ -156,7 +171,8 @@ from Vastra (`GET /vastra/products`).
 - `seed.py` is destructive (local/initial only) and does **not** run `_MIGRATIONS`.
 - **Env vars:** `QR_BASE_URL` (QR payload origin), `DATABASE_URL` (Postgres/Neon),
   and optionally `SSO_SECRET` + `SSO_ISSUERS`/`SSO_AUDIENCE`/`SSO_MAX_AGE` to enable
-  native-app SSO.
+  native-app SSO, and `YOURAPP_API_KEY` to enable the YourApp server-to-server
+  scan endpoints (`/yourapp/*`).
 
 ## 8. Known gaps / backlog
 

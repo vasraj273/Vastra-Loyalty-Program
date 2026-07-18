@@ -110,6 +110,11 @@ sequenceDiagram
   states. `401` → re-exchange token and retry once.
 - **Loading state:** disable the redeem button while in-flight; show a brief
   "Redeeming…".
+- **Backend-driven alternative:** if YourApp prefers to keep loyalty calls out
+  of the app entirely, its backend can scan server-to-server with the
+  retailer's phone number (`POST /yourapp/scan`) and preview codes
+  (`POST /yourapp/qr/lookup`) using the shared `X-API-Key` — no retailer
+  SSO/token needed. See [API_REFERENCE](API_REFERENCE.md).
 
 ### Wallet
 - **API:** `GET /retailer/wallet` → `balance` + `history` (latest 100 ledger

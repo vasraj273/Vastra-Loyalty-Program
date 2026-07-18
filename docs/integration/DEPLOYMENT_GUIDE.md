@@ -25,9 +25,10 @@
 | `SSO_ISSUERS` | No | `vastra,yourapp` | Allowed JWT `iss` values (comma-separated). |
 | `SSO_AUDIENCE` | No | `loyalty` | Required JWT `aud`. |
 | `SSO_MAX_AGE` | No | `120` | Max assertion age (seconds); bounds replay. |
-| `VASTRA_API_BASE_URL` | **Yes (to power the panel's product picker)** | — | Vastra's product-list API origin, called server-side only. Unset → `GET /vastra/products` fails closed with `502`. |
+| `VASTRA_API_BASE_URL` | **Yes (to power the panel's Vastra OTP login + product picker)** | — | Vastra's API origin, called server-side only (`app/vastra_client.py`). Unset → OTP login and `GET /vastra/products` fail closed with `502`. Companions: `VASTRA_API_KEY` (`api-key` header), `VASTRA_UDID`/`VASTRA_DEVICE_TYPE` (device headers, fixed defaults ok), `VASTRA_API_TIMEOUT` (default 10s). |
 | `VASTRA_API_KEY` | Depends on Vastra's contract | — | Credential for the Vastra product-list API; never sent to the browser. |
-| `VASTRA_API_TIMEOUT` | No | `5` | Timeout (seconds) for the outbound call to Vastra. |
+| `VASTRA_API_TIMEOUT` | No | `10` | Timeout (seconds) for the outbound call to Vastra. |
+| `YOURAPP_API_KEY` | **Yes (to enable YourApp server-to-server scan)** | — | Shared secret YourApp's backend sends as `X-API-Key` to `POST /yourapp/qr/lookup` / `POST /yourapp/scan` (phone-verified scanning). Unset → those endpoints return `503`. Server-side only — never in a mobile build. |
 | `RL_ENABLED` | No | `1` | Master switch for rate limiting (`0` disables). |
 | `RL_LOGIN` | No | `10/minute` | Limit for login + SSO endpoints. |
 | `RL_SCAN` | No | `60/minute` | Limit for `/scan`. |
@@ -138,7 +139,8 @@ There is no dedicated `/health` endpoint. Recommended liveness/readiness probes:
 - [ ] `DATABASE_URL` = Neon **pooled** string.
 - [ ] `QR_BASE_URL` = deployed HTTPS origin + `/web/scan` (set **before** any print run).
 - [ ] `SSO_SECRET` set (strong, secret); `SSO_*` aligned with parent backends.
-- [ ] `VASTRA_API_BASE_URL` + `VASTRA_API_KEY` set once Vastra shares their real API contract (`app/vastra_client.py` is a placeholder until then) — otherwise the panel's Products tab / QR generation can't load a catalog.
+- [ ] `VASTRA_API_BASE_URL` + `VASTRA_API_KEY` pointed at Vastra's **production** API (contract implemented + verified against staging 2026-07-16; confirm the production origin/api-key with Vastra's team) — otherwise the panel's OTP login and Products tab / QR generation can't work.
+- [ ] `YOURAPP_API_KEY` set (strong, secret) and shared only with YourApp's backend; every retailer imported with their YourApp phone number (phone identifies the retailer on `/yourapp/scan`).
 - [ ] `RL_STORAGE_URI` set if running >1 replica.
 - [ ] HTTPS enforced; CORS restricted to real app/panel origins.
 - [ ] Manufacturers imported with `external_id`; retailers provisioned with `external_id`.

@@ -50,8 +50,11 @@ flowchart TB
 ```
 
 QR generation is no longer a Vastra-App/Vastra-Backend-originated flow — the
-manufacturer logs into the Loyalty Admin Panel directly (plain password
-login) and generates codes from there. The panel's product picker is powered
+manufacturer logs into the Loyalty Admin Panel directly (**Vastra mobile +
+OTP**, `POST /auth/vastra/send-otp` → `/auth/vastra/verify-otp`, which also
+stores the Vastra `access_token` the product pull needs; plain password login
+still exists but gets `409 No Vastra session` on the Products tab) and
+generates codes from there. The panel's product picker is powered
 by loyalty **pulling** Vastra's product list server-side (`GET
 /vastra/products` proxies `app/vastra_client.py`); the browser panel never
 calls Vastra directly. Manufacturer SSO (`VBack` minting an assertion for
@@ -62,7 +65,7 @@ that QR generation doesn't need it — see [PRODUCT_INTEGRATION](PRODUCT_INTEGRA
 
 | System | Responsibility |
 |---|---|
-| **Vastra Backend** | System of Record for **products** and **manufacturer identity**. Serves its product list to the Loyalty Backend (server-side pull, read-only) so the panel can power QR generation; no longer originates QR generation itself. Manufacturer SSO assertion minting still exists but its continued purpose (beyond the now-removed generation flow) is unclear. |
+| **Vastra Backend** | System of Record for **products** and **manufacturer identity**. Authenticates manufacturers for the panel via mobile + OTP (`loyalty-signup`/`loyalty-verifyotp`, issuing the per-org `access_token`) and serves its design list to the Loyalty Backend (server-side pull with that token, read-only) so the panel can power QR generation; no longer originates QR generation itself. Manufacturer SSO assertion minting still exists but its continued purpose (beyond the now-removed generation flow) is unclear. |
 | **YourApp Backend** | Identity provider for **retailers**. Authenticates retailers and mints retailer SSO assertions. |
 | **Loyalty Backend** | System of Record for the **loyalty domain**: QR batches/codes, the points ledger & wallets, schemes, gifts, claims, and analytics. Validates and redeems QR codes; enforces multi-tenancy. |
 | **Loyalty Admin Panel** | Web client of the Loyalty API for manufacturers + super admin. |
@@ -99,8 +102,10 @@ sequenceDiagram
   participant P as Loyalty Admin Panel
   participant L as Loyalty API
   participant VB as Vastra Backend
-  M->>P: Log in (password)
-  P->>L: POST /auth/login
+  M->>P: Log in (Vastra mobile + OTP)
+  P->>L: POST /auth/vastra/send-otp, then /auth/vastra/verify-otp
+  L->>VB: loyalty-signup / loyalty-verifyotp
+  VB-->>L: org profile + access_token (stored server-side)
   L-->>P: loyalty token
   P->>L: GET /vastra/products
   L->>VB: GET /products (server-side, VASTRA_API_KEY)
@@ -140,6 +145,29 @@ sequenceDiagram
   RA->>L: POST /retailer/claim {gift_id}
 ```
 
+**Server-to-server variant (phone-verified, no retailer session):** YourApp's
+backend can scan on the retailer's behalf without the SSO exchange:
+
+```mermaid
+sequenceDiagram
+  actor R as Retailer
+  participant RA as YourApp
+  participant RB as YourApp Backend
+  participant L as Loyalty API
+  R->>RA: Scan a QR sticker
+  RA->>RB: code (+ retailer's phone, GPS)
+  RB->>L: POST /yourapp/qr/lookup {code}  (X-API-Key)
+  L-->>RB: product, points, available/redeemed
+  RB->>L: POST /yourapp/scan {phone, code, lat?, lng?}  (X-API-Key)
+  L-->>RB: points awarded + new balance
+  RB-->>RA: show result
+```
+
+The retailer is resolved by the **phone number registered in loyalty**
+(imported from YourApp data), matched on the last 10 digits within the scanned
+code's manufacturer. Auth is the shared `YOURAPP_API_KEY` (`X-API-Key`
+header, server-side only; unset → `503`).
+
 ## 7. Trust boundaries
 
 ```mermaid
@@ -172,7 +200,12 @@ Key boundary rules:
   data, authenticated by their own loyalty session.
 - **Retailer identity at scan time comes only from the loyalty token**, never
   from the request body — points can only be credited to the authenticated
-  retailer.
+  retailer. (On the server-to-server `/yourapp/scan` path the identity is the
+  registered phone number, but the caller is YourApp's **backend**
+  authenticated by `YOURAPP_API_KEY` — still never a client device, and the
+  phone lookup is scoped to the scanned code's manufacturer.)
+- **`YOURAPP_API_KEY` lives only on YourApp's backend and the Loyalty env**,
+  never in a mobile app build.
 - **Cross-tenant isolation:** every owned row carries `manufacturer_id`; a
   retailer belongs to exactly one manufacturer; cross-manufacturer scans/claims
   are rejected.

@@ -19,7 +19,9 @@
 - **Content type:** `application/json` for all request bodies (no multipart;
   CSV imports send the CSV as a JSON string).
 - **Auth roles:** `None` (assertion is the credential) · `M` = manufacturer
-  token · `R` = retailer token · `Admin` = super-admin token.
+  token · `R` = retailer token · `Admin` = super-admin token · `Key` =
+  YourApp shared secret in the `X-API-Key` header (server-to-server only,
+  never shipped in a mobile client).
 - All error bodies are FastAPI standard: `{ "detail": "<message>" }`. See
   [ERROR_REFERENCE](ERROR_REFERENCE.md).
 
@@ -30,6 +32,7 @@
 | SSO | `POST /auth/sso/manufacturer` | None |
 | SSO | `POST /auth/sso/retailer` | None |
 | Auth | `POST /auth/login` | None |
+| Auth | `POST /auth/vastra/send-otp` · `POST /auth/vastra/verify-otp` | None |
 | Auth | `POST /auth/logout` | M/Admin |
 | Auth | `GET /auth/me` | M/Admin |
 | Auth | `POST /auth/retailer/login` | None |
@@ -48,6 +51,8 @@
 | QR | `DELETE /qr/batches/{id}` | M |
 | QR | `GET /qr/codes/{token}/image` | None |
 | Scan | `POST /scan` | R |
+| Scan | `POST /yourapp/qr/lookup` | Key |
+| Scan | `POST /yourapp/scan` | Key |
 | Wallet | `GET /retailer/wallet` | R |
 | Rewards | `GET /retailer/shop` | R |
 | Rewards | `POST /retailer/claim` | R |
@@ -101,8 +106,20 @@ Manufacturer/super-admin password login (web panel; not used by native SSO apps)
 - **Errors:** `401 Invalid username or password` · `403 Account is blocked` (emergency lockout) · `429`.
 - **Single active session:** a successful login invalidates this account's previous token (any prior device/session gets `401` on its next call).
 
+### POST /auth/vastra/send-otp — None
+Step 1 of the panel's Vastra OTP login: Vastra texts an OTP to the organization's registered mobile.
+- **Request:** `{ "country_code": "91", "mobile": "98…", "is_resend": 0 }`
+- **Response 200:** `{ "ok": true, "message": "OTP sent" }` (Vastra's confirmation message; staging echoes the OTP in it).
+- **Errors:** `403 <Vastra's message>` (number not eligible / rejected) · `502 Vastra login service unavailable: …` (transport failure or `VASTRA_API_BASE_URL` unset) · `429`.
+
+### POST /auth/vastra/verify-otp — None
+Step 2: verify the OTP with Vastra, log the manufacturer in. Matches by `external_id` (= Vastra `organization_Id`) or **auto-provisions** the account (random throwaway password — OTP accounts log in via Vastra only). Stores Vastra's `access_token` server-side; it powers `GET /vastra/products` and is wiped on logout.
+- **Request:** `{ "country_code": "91", "mobile": "98…", "otp": "1234" }`
+- **Response 200:** same body as `/auth/login` — `{ "token", "display_name", "username", "is_admin" }` (single active session applies).
+- **Errors:** `401 <Vastra's message>` (bad/expired OTP) · `403 Account is blocked` · `502 Vastra login service unavailable: …` · `429`.
+
 ### POST /auth/logout — Auth M/Admin
-- **Request:** none. **Response 200:** `{ "ok": true }` (deletes the bearer token).
+- **Request:** none. **Response 200:** `{ "ok": true }` (deletes the bearer token **and** the stored Vastra `access_token`).
 
 ### GET /auth/me — Auth M/Admin
 - **Response 200:** `{ "id": 1, "username": "acme", "display_name": "Acme Textiles", "is_admin": false }`
@@ -155,8 +172,10 @@ Password login for retailers (dev/test; production retailer access is SSO-only).
   product-list API server-side (`app/vastra_client.py`) and merges in each
   product's stored points override. The panel never calls Vastra directly.
 - **Response 200:** `[{ "external_id": "VP-1", "name": "Silk Saree", "sku": "SS-001", "points": 50 }]`
-- **Errors:** `502 Vastra product service unavailable: <detail>` (Vastra
-  unreachable, or `VASTRA_API_BASE_URL` unset) · `401`.
+- **Auth note:** requires a **Vastra OTP session** — the stored
+  `vastra_access_token` from `/auth/vastra/verify-otp` is what authenticates the
+  server-side pull.
+- **Errors:** `409 No Vastra session — log in with Vastra OTP to load the product catalog` (password-login session, or token wiped by logout) · `502 Vastra rejected the product request: <Vastra's message> — logging out and back in refreshes the Vastra session` · `502 Vastra product service unavailable: <detail>` (Vastra unreachable, or `VASTRA_API_BASE_URL` unset) · `401`.
 
 ### PUT /vastra/products/{external_id}/points — Auth M
 - **Purpose:** set/update the manufacturer's own points-per-scan value for a
@@ -247,6 +266,49 @@ Discards a batch and its codes. **Errors:** `404 Batch not found`.
 `scheme` is `null` when no active scheme applies. For a box (parent) code,
 `is_box: true` and `items_registered` = number of child codes credited.
 - **Errors:** `404 Invalid code` (unknown **or** cross-manufacturer — intentionally identical) · `409 Code already redeemed` / `Box already redeemed` · `401` · `429`. See [QR_WORKFLOW](QR_WORKFLOW.md).
+
+### POST /yourapp/qr/lookup — Auth Key
+- **Purpose:** read-only code preview for YourApp's backend — what the code is
+  worth and whether it was already scanned. **Never redeems**, changes nothing.
+  For the YourApp UI/backend only; not shown raw to retailers.
+- **Auth:** `X-API-Key: <YOURAPP_API_KEY>` header. **Rate limit:** `RL_SCAN`.
+- **Request:** `{ "code": "<QR token or 6-char manual code>" }`
+- **Response 200:**
+```json
+{
+  "status": "available",
+  "is_box": false, "items": 1,
+  "product": { "external_id": "VP-9281", "name": "Silk Saree", "sku": "SS-001" },
+  "base_points": 50, "bonus_points": 25, "total_points": 75,
+  "scheme": { "id": 2, "name": "Diwali Bonus" },
+  "redeemed_at": null, "redeemed_by_shop": null
+}
+```
+  `status` is `redeemed` once scanned (`redeemed_at`/`redeemed_by_shop` filled).
+  Points are **per item**; for a box (`is_box: true`) each of the `items`
+  children credits `total_points`. `bonus_points` reflects the best scheme
+  active **right now** — the credited bonus is decided at scan time.
+- **Errors:** `404 Invalid code` · `401 Invalid API key` · `503 YourApp integration is not configured` · `429`.
+
+### POST /yourapp/scan — Auth Key
+- **Purpose:** scan on behalf of a retailer, called server-to-server by
+  YourApp's backend. The retailer is identified by **phone number**, verified
+  against the phone registered in the loyalty DB (imported from YourApp data
+  via `POST /retailers/import`) and scoped to the scanned code's manufacturer —
+  a phone can never credit across tenants.
+- **Auth:** `X-API-Key` header. **Rate limit:** `RL_SCAN` (per caller IP —
+  raise the env var for bulk volume).
+- **Request:** `{ "phone": "+91 98765 43210", "code": "a1b2c3…", "lat": 26.91, "lng": 75.78 }`
+  (`lat`/`lng` optional, separate fields; phone matching is on the last 10
+  digits, so `+91`/`0` prefixes, spaces, and dashes are all tolerated).
+- **Response 200:** identical shape to `POST /scan` above.
+- **Side effect:** when `lat`/`lng` are sent, the retailer's shop pin, city,
+  and street address are refreshed (latest wins) exactly like
+  `POST /retailer/location`; best-effort, never fails the scan.
+- **Errors:** `404 Invalid code` · `403 Phone number not registered` ·
+  `403 Account is blocked` · `409 Multiple retailers share this phone number` ·
+  `409 Code already redeemed` / `Box already redeemed` ·
+  `422 Invalid phone number` · `401 Invalid API key` · `503` not configured · `429`.
 
 ---
 
