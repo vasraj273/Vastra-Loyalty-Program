@@ -52,6 +52,13 @@ export default function Claims() {
     get(`/claims?${params}`).then(setData).catch((e) => setError(e.message))
   }, [filters, page, refresh])
 
+  // Auto-dismiss the toast so it doesn't linger over the table.
+  useEffect(() => {
+    if (!notice && !actionError) return
+    const t = setTimeout(() => { setNotice(null); setActionError(null) }, 5000)
+    return () => clearTimeout(t)
+  }, [notice, actionError])
+
   const doLookup = async () => {
     if (!lookupCode.trim()) return
     setBusy(true)
@@ -153,6 +160,17 @@ export default function Claims() {
 
   return (
     <div className="claims">
+      {/* Fixed toast so a reverse triggered from a row deep in the scrolled
+          list shows its result (success or error) where the user is looking,
+          not off-screen at the top of the page. */}
+      {(notice || actionError) && (
+        <div
+          className={`toast ${actionError ? 'toast-err' : 'toast-ok'}`}
+          onClick={() => { setNotice(null); setActionError(null) }}
+        >
+          {actionError || notice}
+        </div>
+      )}
       <h2 className="page-title">Claims &amp; Redemptions</h2>
 
       {/* Find a specific scan by sticker code (full QR token or 6-char
@@ -172,8 +190,6 @@ export default function Claims() {
         <button className="btn-secondary" disabled={busy || !lookupCode.trim()} onClick={doLookup}>
           Look up
         </button>
-        {notice && <span className="sub">{notice}</span>}
-        {actionError && <span className="error" style={{ margin: 0 }}>{actionError}</span>}
       </div>
 
       {lookup && (

@@ -1,0 +1,254 @@
+==========================================================
+ LOYALTY SCAN API  —  for the YourApp backend team
+==========================================================
+
+Two APIs for scanning loyalty QR codes from YourApp.
+Call them from your BACKEND SERVER only — the API key must
+never be put inside the mobile app.
+
+Base URL:
+    https://vastra-loyalty.onrender.com
+
+Headers (required on both APIs):
+    Content-Type : application/json
+    X-API-Key    : <secret key — shared with you privately>
+
+All requests and responses are JSON.
+Every error looks like:  { "detail": "<message>" }
+
+
+----------------------------------------------------------
+ API 1 — PREVIEW A CODE  (optional, before redeeming)
+----------------------------------------------------------
+
+    POST /yourapp/qr/lookup
+
+Tells you what a code is worth and whether it was already
+scanned. Read-only — it never redeems anything, so it is
+safe to call every time the camera reads a QR.
+
+REQUEST BODY:
+
+    {
+      "code": "3f9c2a..."
+    }
+
+"code" = the token at the end of the QR link
+(.../web/scan/<token>), OR the 6-character manual code
+printed under the QR. Dashes, spaces, and small/capital
+letters do not matter.
+
+RESPONSE (200 OK):
+
+    {
+      "status": "available",
+      "is_box": false,
+      "items": 1,
+      "product": {
+        "external_id": "VP-9281",
+        "name": "Silk Saree",
+        "sku": "SS-001"
+      },
+      "base_points": 50,
+      "bonus_points": 25,
+      "total_points": 75,
+      "scheme": { "id": 2, "name": "Diwali Bonus" },
+      "redeemed_at": null,
+      "redeemed_by_shop": null
+    }
+
+Notes:
+- "status" becomes "redeemed" once the code is scanned;
+  then "redeemed_at" and "redeemed_by_shop" are filled in.
+- Points are PER ITEM. For a box sticker ("is_box": true),
+  each of the "items" children earns "total_points"
+  (example: a 12-item box = 12 x total_points).
+- "bonus_points" shows the bonus active right now; the
+  final bonus is decided at the moment of the real scan.
+
+
+----------------------------------------------------------
+ API 2 — REDEEM A SCAN  (this one gives the points)
+----------------------------------------------------------
+
+    POST /yourapp/scan
+
+REQUEST BODY:
+
+    {
+      "phone": "+91 98765 43210",
+      "code":  "3f9c2a...",
+      "lat":   26.9124,
+      "lng":   75.7873
+    }
+
+Field by field:
+- "phone" : the retailer's registered mobile number in
+            YourApp. We match on the LAST 10 DIGITS, so
+            +91, a leading 0, spaces and dashes are all
+            fine.
+- "code"  : same as API 1 (QR token or manual code).
+- "lat" / "lng" : optional. The GPS location of the scan,
+            as two separate decimal numbers. Please send
+            them when available — they power the
+            manufacturer's scan map.
+
+RESPONSE (200 OK):
+
+    {
+      "redeemed": true,
+      "is_box": false,
+      "items_registered": 1,
+      "product": {
+        "external_id": "VP-9281",
+        "name": "Silk Saree",
+        "sku": "SS-001"
+      },
+      "points_awarded": 75,
+      "base_points": 50,
+      "bonus_points": 25,
+      "scheme": { "id": 2, "name": "Diwali Bonus" },
+      "retailer": {
+        "id": 12,
+        "shop_name": "Kumar Sarees",
+        "region": "Jaipur"
+      },
+      "new_balance": 555
+    }
+
+Show "points_awarded" and "new_balance" to the retailer as
+the success screen. For a box, "items_registered" = number
+of items credited, and the points fields are totals across
+all of them.
+
+
+----------------------------------------------------------
+ ERRORS TO HANDLE
+----------------------------------------------------------
+
+HTTP 404  "Invalid code"
+    The code does not exist (or belongs to another brand).
+    Show: "This code isn't valid."
+
+HTTP 409  "Code already redeemed" / "Box already redeemed"
+    Already scanned earlier. A normal situation, not a bug.
+    (Use API 1 to see who scanned it and when.)
+
+HTTP 403  "Phone number not registered"
+    This phone is not onboarded under the code's
+    manufacturer. Show: "Your shop isn't set up for
+    rewards yet — contact the manufacturer."
+
+HTTP 403  "Account is blocked"
+    The retailer was disabled by the admin.
+
+HTTP 409  "Multiple retailers share this phone number"
+    A data problem on our side — report it to us.
+
+HTTP 422  "Invalid phone number"
+    Fewer than 10 digits after cleanup.
+
+HTTP 401  "Invalid API key"
+    Wrong or missing X-API-Key header. A config problem —
+    fix the key, do not retry as-is.
+
+HTTP 503  "YourApp integration is not configured"
+    The key is not set on our server — contact us.
+
+HTTP 429  (rate limited)
+    Too many calls too fast. Wait a moment and retry.
+
+
+----------------------------------------------------------
+ IMPORTANT NOTES
+----------------------------------------------------------
+
+1. Do NOT blind-retry the scan call after a timeout —
+   first call API 1 (lookup) to check whether the scan
+   actually went through.
+
+2. QR codes never expire. Only the bonus schemes are
+   time-bound (the bonus simply becomes 0 when no scheme
+   is active).
+
+3. A code can be credited only ONCE, ever. Duplicate /
+   simultaneous scans are rejected by our server.
+
+4. The X-API-Key must stay on your backend server only.
+   Never ship it inside the Android/iOS app.
+
+
+----------------------------------------------------------
+ QUICK TEST (curl)
+----------------------------------------------------------
+
+Preview a code:
+
+    curl -s -X POST https://vastra-loyalty.onrender.com/yourapp/qr/lookup \
+      -H "Content-Type: application/json" \
+      -H "X-API-Key: <key>" \
+      -d '{"code": "<qr token or manual code>"}'
+
+Redeem a scan:
+
+    curl -s -X POST https://vastra-loyalty.onrender.com/yourapp/scan \
+      -H "Content-Type: application/json" \
+      -H "X-API-Key: <key>" \
+      -d '{"phone": "9876543210", "code": "<code>", "lat": 26.91, "lng": 75.78}'
+
+----------------------------------------------------------
+ TEST DATA  (sandbox — safe to use freely)
+----------------------------------------------------------
+
+These belong to a dummy manufacturer ("Rangoli Fabrics")
+created only for testing. Scans here do not touch any real
+brand's data.
+
+Test retailer (use this phone in /yourapp/scan):
+
+    Shop:  Malhotra Sarees
+    Phone: 9895822412
+
+Two more registered test shops, if needed:
+
+    Kapoor Cloth House : 9824942603
+    Mehta Textiles     : 9813356886
+
+Test QR codes ("Test Saree", 10 points each).
+Use either the short code or the long token — both work
+as "code" in the APIs:
+
+    1)  MF5NWA   a2d98d0034b448c8ab4ee0d0980c2304
+    2)  VZZBUM   b1e7edaaff09496db0d8f9dc10c9d543
+    3)  NM2Q7S   6d9cdd319e9e42fc9410511e139de065
+    4)  YDSCH2   da91124677224b8680bbed43e772b1a7
+    5)  EJ3GZK   156f241861754d5586864768ad04016e
+
+Suggested test sequence:
+
+    1. POST /yourapp/qr/lookup with code MF5NWA
+       -> "Test Saree", total_points 10, status "available"
+
+    2. POST /yourapp/scan with phone 9895822412 + MF5NWA
+       -> redeemed: true, points_awarded: 10, new_balance
+
+    3. Repeat step 2 with the same code
+       -> 409 "Code already redeemed"
+
+    4. POST /yourapp/qr/lookup with MF5NWA again
+       -> status "redeemed", redeemed_by_shop "Malhotra Sarees"
+
+    5. POST /yourapp/scan with phone 9999999999 (NOT
+       registered) + a fresh code
+       -> 403 "Phone number not registered"
+
+    6. POST /yourapp/scan with a made-up code
+       -> 404 "Invalid code"
+
+Note: each code works only ONCE (that is the whole point
+of the system) — 5 codes are provided so you can repeat
+the full flow a few times. Ask us for more any time.
+
+==========================================================
+ END
+==========================================================

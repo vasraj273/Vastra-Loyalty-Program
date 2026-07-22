@@ -931,6 +931,23 @@ th.actions-col { text-align: right; }
 
 .modal .btn-row { margin-top: 6px; }
 
+/* ── toast: fixed feedback visible regardless of scroll position ── */
+.toast {
+  position: fixed;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 150;
+  max-width: min(92vw, 560px);
+  padding: 12px 18px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 8px 28px rgba(17, 33, 52, 0.22);
+}
+.toast-ok { background: var(--leaf); color: #fff; }
+.toast-err { background: var(--madder); color: #fff; }
+
 /* ── confirmation dialog (stacks above form modals) ── */
 .confirm-backdrop { z-index: 200; }
 .confirm-modal { max-width: 380px; }
