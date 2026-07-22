@@ -666,6 +666,21 @@ def list_products(user: dict = Depends(current_manufacturer)):
 # still controls the loyalty points value per product, stored locally in
 # product_points and merged onto Vastra's live list below.
 
+# ponytail: TEMP sample catalog for testing the QR-generate → scan → redeem
+# flow while Vastra's real product API isn't wired up yet. Returned by
+# /vastra/products only when the account has no Vastra session (the current
+# state for every account). Delete this list AND the fallback branch below to
+# restore the "409 — log in with Vastra OTP" behaviour.
+_SAMPLE_PRODUCTS = [
+    {"external_id": "SAMPLE-001", "name": "Banarasi Silk Saree",
+     "sku": "BNS-SILK-01", "points": 100},
+    {"external_id": "SAMPLE-002", "name": "Cotton Handloom Kurta",
+     "sku": "CTN-KURTA-02", "points": 50},
+    {"external_id": "SAMPLE-003", "name": "Chanderi Dupatta",
+     "sku": "CHN-DUP-03", "points": 75},
+]
+
+
 @app.get("/vastra/products")
 def list_vastra_products(user: dict = Depends(current_manufacturer)):
     with get_db() as db:
@@ -674,19 +689,19 @@ def list_vastra_products(user: dict = Depends(current_manufacturer)):
             (user["id"],)).fetchone()
     vastra_token = row["vastra_access_token"] if row else None
     if not vastra_token:
-        # Password-login accounts (or a session that outlived a logout wipe)
-        # have no Vastra credential to pull the catalog with.
-        raise HTTPException(
-            409, "No Vastra session — log in with Vastra OTP to load the "
-                 "product catalog")
-    try:
-        products = fetch_vastra_products(vastra_token)
-    except VastraRejection as exc:
-        raise HTTPException(
-            502, f"Vastra rejected the product request: {exc.message} — "
-                 "logging out and back in refreshes the Vastra session")
-    except VastraApiError as exc:
-        raise HTTPException(502, f"Vastra product service unavailable: {exc}")
+        # ponytail: TEMP — see _SAMPLE_PRODUCTS above. Normally this returns
+        # 409 (no Vastra credential to pull the catalog with).
+        products = _SAMPLE_PRODUCTS
+    else:
+        try:
+            products = fetch_vastra_products(vastra_token)
+        except VastraRejection as exc:
+            raise HTTPException(
+                502, f"Vastra rejected the product request: {exc.message} — "
+                     "logging out and back in refreshes the Vastra session")
+        except VastraApiError as exc:
+            raise HTTPException(
+                502, f"Vastra product service unavailable: {exc}")
     with get_db() as db:
         overrides = {
             r["product_external_id"]: r["points"]
@@ -694,7 +709,7 @@ def list_vastra_products(user: dict = Depends(current_manufacturer)):
                 "SELECT product_external_id, points FROM product_points "
                 "WHERE manufacturer_id = ?", (user["id"],))
         }
-    return [{**p, "points": overrides.get(p["external_id"], 0)}
+    return [{**p, "points": overrides.get(p["external_id"], p.get("points", 0))}
             for p in products]
 
 
