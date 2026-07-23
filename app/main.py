@@ -1014,6 +1014,13 @@ def transfer_points(body: TransferIn,
         }
 
 
+@app.get("/retailer/points")
+def retailer_points(retailer: dict = Depends(current_retailer)):
+    """Just the logged-in retailer's total points — nothing else."""
+    with get_db() as db:
+        return {"total_points": _balance(db, retailer["id"])}
+
+
 @app.get("/retailer/wallet")
 def retailer_wallet(retailer: dict = Depends(current_retailer)):
     """The logged-in retailer's balance and transaction history."""
@@ -1711,6 +1718,11 @@ class YourAppLookupIn(BaseModel):
     code: str = Field(min_length=1, max_length=64)
 
 
+class YourAppPointsIn(BaseModel):
+    phone: str = Field(min_length=10, max_length=20,
+                       description="Retailer's registered phone (as in YourApp)")
+
+
 @app.post("/yourapp/qr/lookup")
 @limiter.limit(RL_SCAN)
 def yourapp_qr_lookup(request: Request, body: YourAppLookupIn,
@@ -1752,6 +1764,29 @@ def yourapp_qr_lookup(request: Request, body: YourAppLookupIn,
         "redeemed_at": row["redeemed_at"],
         "redeemed_by_shop": redeemed_by_shop,
     }
+
+
+@app.post("/yourapp/points")
+@limiter.limit(RL_SCAN)
+def yourapp_points(request: Request, body: YourAppPointsIn,
+                   _key: None = Depends(require_yourapp_key)):
+    """Total points balance for a retailer, called by YourApp's backend.
+    Identified by phone (as in YourApp) — no code, so tenancy is resolved by
+    the phone alone: unique match required across all manufacturers."""
+    want = _norm_phone(body.phone)
+    if len(want) < 10:
+        raise HTTPException(422, "Invalid phone number")
+    with get_db() as db:
+        matches = [dict(r) for r in db.execute(
+            "SELECT id, blocked FROM retailers WHERE phone IS NOT NULL")
+            if _norm_phone(r["phone"]) == want]
+        if not matches:
+            raise HTTPException(403, "Phone number not registered")
+        if len(matches) > 1:
+            raise HTTPException(409, "Multiple retailers share this phone number")
+        if matches[0]["blocked"]:
+            raise HTTPException(403, "Account is blocked")
+        return {"total_points": _balance(db, matches[0]["id"])}
 
 
 @app.post("/yourapp/scan")

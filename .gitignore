@@ -13,6 +13,7 @@ qr_api.db
 
 # tooling
 CLAUDE.md
+vault/
 .claude-flow/
 .swarm/
 ruvector.db

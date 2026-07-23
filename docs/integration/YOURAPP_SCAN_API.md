@@ -88,6 +88,32 @@ Response `200`:
 For a box, `items_registered` = number of items credited and the points
 fields are the totals across them.
 
+## 2b. Get a retailer's total points
+
+`POST /yourapp/points`
+
+Returns just the retailer's current points balance — nothing else. Identified
+by phone (same matching as the scan endpoint). Read-only.
+
+Request:
+```json
+{ "phone": "+91 98765 43210" }
+```
+
+Response `200`:
+```json
+{ "total_points": 555 }
+```
+- `total_points` is the live wallet balance (points earned from scans minus
+  gifts redeemed, etc.) — always current.
+- Unlike scan, there's no code here, so the phone is matched across **all**
+  manufacturers. If the same phone is registered to two retailers we return
+  `409` (data problem — report it) instead of guessing.
+
+Errors: `403 Phone number not registered`, `403 Account is blocked`,
+`409 Multiple retailers share this phone number`, `422 Invalid phone number`,
+`401 Invalid API key`, `503 YourApp integration is not configured`.
+
 ## 3. Errors to handle
 
 | HTTP | `detail` | Meaning / what to show |
