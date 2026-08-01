@@ -26,6 +26,7 @@ export default function Products() {
   const [pendingCsv, setPendingCsv] = useState(null) // awaiting update/replace
   const [pageSize, setPageSize] = useState(PAGE_SIZES[0])
   const [page, setPage] = useState(0)
+  const [query, setQuery] = useState('')
   const fileRef = useRef(null)
   const confirm = useConfirm()
 
@@ -33,9 +34,18 @@ export default function Products() {
   const attrCols = catalog?.columns ?? []
   const imported = catalog?.source === 'import'
 
-  const pages = Math.max(1, Math.ceil(products.length / pageSize))
+  // Name or product code only — the CSV's own columns are deliberately not
+  // searched, so a query can't match something the manufacturer can't see.
+  const q = query.trim().toLowerCase()
+  const filtered = q
+    ? products.filter((p) =>
+        `${p.name ?? ''} ${p.sku ?? ''}`.toLowerCase().includes(q),
+      )
+    : products
+
+  const pages = Math.max(1, Math.ceil(filtered.length / pageSize))
   const from = page * pageSize
-  const visible = products.slice(from, from + pageSize)
+  const visible = filtered.slice(from, from + pageSize)
 
   // Deleting or re-importing can shrink the list out from under the current
   // page; land on the last real one rather than an empty table.
@@ -169,8 +179,9 @@ export default function Products() {
         ...attrCols.map((c) => ({ label: c, key: c })),
         { label: 'Points', key: 'points' },
       ],
+      // Exports what the search is currently showing, not just the page.
       // Fixed fields last so they win if a CSV column shared their key.
-      products.map((p) => ({
+      filtered.map((p) => ({
         ...p.attrs,
         name: p.name,
         sku: p.sku,
@@ -212,8 +223,9 @@ export default function Products() {
           </button>
           <button
             className="btn-secondary"
-            disabled={!products.length}
+            disabled={!filtered.length}
             onClick={exportCsv}
+            title={q ? `Exports the ${filtered.length} matching product(s)` : undefined}
           >
             ↓ Export CSV
           </button>
@@ -260,10 +272,26 @@ export default function Products() {
       {products.length > 0 && (
         <div className="panel-card table-card">
           <div className="table-toolbar">
+            <input
+              className="search"
+              placeholder="Search product name or code…"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setPage(0)
+              }}
+            />
             <span>
-              Showing <strong>{from + 1}</strong>–
-              <strong>{from + visible.length}</strong> of{' '}
-              <strong>{products.length}</strong>
+              {visible.length > 0 ? (
+                <>
+                  Showing <strong>{from + 1}</strong>–
+                  <strong>{from + visible.length}</strong> of{' '}
+                  <strong>{filtered.length}</strong>
+                </>
+              ) : (
+                <>No matches</>
+              )}
+              {q && ` (filtered from ${products.length})`}
             </span>
             <label>
               Rows{' '}
@@ -393,6 +421,13 @@ export default function Products() {
                     </tr>
                   )
                 })}
+                {visible.length === 0 && (
+                  <tr>
+                    <td className="empty" colSpan={attrCols.length + 4}>
+                      No products match “{query.trim()}”.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
