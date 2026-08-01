@@ -1,0 +1,18 @@
+{
+  "recommendations": [
+    // Python: language server, debugger, and linting for app/ + tests/
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "ms-python.debugpy",
+    "charliermarsh.ruff",
+
+    // Panel: React + Vite frontend in panel/
+    "dbaeumer.vscode-eslint",
+
+    // Exercise the API without leaving the editor (alternative to /docs)
+    "humao.rest-client",
+
+    // SQLite viewer for the local qr_api.db dev database
+    "qwtel.sqlite-viewer"
+  ]
+}

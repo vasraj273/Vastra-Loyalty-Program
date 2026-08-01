@@ -109,7 +109,15 @@ def verify_login_otp(country_code: str, mobile: str, otp: str) -> dict:
 
 
 def fetch_vastra_products(access_token: str) -> list[dict]:
-    """Returns [{"external_id": str, "name": str, "sku": str}, ...] for the
+    """DORMANT — nothing calls this. The product catalog is CSV-imported by the
+    manufacturer (see /catalog/products in app/main.py), because get-design-ids
+    returns no design *name* and so could only ever supply design numbers as
+    product names. Kept, not deleted: the contract below is verified against
+    live staging, and reconnecting is a matter of calling this again once
+    Vastra exposes names. Vastra OTP login is unaffected and still stores the
+    access_token this would need.
+
+    Returns [{"external_id": str, "name": str, "sku": str}, ...] for the
     logged-in organization, using its stored access_token.
 
     get-design-ids is the confirmed working list endpoint; it returns

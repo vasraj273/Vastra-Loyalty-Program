@@ -1,0 +1,45 @@
+{
+  // Point the editor at the project venv so imports resolve and the
+  // test explorer works.
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": ["tests"],
+  "python.analysis.typeCheckingMode": "basic",
+
+  // NOTE: format-on-save is deliberately OFF. This repo has no formatter
+  // config, and running black/ruff-format across app/main.py (~3.8k lines)
+  // would produce an enormous unrelated diff and rewrap the hand-formatted
+  // SQL string literals that CLAUDE.md documents as load-bearing
+  // (sqlite-style placeholders, no stray '%' or ';'). Format by hand, or
+  // agree on a formatter repo-wide first.
+  "editor.formatOnSave": false,
+
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true
+  },
+  "files.watcherExclude": {
+    "**/panel/node_modules/**": true,
+    "**/panel/dist/**": true,
+    "**/.venv/**": true
+  },
+  "search.exclude": {
+    "**/panel/node_modules": true,
+    "**/panel/dist": true,
+    "**/.venv": true,
+    "**/panel/package-lock.json": true
+  },
+
+  "[python]": {
+    "editor.tabSize": 4,
+    "editor.rulers": [79]
+  },
+  "[javascript]": { "editor.tabSize": 2 },
+  "[javascriptreact]": { "editor.tabSize": 2 },
+  "[css]": { "editor.tabSize": 2 },
+  "[html]": { "editor.tabSize": 2 },
+
+  // The local dev database - open with the SQLite Viewer extension.
+  "sqlite.setupDatabase": "${workspaceFolder}/qr_api.db"
+}

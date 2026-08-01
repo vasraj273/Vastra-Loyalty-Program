@@ -11,6 +11,9 @@ panel/dist/
 qr_api.db
 *.pdf
 
+# secrets - real values only; .env.example is committed as documentation
+.env
+
 # tooling
 CLAUDE.md
 vault/

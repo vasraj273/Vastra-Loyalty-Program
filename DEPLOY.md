@@ -10,7 +10,8 @@ One container serves everything: API + admin panel (`/panel`) + webview pages (`
 4. Add environment variable:
    - `QR_BASE_URL` = `https://<your-service>.onrender.com/web/scan`
    - `SSO_SECRET` = a long random string — only needed to enable native-app SSO (see below); omit for a plain demo.
-   - `VASTRA_API_BASE_URL` / `VASTRA_API_KEY` — power the panel's **Vastra OTP login** and product picker (see "Vastra OTP login & product catalog" below); omit for a plain demo (OTP login and the Products tab fail closed with a 502 until set; password login keeps working).
+   - `VASTRA_API_BASE_URL` / `VASTRA_API_KEY` — power the panel's **Vastra OTP login** (see below); omit for a plain demo (OTP login fails closed with a 502 until set; password login keeps working). These do **not** affect the product catalog.
+   - `USE_SAMPLE_PRODUCTS` = `0` for a real client — otherwise the Products tab shows three built-in demo products until the manufacturer imports their CSV. Leave unset (`1`) only for demos/testing.
    - `YOURAPP_API_KEY` = a long random string shared with YourApp's backend — enables the server-to-server scan endpoints (`/yourapp/qr/lookup`, `/yourapp/scan`, see "YourApp server-to-server scan" below); omit and they return `503`.
 5. Deploy. First boot auto-seeds demo data (`admin/admin123`, `surya/surya123`, `heritage/heritage123`).
 
@@ -118,20 +119,20 @@ changing the env var. See `docs/integration/API_REFERENCE.md`.
 
 Manufacturers log into the panel with **Vastra mobile + OTP**
 (`/auth/vastra/send-otp` → `/auth/vastra/verify-otp`); the verify step stores
-Vastra's per-org `access_token` server-side, and that token is what the
-Products tab / QR generation use to pull the design catalog
-(`GET /vastra/products` — password-only sessions get a `409` there). Env:
+Vastra's per-org `access_token` server-side. **Nothing reads that token today**
+— the product catalog is imported from the manufacturer's own CSV, not pulled
+from Vastra (`get-design-ids` returns no product names). It is kept for a
+future catalog reconnect. Env:
 **`VASTRA_API_BASE_URL`** (Vastra's API origin, e.g. the staging
 `…:3000/api/v2` host — the contract was verified live 2026-07-16),
 **`VASTRA_API_KEY`** (`api-key` header; staging value `1`), optional
 `VASTRA_API_TIMEOUT` (seconds, default `10`) and `VASTRA_UDID` /
 `VASTRA_DEVICE_TYPE` (Vastra requires device headers; fixed defaults are
 accepted). All calls are server-side only (`app/vastra_client.py`) — nothing
-Vastra-related is ever sent to the browser. Unset base URL → OTP login and
-`GET /vastra/products` fail closed with a `502`. The manufacturer's
-per-product points value is loyalty's own data (`product_points` table), not
-Vastra's — it's set/edited from the Products tab and merged onto Vastra's
-list at read time. See `docs/integration/PRODUCT_INTEGRATION.md`.
+Vastra-related is ever sent to the browser. Unset base URL → OTP login fails
+closed with a `502` (password login is unaffected). The product catalog lives
+in loyalty's own `product_points` table, imported via the Products tab's
+**Import CSV** button. See `docs/integration/PRODUCT_INTEGRATION.md`.
 
 ## Before real (non-demo) use
 
@@ -139,6 +140,7 @@ list at read time. See `docs/integration/PRODUCT_INTEGRATION.md`.
 - Restrict CORS origins to the real app domains.
 - Set a strong `SSO_SECRET` (and keep it out of source control) if native-app SSO is used.
 - Point `VASTRA_API_BASE_URL`/`VASTRA_API_KEY` at Vastra's **production** API (the implemented contract was verified against staging 2026-07-16; confirm the production origin + api-key with Vastra's team).
+- Set `USE_SAMPLE_PRODUCTS=0` so the Products tab prompts for a CSV import instead of listing the three built-in demo products.
 - Set a strong `YOURAPP_API_KEY` and share it only with YourApp's backend; make sure every retailer has their YourApp phone number imported (phone identifies the retailer on `/yourapp/scan`).
 - Rotate the Neon credentials if the connection string was shared.
 

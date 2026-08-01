@@ -38,8 +38,8 @@ def clean(appmod):
     with get_db() as conn:
         for t in ("gift_claims", "points_ledger", "qr_codes", "qr_batches",
                   "scheme_products", "schemes", "retailer_tokens", "gifts",
-                  "retailers", "distributors", "products", "auth_tokens",
-                  "manufacturers"):
+                  "retailers", "distributors", "products", "product_points",
+                  "auth_tokens", "manufacturers"):
             conn.execute(f"DELETE FROM {t}")
     yield
 
@@ -70,9 +70,12 @@ def seed(appmod):
             "INSERT INTO products (manufacturer_id, name, sku, loyalty_points)"
             " VALUES (?, ?, ?, ?)", (mid, "Saree", "SKU-1", 10))
         pid = cur.lastrowid
+        # manufacturer_id is required: under the Product SoR model batch tenancy
+        # lives on qr_batches, and _redeem_code rejects a scan whose batch
+        # manufacturer does not match the retailer's (uniform 404).
         cur = conn.execute(
-            "INSERT INTO qr_batches (product_id, quantity, points_per_code)"
-            " VALUES (?, ?, ?)", (pid, 1, 10))
+            "INSERT INTO qr_batches (product_id, quantity, points_per_code,"
+            " manufacturer_id) VALUES (?, ?, ?, ?)", (pid, 1, 10, mid))
         bid = cur.lastrowid
         conn.execute(
             "INSERT INTO qr_codes (token, manual_code, batch_id, is_parent, parent_token)"

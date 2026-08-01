@@ -591,6 +591,82 @@ body {
 
 .claims-table { font-size: 13px; }
 
+/* ── product catalog table ──
+   The middle columns come from the manufacturer's CSV, so there can be many of
+   them and they can be wide. Product name + code pin to the left and Points +
+   Actions pin to the right, leaving only the CSV's own columns to scroll — so
+   you can always see which product a points value belongs to, and edit it,
+   without scrolling back and forth.
+
+   Widths are set on an inner .cell wrapper rather than on the th/td: a table
+   cell's own width is only a suggestion under table-layout:auto, and the
+   sticky `left`/`right` offsets below depend on these columns being exactly
+   the width they claim. Cell padding is 10px a side, so each offset is the
+   neighbouring .cell width + 20px. */
+.catalog-scroll { overflow-x: auto; }
+.catalog-table { min-width: max-content; }
+
+.catalog-table .cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.catalog-table th.sticky-col,
+.catalog-table td.sticky-col {
+  position: sticky;
+  background: var(--card);
+  z-index: 1;
+}
+.catalog-table thead th.sticky-col { z-index: 2; }
+/* Sticky cells sit above the row, so they need the hover tint themselves. */
+.catalog-table tbody tr:hover td.sticky-col { background: var(--paper-deep); }
+.catalog-table tbody tr.editing-row td.sticky-col { background: var(--paper); }
+
+.catalog-table .col-name { left: 0; }
+.catalog-table .col-name .cell { width: 200px; }
+
+.catalog-table .col-code { left: 220px; box-shadow: 1px 0 0 var(--line); }
+.catalog-table .col-code .cell { width: 180px; }
+
+.catalog-table .col-points { right: 180px; box-shadow: -1px 0 0 var(--line); }
+.catalog-table .col-points .cell { width: 70px; text-align: right; }
+.catalog-table .col-points .inline-input { width: 100%; }
+
+.catalog-table .col-actions { right: 0; }
+.catalog-table .col-actions .cell {
+  width: 160px;
+  overflow: visible;
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+/* The CSV's own columns: readable width, never squeezed to nothing. */
+.catalog-table th:not(.sticky-col),
+.catalog-table td:not(.sticky-col) { min-width: 130px; white-space: nowrap; }
+
+/* Rows-per-page + range readout above the table. */
+.table-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--ink-soft);
+  padding-bottom: 8px;
+}
+.table-toolbar select {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--ink);
+}
+
 .bonus-split {
   font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 11px;

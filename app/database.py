@@ -176,15 +176,24 @@ CREATE TABLE IF NOT EXISTS gift_claims (
     decided_at TEXT
 );
 
--- Manufacturer-owned points value per Vastra-catalog product. Vastra is the
--- system of record for the product itself (name/sku/existence); the
--- manufacturer still controls the loyalty points value, so it's kept here
--- rather than in Vastra's data. Keyed by product_external_id, not a local
--- product row -- see docs/integration/PRODUCT_INTEGRATION.md.
+-- The manufacturer's product catalog, keyed by product_external_id rather than
+-- a local product row -- see docs/integration/PRODUCT_INTEGRATION.md.
+-- Two kinds of row live here, told apart by `source`:
+--   source = 'import' -- a product imported from the manufacturer's CSV. This
+--     is the v1 catalog: name/sku come from the CSV and every other CSV column
+--     is kept verbatim in the attrs JSON blob.
+--   source IS NULL    -- a legacy points-override for a Vastra design, from
+--     when the catalog was pulled from Vastra's get-design-ids. No name/sku.
+-- Only 'import' rows count as a catalog, so legacy rows never surface as
+-- nameless products.
 CREATE TABLE IF NOT EXISTS product_points (
     manufacturer_id INTEGER NOT NULL REFERENCES manufacturers(id),
     product_external_id TEXT NOT NULL,
     points INTEGER NOT NULL DEFAULT 0,
+    name TEXT,
+    sku TEXT,
+    attrs TEXT,     -- JSON object of the free-form CSV columns, in CSV order
+    source TEXT,    -- 'import' or NULL (legacy)
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     PRIMARY KEY (manufacturer_id, product_external_id)
 );
@@ -372,6 +381,16 @@ _MIGRATIONS = [
     # stored server-side only (never sent to the browser) and used to pull the
     # org's design list. Wiped on logout; refreshed on every OTP login.
     ("manufacturers", "vastra_access_token", "TEXT"),
+    # Manual product catalog (CSV import). name/sku come from the CSV's product
+    # name/code columns; attrs holds every other CSV column as a JSON object
+    # keyed by the original header text, so the panel renders whatever the
+    # manufacturer's file happened to contain. source = 'import' marks a real
+    # catalog row -- pre-existing rows stay NULL and keep meaning "points
+    # override for a Vastra design".
+    ("product_points", "name", "TEXT"),
+    ("product_points", "sku", "TEXT"),
+    ("product_points", "attrs", "TEXT"),
+    ("product_points", "source", "TEXT"),
 ]
 
 

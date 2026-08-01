@@ -8,15 +8,27 @@ Logins:
 Run:  .venv\\Scripts\\python seed.py
 Wipes and refills the configured database (SQLite locally, or the Postgres
 in DATABASE_URL). Run once against Neon, then the data persists.
+
+DESTRUCTIVE: reset_db() drops and rebuilds every table. Because that is
+unrecoverable against a real database, the Postgres/Neon path requires
+ALLOW_NEON=1 as an explicit opt-in (same guard as seed_extra.py). SQLite runs
+unguarded - qr_api.db is local throwaway data.
 """
 
+import os
 import random
 from datetime import date, datetime, timedelta
 
 from app.auth import hash_password
-from app.database import get_db, reset_db
+from app.database import IS_PG, get_db, reset_db
 from app.geo import coords_for
 from app.qr_service import new_manual_code, new_reference, new_token
+
+if IS_PG and os.environ.get("ALLOW_NEON") != "1":
+    raise SystemExit(
+        "DATABASE_URL is set (Postgres/Neon) but ALLOW_NEON=1 was not passed - "
+        "refusing to wipe a remote database without explicit opt-in."
+    )
 
 random.seed(7)
 

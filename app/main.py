@@ -12,6 +12,7 @@ Webview pages for the demo are served at /web/generate and /web/scan; the
 built React panel (panel/dist) is served at /panel when present.
 """
 
+import json
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -31,8 +32,9 @@ from .geo import coords_for, known_places, nearest_city, reverse_address
 from .pdf_service import build_pdf
 from .qr_service import (new_manual_code, new_reference, new_token,
                          payload_for, render_png)
-from .vastra_client import (VastraApiError, VastraRejection,
-                            fetch_vastra_products, send_login_otp,
+# fetch_vastra_products is deliberately not imported: the catalog is CSV-imported
+# now. It stays in vastra_client.py, dormant, for a future reconnect.
+from .vastra_client import (VastraApiError, VastraRejection, send_login_otp,
                             verify_login_otp)
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -643,7 +645,7 @@ def list_manufacturers(admin: dict = Depends(current_admin)):
 
 
 # ---------- products (manufacturer-scoped) ----------
-# CRUD is gone: Vastra owns the product catalog now (see /vastra/products
+# CRUD is gone: the catalog lives in product_points now (see /catalog/products
 # below). GET /products stays for legacy readers (Schemes, Claims, and the
 # /web/generate demo webview) that still key off the local table's rows —
 # no new rows are written to it going forward.
@@ -661,16 +663,23 @@ def list_products(user: dict = Depends(current_manufacturer)):
     return [dict(r) for r in rows]
 
 
-# ---------- Vastra product catalog (manufacturer-scoped) ----------
-# Vastra is the system of record for the product itself; the manufacturer
-# still controls the loyalty points value per product, stored locally in
-# product_points and merged onto Vastra's live list below.
+# ---------- product catalog (manufacturer-scoped) ----------
+# v1: the catalog is the manufacturer's OWN CSV import, stored in product_points
+# with source = 'import'. Vastra's product API is deliberately NOT a source here
+# — get-design-ids returns no product names, so it could only ever supply design
+# numbers. Vastra OTP *login* is a separate path and is unaffected by any of
+# this (it still stores vastra_access_token for a future reconnect).
+#
+# Resolution order in GET /catalog/products:
+#   1. imported rows        -> the catalog
+#   2. USE_SAMPLE_PRODUCTS  -> the hardcoded samples (testing only)
+#   3. []                   -> the panel prompts for an import
+# Never merged: one import and the samples are gone for that manufacturer.
 
-# ponytail: TEMP sample catalog for testing the QR-generate → scan → redeem
-# flow while Vastra's real product API isn't wired up yet. Returned by
-# /vastra/products only when the account has no Vastra session (the current
-# state for every account). Delete this list AND the fallback branch below to
-# restore the "409 — log in with Vastra OTP" behaviour.
+# Testing fallback so the QR-generate → scan → redeem flow works without
+# importing a CSV first. Set USE_SAMPLE_PRODUCTS=0 at go-live.
+USE_SAMPLE_PRODUCTS = _os.environ.get("USE_SAMPLE_PRODUCTS", "1") == "1"
+
 _SAMPLE_PRODUCTS = [
     {"external_id": "SAMPLE-001", "name": "Banarasi Silk Saree",
      "sku": "BNS-SILK-01", "points": 100},
@@ -680,40 +689,253 @@ _SAMPLE_PRODUCTS = [
      "sku": "CHN-DUP-03", "points": 75},
 ]
 
+# Accepted spellings for the two required columns, after _norm_header(). The
+# manufacturer's export is whatever their other system produces, so match
+# generously rather than dictating a format.
+# p_name/p_code cover the "P-Name"/"P-Code" abbreviations the client's product
+# list uses on its filter row, in case its export writes those as headers.
+_CSV_NAME_HEADERS = ("name", "product_name", "p_name", "item_name",
+                     "design_name", "product")
+_CSV_CODE_HEADERS = ("code", "product_code", "p_code", "sku", "item_code",
+                     "design_number", "style_code", "article_code")
+_CSV_POINTS_HEADERS = ("points", "loyalty_points", "points_per_scan")
+# Row-number columns are a render index that re-numbers on every export; they
+# carry no meaning once imported. "" catches headers like "#".
+_CSV_IGNORED_HEADERS = ("", "sno", "s_no", "sr_no", "serial", "no")
+# Source systems export the literal text "null" for empty cells — keep that
+# word out of the manufacturer's table.
+_CSV_NULLISH = {"null", "none", "n/a", "na", "-", "--"}
 
-@app.get("/vastra/products")
-def list_vastra_products(user: dict = Depends(current_manufacturer)):
-    with get_db() as db:
-        row = db.execute(
-            "SELECT vastra_access_token FROM manufacturers WHERE id = ?",
-            (user["id"],)).fetchone()
-    vastra_token = row["vastra_access_token"] if row else None
-    if not vastra_token:
-        # ponytail: TEMP — see _SAMPLE_PRODUCTS above. Normally this returns
-        # 409 (no Vastra credential to pull the catalog with).
-        products = _SAMPLE_PRODUCTS
-    else:
+
+def _norm_header(h: str) -> str:
+    """'Product Name' / 'PRODUCT_NAME' / 'Product  Name' -> 'product_name'."""
+    squashed = "".join(c if c.isalnum() else "_" for c in (h or "").strip().lower())
+    return "_".join(p for p in squashed.split("_") if p)
+
+
+def _clean_cell(v) -> str:
+    s = (v or "").strip()
+    return "" if s.lower() in _CSV_NULLISH else s
+
+
+def _parse_catalog_csv(text: str) -> dict:
+    """Parse a product CSV. Returns rows ready for product_points plus the
+    free-form column list (original header text, in CSV order).
+
+    A file missing a required column is rejected whole (422) rather than
+    half-imported — a catalog of nameless products can't be printed on a
+    sticker."""
+    import csv as csvmod
+    import io
+
+    reader = csvmod.DictReader(io.StringIO(text))
+    fields = [f for f in (reader.fieldnames or []) if (f or "").strip()]
+    norm = {f: _norm_header(f) for f in fields}
+    name_col = next((f for f in fields if norm[f] in _CSV_NAME_HEADERS), None)
+    code_col = next((f for f in fields if norm[f] in _CSV_CODE_HEADERS), None)
+    missing = []
+    if not name_col:
+        missing.append("a product name column (one of: "
+                       + ", ".join(_CSV_NAME_HEADERS) + ")")
+    if not code_col:
+        missing.append("a product code column (one of: "
+                       + ", ".join(_CSV_CODE_HEADERS) + ")")
+    if missing:
+        raise HTTPException(422, "CSV is missing " + " and ".join(missing))
+    points_col = next((f for f in fields if norm[f] in _CSV_POINTS_HEADERS), None)
+    attr_cols = [f for f in fields
+                 if f not in (name_col, code_col, points_col)
+                 and norm[f] not in _CSV_IGNORED_HEADERS]
+
+    by_code: dict[str, dict] = {}
+    errors: list[str] = []
+    skipped = 0
+    for i, raw in enumerate(reader, start=2):  # row 1 is the header
+        name = _clean_cell(raw.get(name_col))
+        code = _clean_cell(raw.get(code_col))
+        if not name or not code:
+            skipped += 1
+            errors.append(f"row {i}: missing product "
+                          f"{'name' if not name else 'code'}")
+            continue
+        points = 0
+        if points_col:
+            cell = _clean_cell(raw.get(points_col))
+            if cell:
+                try:
+                    points = int(float(cell))
+                except ValueError:
+                    skipped += 1
+                    errors.append(f"row {i}: points '{cell}' is not a number")
+                    continue
+        if code in by_code:
+            errors.append(f"row {i}: duplicate product code '{code}' "
+                          f"— the last row wins")
+        by_code[code] = {
+            "external_id": code, "name": name, "sku": code, "points": points,
+            "attrs": {c: _clean_cell(raw.get(c)) for c in attr_cols},
+        }
+    return {"rows": list(by_code.values()), "columns": attr_cols,
+            "errors": errors, "skipped": skipped,
+            "has_points": bool(points_col)}
+
+
+def _imported_catalog(db, mid: int) -> tuple[list[dict], list[str]]:
+    """The manufacturer's imported products + the union of their attr columns,
+    in first-seen order."""
+    rows = db.execute(
+        """SELECT product_external_id, name, sku, points, attrs
+           FROM product_points
+           WHERE manufacturer_id = ? AND source = 'import'
+           ORDER BY name, product_external_id""", (mid,)).fetchall()
+    products: list[dict] = []
+    columns: list[str] = []
+    for r in rows:
         try:
-            products = fetch_vastra_products(vastra_token)
-        except VastraRejection as exc:
-            raise HTTPException(
-                502, f"Vastra rejected the product request: {exc.message} — "
-                     "logging out and back in refreshes the Vastra session")
-        except VastraApiError as exc:
-            raise HTTPException(
-                502, f"Vastra product service unavailable: {exc}")
+            attrs = json.loads(r["attrs"]) if r["attrs"] else {}
+        except ValueError:
+            attrs = {}
+        for key in attrs:
+            if key not in columns:
+                columns.append(key)
+        products.append({
+            "external_id": r["product_external_id"], "name": r["name"],
+            "sku": r["sku"], "points": r["points"], "attrs": attrs,
+        })
+    return products, columns
+
+
+@app.get("/catalog/products")
+def list_catalog_products(user: dict = Depends(current_manufacturer)):
+    """The manufacturer's catalog: imported rows, else samples, else empty.
+    `columns` is the free-form CSV column list the panel renders between the
+    fixed name/code columns and Points."""
     with get_db() as db:
+        products, columns = _imported_catalog(db, user["id"])
+        if products:
+            return {"products": products, "columns": columns,
+                    "source": "import"}
+        if not USE_SAMPLE_PRODUCTS:
+            return {"products": [], "columns": [], "source": "empty"}
+        # Points edited on a sample are stored as a legacy (source IS NULL)
+        # override, so editing one never turns it into a catalog row.
         overrides = {
             r["product_external_id"]: r["points"]
             for r in db.execute(
                 "SELECT product_external_id, points FROM product_points "
                 "WHERE manufacturer_id = ?", (user["id"],))
         }
-    return [{**p, "points": overrides.get(p["external_id"], p.get("points", 0))}
-            for p in products]
+    return {
+        "products": [{**p, "attrs": {},
+                      "points": overrides.get(p["external_id"], p["points"])}
+                     for p in _SAMPLE_PRODUCTS],
+        "columns": [], "source": "sample",
+    }
 
 
-@app.put("/vastra/products/{external_id}/points")
+class CatalogImportIn(BaseModel):
+    csv: str = Field(min_length=1, description="Raw CSV text")
+    mode: str = Field("upsert", pattern="^(upsert|replace)$")
+
+
+@app.post("/catalog/products/import")
+@limiter.limit(RL_IMPORT)
+def import_catalog_csv(request: Request, body: CatalogImportIn,
+                       user: dict = Depends(current_manufacturer)):
+    """Import the product catalog from CSV text (sent as JSON, no multipart).
+
+    Required columns: a product name and a product code, in any of the
+    spellings above and any case. `points` is optional. Every other column is
+    kept verbatim and shown in the panel. The product code is the identity.
+
+    mode=upsert  — refresh matching codes, add new ones, delete nothing.
+                   Points set in the panel survive unless the CSV carries a
+                   points column.
+    mode=replace — drop this manufacturer's imported rows first.
+
+    Neither mode affects already-issued QR codes: qr_batches and points_ledger
+    carry immutable product name/sku snapshots."""
+    parsed = _parse_catalog_csv(body.csv)
+    mid = user["id"]
+    created = updated = 0
+    with get_db() as db:
+        if body.mode == "replace":
+            db.execute(
+                "DELETE FROM product_points WHERE manufacturer_id = ? "
+                "AND source = 'import'", (mid,))
+        existing = {
+            r["product_external_id"]: r["points"] for r in db.execute(
+                "SELECT product_external_id, points FROM product_points "
+                "WHERE manufacturer_id = ? AND source = 'import'", (mid,))
+        }
+        for row in parsed["rows"]:
+            eid = row["external_id"]
+            points = (row["points"] if parsed["has_points"]
+                      else existing.get(eid, row["points"]))
+            attrs = json.dumps(row["attrs"], ensure_ascii=False)
+            if eid in existing:
+                db.execute(
+                    """UPDATE product_points
+                       SET name = ?, sku = ?, attrs = ?, points = ?,
+                           source = 'import', updated_at = datetime('now')
+                       WHERE manufacturer_id = ? AND product_external_id = ?""",
+                    (row["name"], row["sku"], attrs, points, mid, eid))
+                updated += 1
+            else:
+                # A legacy override for the same external id would collide on
+                # the primary key; promote it into a real catalog row instead
+                # of failing the whole import.
+                db.execute(
+                    "DELETE FROM product_points WHERE manufacturer_id = ? "
+                    "AND product_external_id = ?", (mid, eid))
+                db.execute(
+                    """INSERT INTO product_points
+                       (manufacturer_id, product_external_id, points, name,
+                        sku, attrs, source)
+                       VALUES (?, ?, ?, ?, ?, ?, 'import')""",
+                    (mid, eid, points, row["name"], row["sku"], attrs))
+                created += 1
+    return {"created": created, "updated": updated,
+            "skipped": parsed["skipped"], "errors": parsed["errors"],
+            "columns": parsed["columns"]}
+
+
+@app.delete("/catalog/products")
+def delete_catalog(user: dict = Depends(current_manufacturer)):
+    """Clear the whole imported catalog (the panel's "Delete all", behind a
+    confirmation). Legacy source IS NULL rows are left alone, and already-issued
+    QR codes keep working from their own snapshots."""
+    mid = user["id"]
+    with get_db() as db:
+        row = db.execute(
+            "SELECT COUNT(*) AS n FROM product_points "
+            "WHERE manufacturer_id = ? AND source = 'import'", (mid,)).fetchone()
+        db.execute(
+            "DELETE FROM product_points WHERE manufacturer_id = ? "
+            "AND source = 'import'", (mid,))
+    return {"deleted": row["n"]}
+
+
+@app.delete("/catalog/products/{external_id}", status_code=204)
+def delete_catalog_product(external_id: str,
+                           user: dict = Depends(current_manufacturer)):
+    """Remove one imported product. Already-printed QR batches keep working —
+    they carry their own product name/sku snapshot."""
+    with get_db() as db:
+        row = db.execute(
+            "SELECT 1 FROM product_points WHERE manufacturer_id = ? "
+            "AND product_external_id = ? AND source = 'import'",
+            (user["id"], external_id)).fetchone()
+        if not row:
+            raise HTTPException(404, "Product not found")
+        db.execute(
+            "DELETE FROM product_points WHERE manufacturer_id = ? "
+            "AND product_external_id = ? AND source = 'import'",
+            (user["id"], external_id))
+    return None
+
+
+@app.put("/catalog/products/{external_id}/points")
 def set_product_points(external_id: str, body: ProductPointsIn,
                        user: dict = Depends(current_manufacturer)):
     with get_db() as db:

@@ -4,7 +4,8 @@ import { get, post, printUrl } from '../api.js'
 // In-panel QR generation — replaces the old standalone /web/generate webview so
 // the manufacturer never leaves the Products page. Sends the primary
 // /qr/generate contract (product_external_id + snapshot + points_per_code):
-// Vastra is the product catalog, so there's no local products-table lookup.
+// the catalog is the manufacturer's CSV import, so there's no products-table
+// lookup. `products` comes from GET /catalog/products.
 export default function GenerateQrModal({ products, onClose }) {
   const [productExternalId, setProductExternalId] = useState(
     products[0]?.external_id ?? '',
