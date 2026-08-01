@@ -52,12 +52,11 @@ flowchart TB
 QR generation is no longer a Vastra-App/Vastra-Backend-originated flow — the
 manufacturer logs into the Loyalty Admin Panel directly (**Vastra mobile +
 OTP**, `POST /auth/vastra/send-otp` → `/auth/vastra/verify-otp`, which also
-stores the Vastra `access_token` the product pull needs; plain password login
-still exists but gets `409 No Vastra session` on the Products tab) and
-generates codes from there. The panel's product picker is powered
-by loyalty **pulling** Vastra's product list server-side (`GET
-/vastra/products` proxies `app/vastra_client.py`); the browser panel never
-calls Vastra directly. Manufacturer SSO (`VBack` minting an assertion for
+stores the Vastra `access_token`, though nothing reads it today; plain password
+login works equally well for the catalog) and generates codes from there. The
+panel's product picker is powered by the manufacturer's **own CSV import**
+(`POST /catalog/products/import`) — loyalty does not pull products from Vastra,
+because `get-design-ids` returns no design *name*. Manufacturer SSO (`VBack` minting an assertion for
 `VApp`) still exists in the codebase but its continued purpose is unclear now
 that QR generation doesn't need it — see [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md) §8.
 
@@ -80,7 +79,7 @@ id. "Snapshot" = point-in-time copy stored in loyalty so history never changes.
 |---|---|---|---|---|
 | **Manufacturers** | Vastra | Vastra, Loyalty, Panel | Vastra (provision); Loyalty (panel password, tokens) | Ref via `external_id`; `display_name` local copy |
 | **Retailers** | Split: identity = YourApp/Vastra; loyalty profile = Loyalty | all | Upstream (identity); Loyalty (region, location, distributor) | Ref via `external_id` |
-| **Products** | **Vastra** (catalog); **Loyalty** (points value) | Vastra, Loyalty (snapshot + live pull), Panel | Vastra (catalog, pulled server-side by Loyalty); Loyalty/manufacturer (`product_points`, points only) | ✅ Ref via `product_external_id` + **snapshot**; live catalog pulled via `GET /vastra/products` (see [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md)) |
+| **Products** | **The manufacturer** (their own CSV export) | Loyalty (catalog + snapshot), Panel | Manufacturer, via `POST /catalog/products/import`; points via the panel | ✅ Ref via `product_external_id` (= product code) + **snapshot**; catalog in `product_points` where `source='import'` (see [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md)) |
 | **QR Batches** | Loyalty | Loyalty, Panel, Vastra App | Loyalty (triggered by Vastra) | Owned; embeds product snapshot |
 | **QR Codes** | Loyalty | Loyalty, scanners | Loyalty (generate; redeem) | Owned outright |
 | **Schemes** | Loyalty | Loyalty, Panel | Loyalty (manufacturer) | Owned; references products by id |
@@ -107,10 +106,11 @@ sequenceDiagram
   L->>VB: loyalty-signup / loyalty-verifyotp
   VB-->>L: org profile + access_token (stored server-side)
   L-->>P: loyalty token
-  P->>L: GET /vastra/products
-  L->>VB: GET /products (server-side, VASTRA_API_KEY)
-  VB-->>L: product list
-  L-->>P: product list + this manufacturer's points overrides
+  M->>P: Import product CSV
+  P->>L: POST /catalog/products/import
+  L-->>P: created/updated/skipped + column list
+  P->>L: GET /catalog/products
+  L-->>P: catalog (no Vastra call)
   M->>P: Select product, set/adjust points, request N QR codes
   P->>L: POST /qr/generate (product_external_id + snapshot + points_per_code)
   L-->>P: batch + codes
@@ -192,7 +192,7 @@ Key boundary rules:
   (Its use for manufacturer QR generation is gone — see §3; retailer SSO is
   unaffected.)
 - **`VASTRA_API_KEY` lives only on the Loyalty Backend**, never in the panel
-  browser bundle — the panel calls `GET /vastra/products` on Loyalty, which
+  browser bundle — the panel calls the OTP-login endpoints on Loyalty, which
   makes the actual call to Vastra server-side.
 - **Mobile/browser clients are untrusted**: the panel never asserts a
   points-per-scan value on Vastra's behalf and never holds Vastra

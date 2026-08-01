@@ -68,8 +68,8 @@ local `products` table: `qr_batches` and `points_ledger` carry a product
 **reference** (`product_external_id`) + immutable **snapshot**
 (`product_name`/`product_sku`), and `qr_batches` carries its own
 `manufacturer_id`. QR generation is panel-driven: the panel calls `GET
-/vastra/products` (a server-side proxy, `app/vastra_client.py`, merging in
-the manufacturer's `product_points` override) to power the product picker,
+/catalog/products` (the manufacturer's CSV-imported catalog in
+`product_points`, no outbound call) to power the product picker,
 then `POST /qr/generate` with the primary contract
 (`product_external_id`/`product_name`/`product_sku`/`points_per_code`, no
 products lookup). A legacy `product_id` body is still accepted (`/web/generate`
@@ -118,8 +118,8 @@ adapter translates to psycopg at runtime.
   `app/vastra_client.py`). Matches the manufacturer by `external_id` or
   **auto-provisions** one (random throwaway password — OTP accounts log in via
   Vastra only); refreshes `display_name`; stores Vastra's `access_token` in
-  `manufacturers.vastra_access_token` for `GET /vastra/products` (no stored
-  token → `409`). `/auth/logout` deletes the session token *and* the stored
+  `manufacturers.vastra_access_token` (nothing reads it today — kept for a
+  possible future catalog reconnect). `/auth/logout` deletes the session token *and* the stored
   Vastra token. Vastra rejection → `401`/`403` (Vastra's message), transport
   or missing `VASTRA_API_BASE_URL` → `502`.
 - **SSO token exchange (native apps):** `POST /auth/sso/manufacturer` and
@@ -156,7 +156,9 @@ Authoritative list at `/docs`. Principal endpoints:
   **Vastra OTP** `POST /auth/vastra/send-otp`, `POST /auth/vastra/verify-otp`.
 - **Admin:** `GET|POST /admin/manufacturers`.
 - **Catalog:** `GET /products` (legacy, read-only — see §Product integration),
-  `GET /vastra/products`, `PUT /vastra/products/{external_id}/points`;
+  `GET /catalog/products`, `POST /catalog/products/import`,
+  `DELETE /catalog/products`, `DELETE /catalog/products/{external_id}`,
+  `PUT /catalog/products/{external_id}/points`;
   `GET|POST /schemes`, `DELETE /schemes/{id}`;
   `GET|POST /gifts`, `PATCH|DELETE /gifts/{id}`.
 - **Bulk import (CSV-as-JSON):** `POST /retailers/import`,
@@ -256,12 +258,13 @@ base/bonus/total points, `available`/`redeemed`) that never changes state.
 - `/retailers/import` accepts an optional `external_id` column (the SSO mapping
   id, unique per manufacturer; a duplicate within the manufacturer is skipped with
   an error). `POST /retailers` likewise accepts `external_id` on the body.
-- There is no products import — the catalog is Vastra's, pulled server-side via
-  `GET /vastra/products` (`app/vastra_client.py`, authenticated with the
-  manufacturer's stored `vastra_access_token` from OTP login; password-only
-  session → `409`). The manufacturer's own
-  points-per-scan value is set via `PUT /vastra/products/{external_id}/points`,
-  stored in `product_points` (upsert, no CSV bulk path). See
+- `POST /catalog/products/import` imports the product catalog (CSV-as-JSON,
+  `{csv, mode}` where mode is `upsert` or `replace`). Required columns: a
+  product name and a product code, matched case/format-insensitively; `points`
+  optional; row-number columns dropped; every other column preserved verbatim
+  in `product_points.attrs`. The product code is the identity. The
+  manufacturer's points-per-scan value is set via
+  `PUT /catalog/products/{external_id}/points`. See
   `docs/integration/PRODUCT_INTEGRATION.md`.
 
 ### 6.2 Location

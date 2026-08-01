@@ -53,12 +53,13 @@ product-list API contract (see [PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#
 - [ ] Run the smoke checklist in [DEPLOYMENT_GUIDE §8](DEPLOYMENT_GUIDE.md#8-verification-checklist-post-deploy-smoke).
 - [ ] Confirm provisioning gate: unknown `external_id` → `403`, **no row created**.
 
-**Serve the product-list API** 🟡
-- [ ] Expose a product-list endpoint the Loyalty Backend can call server-side
-      (`GET /vastra/products` proxies it via `app/vastra_client.py`); share
-      URL + auth mechanism (`VASTRA_API_BASE_URL` / `VASTRA_API_KEY`).
-- [ ] Confirm response fields (product id, name, sku) and whether the list is
-      scoped per-manufacturer server-side or needs a query param.
+**Serve the product-list API** ⬜ *Deferred — not needed for v1*
+- The catalog is now imported by the manufacturer as CSV
+  (`POST /catalog/products/import`), so **no Vastra product API is required to
+  ship**. `get-design-ids` was tried and rejected: it returns design numbers
+  but no design *name*, which would print unusable product names on stickers.
+- [ ] *(Future)* Expose a product-list endpoint that includes **design names**;
+      reconnecting means calling the dormant `fetch_vastra_products()` again.
 - [ ] QR generation itself is now **panel-driven** (manufacturer logs into the
       loyalty admin panel directly) — no server-to-server `/qr/generate` call
       from the Vastra backend is needed. See [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md).
@@ -175,7 +176,7 @@ product-list API contract (see [PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#
 - [ ] Rate limits enforced (and shared across replicas if applicable).
 
 **Integration validation**
-- [ ] End-to-end: login to panel via Vastra OTP → GET /vastra/products → generate → print →
+- [ ] End-to-end: log into the panel → import product CSV → generate → print →
       scan (via SSO) → wallet → claim → approve, across two manufacturers to
       prove isolation.
 - [ ] Clock-skew resilience for assertions.
@@ -184,14 +185,16 @@ product-list API contract (see [PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#
 
 ---
 
-## 🟡 Gate before the Vastra product-list API is live
+## ✅ No longer gated on Vastra's product API
 
-The loyalty side is fully built (`app/vastra_client.py`, `GET
-/vastra/products`, `product_points`, panel Products tab/Generate QR modal).
-What's still needed from Vastra: their real product-list API contract (URL,
-auth mechanism, response field names, per-manufacturer scoping) — see the
-open items in
-[PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#8-open-items). Until
-`VASTRA_API_BASE_URL`/`VASTRA_API_KEY` point at a real endpoint, `GET
-/vastra/products` fails closed with `502` and the panel's Products tab /
-Generate QR flow can't load a catalog.
+**This gate is closed.** The catalog is the manufacturer's own CSV import
+(`/catalog/products*`, `product_points`, panel Products tab/Generate QR modal),
+so the Products tab and QR generation work with **nothing** required from
+Vastra. Reconnecting a Vastra-sourced catalog later is a future option, blocked
+only on Vastra exposing design *names* — see
+[PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#8-open-items).
+
+`VASTRA_API_BASE_URL`/`VASTRA_API_KEY` are still required for the panel's
+**Vastra OTP login** (unset → `502`, password login unaffected), and must be
+set in the *host's* environment settings — `.env` is gitignored and never
+deploys.

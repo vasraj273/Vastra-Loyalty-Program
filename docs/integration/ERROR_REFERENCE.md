@@ -53,9 +53,14 @@ structured form:
 
 | HTTP | `detail` | Meaning | Client behavior |
 |---|---|---|---|
-| 502 | `Vastra product service unavailable: <detail>` | `GET /vastra/products` couldn't reach Vastra, or `VASTRA_API_BASE_URL` is unset | Show "catalog unavailable"; retry with backoff. |
-| 409 | `No Vastra session — log in with Vastra OTP to load the product catalog` | The session has no stored `vastra_access_token` (password login, or wiped by logout) | Prompt the manufacturer to log in via Vastra OTP. |
-| 502 | `Vastra rejected the product request: <Vastra's message> — logging out and back in refreshes the Vastra session` | Stored Vastra token expired/revoked | Log out and back in via OTP. |
+| 422 | `CSV is missing a product name column (…) and a product code column (…)` | `POST /catalog/products/import` got a file without a usable name/code header | Show the accepted spellings; the file was rejected whole, nothing was written. |
+| 404 | `Product not found` | `DELETE /catalog/products/{external_id}` for an unknown code, a sample, or another manufacturer's product | Refresh the list. |
+
+> The old catalog errors (`502 Vastra product service unavailable`, `409 No
+> Vastra session`, `502 Vastra rejected the product request`) **no longer
+> exist** — the catalog is CSV-imported and never calls Vastra. The `502
+> Vastra login service unavailable: <detail>` below is a *login* error and is
+> still live.
 
 ## QR generation & batches
 

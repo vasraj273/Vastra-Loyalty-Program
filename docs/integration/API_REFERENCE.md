@@ -3,9 +3,10 @@
 > Reflects the **current implemented backend** ✅, including the Product
 > System-of-Record migration (`product_external_id` + snapshots) — now live as a
 > dual-contract `/qr/generate` (new primary + legacy `product_id` fallback),
-> and the **pull-based Vastra product catalog** (`GET /vastra/products`,
-> proxied server-side) that powers QR generation from the admin panel.
-> Product CRUD/import (`POST`/`PATCH`/`DELETE /products`, `POST
+> and the **CSV-imported product catalog** (`/catalog/products*`) that powers
+> QR generation from the admin panel. Vastra's product API is **not** a catalog
+> source (see PRODUCT_INTEGRATION §1); Vastra **OTP login is unaffected**.
+> Legacy product CRUD/import (`POST`/`PATCH`/`DELETE /products`, `POST
 > /products/import`) has been **removed**. See
 > [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md).
 > Authoritative machine-readable schema: `/openapi.json` (Swagger UI at `/docs`).
@@ -41,8 +42,11 @@
 | Provisioning | `POST /admin/manufacturers` | Admin |
 | Provisioning | `POST /retailers` | M |
 | Provisioning | `POST /retailers/import` | M |
-| Catalog | `GET /vastra/products` | M |
-| Catalog | `PUT /vastra/products/{external_id}/points` | M |
+| Catalog | `GET /catalog/products` | M |
+| Catalog | `POST /catalog/products/import` | M |
+| Catalog | `DELETE /catalog/products` | M |
+| Catalog | `DELETE /catalog/products/{external_id}` | M |
+| Catalog | `PUT /catalog/products/{external_id}/points` | M |
 | QR | `POST /qr/generate` | M |
 | QR | `POST /qr/batches/{id}/save` | M |
 | QR | `GET /qr/batches` | M |
@@ -69,9 +73,9 @@
 
 > Other manufacturer-management endpoints (distributors, list retailers,
 > adjust/transfer, `GET /products` legacy read, etc.) exist and are visible
-> at `/docs`. Products CRUD (`POST`/`PATCH`/`DELETE /products`, `POST
-> /products/import`) has been **removed** — the catalog is Vastra's, pulled
-> via `GET /vastra/products` below. See
+> at `/docs`. Legacy products CRUD (`POST`/`PATCH`/`DELETE /products`, `POST
+> /products/import`) has been **removed** — the catalog is CSV-imported via
+> `/catalog/products*` below. See
 > [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md).
 
 ---
@@ -113,7 +117,7 @@ Step 1 of the panel's Vastra OTP login: Vastra texts an OTP to the organization'
 - **Errors:** `403 <Vastra's message>` (number not eligible / rejected) · `502 Vastra login service unavailable: …` (transport failure or `VASTRA_API_BASE_URL` unset) · `429`.
 
 ### POST /auth/vastra/verify-otp — None
-Step 2: verify the OTP with Vastra, log the manufacturer in. Matches by `external_id` (= Vastra `organization_Id`) or **auto-provisions** the account (random throwaway password — OTP accounts log in via Vastra only). Stores Vastra's `access_token` server-side; it powers `GET /vastra/products` and is wiped on logout.
+Step 2: verify the OTP with Vastra, log the manufacturer in. Matches by `external_id` (= Vastra `organization_Id`) or **auto-provisions** the account (random throwaway password — OTP accounts log in via Vastra only). Stores Vastra's `access_token` server-side; **nothing reads it today** (the catalog is CSV-imported) — it is kept for a future catalog reconnect, and is wiped on logout.
 - **Request:** `{ "country_code": "91", "mobile": "98…", "otp": "1234" }`
 - **Response 200:** same body as `/auth/login` — `{ "token", "display_name", "username", "is_admin" }` (single active session applies).
 - **Errors:** `401 <Vastra's message>` (bad/expired OTP) · `403 Account is blocked` · `502 Vastra login service unavailable: …` · `429`.
@@ -165,24 +169,69 @@ Password login for retailers (dev/test; production retailer access is SSO-only).
 
 ---
 
-## Vastra product catalog (manufacturer side)
+## Product catalog (manufacturer side)
 
-### GET /vastra/products — Auth M
-- **Purpose:** the admin panel's product picker. Proxies Vastra's
-  product-list API server-side (`app/vastra_client.py`) and merges in each
-  product's stored points override. The panel never calls Vastra directly.
-- **Response 200:** `[{ "external_id": "VP-1", "name": "Silk Saree", "sku": "SS-001", "points": 50 }]`
-- **Auth note:** requires a **Vastra OTP session** — the stored
-  `vastra_access_token` from `/auth/vastra/verify-otp` is what authenticates the
-  server-side pull.
-- **Errors:** `409 No Vastra session — log in with Vastra OTP to load the product catalog` (password-login session, or token wiped by logout) · `502 Vastra rejected the product request: <Vastra's message> — logging out and back in refreshes the Vastra session` · `502 Vastra product service unavailable: <detail>` (Vastra unreachable, or `VASTRA_API_BASE_URL` unset) · `401`.
+The catalog is the manufacturer's own product list, imported as CSV. It is not
+pulled from Vastra — `get-design-ids` returns no design *name*, so it could only
+supply unusable product names. Vastra OTP login is a separate, unaffected path.
 
-### PUT /vastra/products/{external_id}/points — Auth M
-- **Purpose:** set/update the manufacturer's own points-per-scan value for a
-  Vastra-catalog product (upsert into `product_points`).
-- **Request:** `{ "points": 50 }`
-- **Response 200:** `{ "external_id": "VP-1", "points": 50 }`
+### GET /catalog/products — Auth M
+- **Purpose:** the admin panel's product list and picker.
+- **Response 200:**
+```json
+{ "products": [{ "external_id": "BNS-01", "name": "Silk Saree", "sku": "BNS-01",
+                 "points": 50, "attrs": { "Brand name": "LONDON DREAM" } }],
+  "columns": ["Brand name"],
+  "source": "import" }
+```
+- `columns` — the free-form CSV headers, in file order, that the panel renders
+  between the fixed name/code columns and Points.
+- `source` — **strict precedence, never merged:** `"import"` (the manufacturer
+  has imported products) → `"sample"` (three hardcoded demo products, only while
+  `USE_SAMPLE_PRODUCTS` is on **and** the catalog is empty) → `"empty"`.
 - **Errors:** `401`.
+
+### POST /catalog/products/import — Auth M
+- **Purpose:** import/refresh the catalog from CSV text (sent as JSON, no
+  multipart — same convention as the retailer/distributor imports).
+  **Rate limit:** `RL_IMPORT` (default `10/hour`).
+- **Request:** `{ "csv": "Product name,Product code,Points\nSilk Saree,BNS-01,50\n", "mode": "upsert" }`
+- **Response 200:** `{ "created": 1, "updated": 0, "skipped": 0, "errors": [], "columns": [] }`
+- **Required columns:** a product **name** (`name`, `product_name`, `p_name`,
+  `item_name`, `design_name`, `product`) and a product **code** (`code`,
+  `product_code`, `p_code`, `sku`, `item_code`, `design_number`, `style_code`,
+  `article_code`). Headers are matched case- and format-insensitively, so
+  `Product Name` / `PRODUCT_NAME` / `product name` all work.
+- **Optional:** `points` (`points`, `loyalty_points`, `points_per_scan`).
+  Row-number columns (`SNo`, `Sr No`, `#`) are dropped; literal `null` / `N/A` /
+  `-` cells become empty; every other column is preserved verbatim.
+- **`mode`:** `"upsert"` (default) matches on product code, refreshes name and
+  attributes, adds new rows, deletes nothing, and **keeps panel-set points**
+  unless the CSV carries a points column. `"replace"` clears this
+  manufacturer's imported rows first.
+- **Errors:** `422 CSV is missing a product name column (…) and a product code column (…)`
+  — the file is rejected whole, nothing is written · `429` · `401`.
+
+### DELETE /catalog/products — Auth M
+- **Purpose:** clear the entire imported catalog (the panel's "Delete all",
+  behind a confirmation).
+- **Response 200:** `{ "deleted": 30 }` — a no-op returning `0` on an empty
+  catalog, not an error.
+- **Errors:** `401`.
+
+### DELETE /catalog/products/{external_id} — Auth M → 204
+- **Purpose:** remove one imported product.
+- **Errors:** `404 Product not found` (unknown, or not this manufacturer's) · `401`.
+
+### PUT /catalog/products/{external_id}/points — Auth M
+- **Purpose:** set/update the manufacturer's own points-per-scan value
+  (upsert into `product_points`).
+- **Request:** `{ "points": 50 }`
+- **Response 200:** `{ "external_id": "BNS-01", "points": 50 }`
+- **Errors:** `401`.
+
+> Deleting or replacing products **never affects already-issued QR codes** —
+> `qr_batches` and `points_ledger` carry immutable product name/sku snapshots.
 
 ---
 
@@ -190,7 +239,7 @@ Password login for retailers (dev/test; production retailer access is SSO-only).
 
 ### POST /qr/generate — Auth M → 201
 - **Purpose:** generate a batch of QR codes for a product. **Rate limit:** `RL_QRGEN` (default `30/minute`).
-- **Request (new, primary — used by the panel; product picked via `GET /vastra/products` above):**
+- **Request (new, primary — used by the panel; product picked via `GET /catalog/products` above):**
 ```json
 { "product_external_id": "VP-9281", "product_name": "Silk Saree",
   "product_sku": "SS-001", "points_per_code": 50,

@@ -53,10 +53,10 @@ One FastAPI service serves three surfaces from a single container:
   codes register all their child items in one scan — and the Claims view collapses
   that box back into a single `📦 Box · N items` row (grouped at query time on
   `COALESCE(parent_token, token)`), so a box scan doesn't flood the list.
-- **Products: Vastra is the System of Record, pulled server-side.** Loyalty is
-  not a product catalog — it pulls Vastra's live product list server-side
-  (`GET /vastra/products`, proxied via `app/vastra_client.py`, credentials
-  stay server-side) to power the panel's product picker, and stores a
+- **Products: the manufacturer imports their own catalog as CSV.** Loyalty
+  does not pull products from Vastra (`get-design-ids` returns no design
+  *name*). The catalog lives in `product_points` where `source='import'`
+  (`POST /catalog/products/import`), and loyalty stores a
   **reference** (`product_external_id`) + immutable **snapshot**
   (`product_name`/`product_sku`) on `qr_batches` and `points_ledger`. The
   manufacturer's points-per-scan value is loyalty's own data (`product_points`
@@ -100,8 +100,9 @@ auto-camera on "Scan another"), rewards **shop**, **claims** history.
 
 **Bulk import (CSV-as-JSON, no file-upload dependency):**
 `/retailers/import` (auto-logins + find-or-create distributor),
-`/distributors/import`. There is no products import — the catalog comes
-from Vastra (`GET /vastra/products`).
+`/distributors/import`, and `/catalog/products/import` (the product catalog —
+required columns: a product name and a product code; every other CSV column is
+kept verbatim and shown in the panel).
 
 ## 5. How location works (current behavior)
 
@@ -143,8 +144,8 @@ from Vastra (`GET /vastra/products`).
   proxied to Vastra's `loyalty-signup`/`loyalty-verifyotp` via
   `app/vastra_client.py`). Matches by `external_id` (= Vastra `organization_Id`)
   or **auto-provisions** the manufacturer; stores Vastra's `access_token`
-  server-side (`manufacturers.vastra_access_token`) — required by
-  `GET /vastra/products` (password-only session → `409`). Wiped on logout.
+  server-side (`manufacturers.vastra_access_token`) — **nothing reads it
+  today**, it is kept for a possible future catalog reconnect. Wiped on logout.
 - **YourApp server-to-server scan (phone-verified):** `POST /yourapp/qr/lookup`
   (read-only code preview: product, points, `available`/`redeemed`) and
   `POST /yourapp/scan` (`phone` + `code` + optional `lat`/`lng`) are called by

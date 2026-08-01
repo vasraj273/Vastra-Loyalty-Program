@@ -7,6 +7,15 @@ One container serves everything: API + admin panel (`/panel`) + webview pages (`
 1. Push this folder to a GitHub repo.
 2. https://render.com → New → Web Service → connect the repo.
 3. Environment: **Docker**. Region: Singapore (closest to India).
+> ⚠️ **`.env` is gitignored and never ships.** This app has no dotenv loader —
+> locally you pass `--env-file .env` to uvicorn, but a hosted service reads
+> nothing of the sort. **Every variable below must be entered in Render's own
+> Environment tab.** If it isn't, the feature fails closed in production while
+> working perfectly on your machine. The usual symptom is the panel's Vastra
+> OTP login answering
+> `502 "Vastra login service unavailable: VASTRA_API_BASE_URL is not configured"`.
+> Changing a variable in Render restarts the service; no redeploy needed.
+
 4. Add environment variable:
    - `QR_BASE_URL` = `https://<your-service>.onrender.com/web/scan`
    - `SSO_SECRET` = a long random string — only needed to enable native-app SSO (see below); omit for a plain demo.

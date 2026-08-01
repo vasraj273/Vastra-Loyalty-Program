@@ -1,7 +1,9 @@
 # Manual product catalog (CSV import) — design
 
 **Date:** 2026-08-01
-**Status:** approved, ready for implementation planning
+**Status:** ✅ implemented. Sections below are the as-built design; the
+"Panel" section records four additions made after the original approval
+(search, pagination, frozen columns, Delete all).
 
 ## Problem
 
@@ -146,6 +148,7 @@ All manufacturer-scoped via `current_manufacturer`, all filtered by
 ```
 GET    /catalog/products                       -> {products: [...], columns: [...], source: "import"|"sample"|"empty"}
 POST   /catalog/products/import                {csv, mode: "upsert"|"replace"}
+DELETE /catalog/products                       -> {deleted: n}   (clear the catalog)
 DELETE /catalog/products/{external_id}
 PUT    /catalog/products/{external_id}/points  {points}
 ```
@@ -191,6 +194,34 @@ and analytics paths are unchanged. This feature only changes where the panel's p
 - Empty state: *"No products yet — add them using the Import CSV button."*
 - Row actions: **Edit points** (existing inline editor) and **Delete** (via `useConfirm`).
 - The hint text about syncing from Vastra is replaced.
+
+### Added after the original approval
+
+**Search.** A `.search` input (the same component the Customers tab uses) in the table
+toolbar, filtering client-side on **product name or product code only**. The free-form CSV
+columns are deliberately *not* searched: matching on a hidden Brand or Category value would
+surface rows whose reason for matching isn't visible on screen. Typing resets to page 1;
+the range readout becomes `Showing 1–7 of 7 (filtered from 30)`; no matches renders an
+in-table row rather than an empty body.
+
+**Pagination.** Client-side, rows-per-page 10/25/50/100, default 10, with prev/next. The
+brief asked only for "showing first 10 of N", which would leave rows 11+ unreachable on a
+large list — paging is the same feature made usable. The catalog is returned whole, so this
+needs no endpoint change, and **Export CSV covers every matching row, not just the visible
+page**.
+
+**Frozen columns.** Product name + code pin left, Points + Actions pin right, leaving only
+the manufacturer's own CSV columns to scroll, so a points value is always readable and
+editable beside the product it belongs to. Widths sit on an inner `.cell` wrapper rather
+than the `th`/`td`: a cell's own width is only a hint under `table-layout: auto`, and the
+sticky `left`/`right` offsets depend on these columns being exactly the width they claim.
+**Changing a frozen column's width means updating its neighbour's offset by the same
+amount** (`.cell` width + 20px of cell padding).
+
+**Delete all.** Shown only when an imported catalog exists. `useConfirm` danger dialog
+naming the count, with the confirm button reading `Delete all 30` so it can't be hit by
+reflex. Deletes the whole catalog, never the current filter — the dialog names the full
+count so a narrowed view can't mislead. Backed by `DELETE /catalog/products`.
 - **Export CSV** exports the dynamic column set (CSV columns + Points), not the fixed
   name / sku / points triple it exports today.
 
@@ -236,6 +267,11 @@ New `tests/test_catalog_import.py`, following the existing pytest fixtures in
 - The catalog never calls Vastra — with a stored `vastra_access_token` present, the response
   still comes from the imported rows.
 - Delete removes the row and leaves already-issued QR batches readable.
+- Delete all returns the count, spares legacy rows, is a no-op on an empty catalog, and
+  cannot reach another manufacturer's catalog.
+
+As built: 28 tests pass (1 skipped — the Postgres-only race proof, which needs
+`DATABASE_URL`).
 
 ## Documentation
 
