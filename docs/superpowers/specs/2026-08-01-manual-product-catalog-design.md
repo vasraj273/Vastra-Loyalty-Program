@@ -13,15 +13,16 @@ The product catalog is currently pulled from Vastra's `get-design-ids` API using
 - Only one client is going live. They already maintain a product list elsewhere and can
   export it as CSV.
 
-For v1 the manufacturer imports their catalog as CSV. The Vastra API path stays in the
-codebase, switched off, to be enabled later without a code change.
+For v1 the manufacturer imports their catalog as CSV, and the Vastra product API stops being
+a catalog source altogether. Vastra OTP **login** is unaffected and stays always on.
 
 ## Decisions
 
 | Question | Decision |
 |---|---|
-| Catalog source | Imported CSV is primary. Vastra API and hardcoded samples are fallbacks behind env flags. |
-| Sources merged? | **No — strict precedence.** Never merged. |
+| Catalog source | **Imported CSV only.** The Vastra product API is not a catalog source. |
+| Vastra OTP login | **Always on.** Never gated by anything in this feature. |
+| Hardcoded samples | Kept behind `USE_SAMPLE_PRODUCTS`, for testing only. |
 | Storage | Extend the existing `product_points` table (additive migrations). |
 | Free-form columns | Whatever the CSV had, in CSV order, stored as JSON in `attrs`. |
 | Required columns | A product-name column and a product-code column. Everything else optional. |
@@ -31,33 +32,48 @@ codebase, switched off, to be enabled later without a code change.
 | Panel actions | Import CSV, edit points inline, delete row. No add-single-product form. |
 | Routes | Renamed off the `/vastra/` prefix to `/catalog/products`. |
 
-## Flags
+## The one flag
 
 Module-level env config in `app/main.py`, same convention as `QR_BASE_URL` and
 `SSO_SECRET`:
 
 ```python
-USE_VASTRA_API      = os.environ.get("USE_VASTRA_API", "0") == "1"       # default OFF
 USE_SAMPLE_PRODUCTS = os.environ.get("USE_SAMPLE_PRODUCTS", "1") == "1"  # default ON for now
 ```
 
-`USE_SAMPLE_PRODUCTS` defaults **on** today so the QR → scan → redeem flow stays testable.
-At go-live it is set to `0` and the empty state appears. Both flags are documented in
+It defaults **on** today so the QR → scan → redeem flow stays testable without importing a
+CSV first. At go-live it is set to `0` and the empty state appears. Documented in
 `.env.example` and `DEPLOY.md`.
+
+There is no `USE_VASTRA_API` flag and no Vastra branch in the catalog. Removed deliberately:
+`get-design-ids` returns no product names, so it was never a usable catalog source, and a
+flag named after "the Vastra API" invites the misreading that it also controls login.
 
 ### Catalog resolution — `GET /catalog/products`
 
-Strict precedence, evaluated per manufacturer:
+Evaluated per manufacturer:
 
 1. The manufacturer has imported products → **return those**.
-2. Else `USE_VASTRA_API` → Vastra `get-design-ids` via `fetch_vastra_products`, merged with
-   `product_points` overrides exactly as today. No stored `vastra_access_token` → `409`
-   (the current behaviour, restored).
-3. Else `USE_SAMPLE_PRODUCTS` → the three hardcoded `_SAMPLE_PRODUCTS`.
-4. Else `[]` → the panel renders the empty state.
+2. Else `USE_SAMPLE_PRODUCTS` → the three hardcoded `_SAMPLE_PRODUCTS`.
+3. Else `[]` → the panel renders the empty state.
 
-Consequence, accepted: once a manufacturer imports even one product, samples and the
-Vastra list are invisible to them.
+Consequence, accepted: once a manufacturer imports even one product, the samples are
+invisible to them.
+
+## Vastra OTP login is untouched and always on
+
+`POST /auth/vastra/send-otp` and `POST /auth/vastra/verify-otp` are a separate code path
+from the catalog and this feature changes nothing about them. Verify-otp keeps storing
+`manufacturers.vastra_access_token`, and `/auth/logout` keeps wiping it — the token costs
+nothing to keep and is what a future catalog reconnect would need.
+
+`fetch_vastra_products()` stays in `app/vastra_client.py`, unused, with a comment recording
+that it is dormant and what reconnecting it would take. It is not deleted: pulling the
+catalog from Vastra is a later goal once Vastra exposes design *names*, and keeping the
+verified client code is cheaper than rewriting it.
+
+Note that Vastra login still requires `VASTRA_API_BASE_URL` to be set — unset, it fails
+closed with 502. That gate is pre-existing, is not part of this feature, and is unchanged.
 
 ## Storage
 
@@ -75,7 +91,7 @@ The same columns are added to the `SCHEMA` `CREATE TABLE` so fresh databases mat
 
 `source` is load-bearing. A pre-existing `product_points` row means "points override for a
 Vastra design" and has no name. Without the marker those rows would surface as nameless
-imported products and would suppress the Vastra/sample fallbacks. Only
+imported products and would suppress the sample fallback. Only
 `source = 'import'` rows count as an imported catalog.
 
 `product_points` has a composite primary key and no serial `id`, so `_ID_TABLES` needs no
@@ -128,7 +144,7 @@ All manufacturer-scoped via `current_manufacturer`, all filtered by
 `manufacturer_id`.
 
 ```
-GET    /catalog/products                       -> {products: [...], columns: [...], source: "import"|"vastra"|"sample"|"empty"}
+GET    /catalog/products                       -> {products: [...], columns: [...], source: "import"|"sample"|"empty"}
 POST   /catalog/products/import                {csv, mode: "upsert"|"replace"}
 DELETE /catalog/products/{external_id}
 PUT    /catalog/products/{external_id}/points  {points}
@@ -215,20 +231,24 @@ New `tests/test_catalog_import.py`, following the existing pytest fixtures in
 - Replace clears prior imported rows but leaves legacy `source IS NULL` rows intact.
 - Duplicate code within one file — last row wins, warning reported.
 - Tenant isolation — one manufacturer's import is invisible to another.
-- Precedence chain — imported beats samples; samples appear only when the catalog is empty;
-  `USE_VASTRA_API=1` with no stored token returns 409; all flags off with empty catalog
-  returns `[]`.
+- Source precedence — imported beats samples; samples appear only when the catalog is empty;
+  `USE_SAMPLE_PRODUCTS=0` with an empty catalog returns `[]`.
+- The catalog never calls Vastra — with a stored `vastra_access_token` present, the response
+  still comes from the imported rows.
 - Delete removes the row and leaves already-issued QR batches readable.
 
 ## Documentation
 
-`CLAUDE.md` is updated: the products section rewritten around the flags and the manual
-catalog, the route rename recorded, and the stale "There is no test suite" line corrected
-(`tests/` has existed for some time). `DEPLOY.md` and `.env.example` gain the two flags.
+`CLAUDE.md` is updated: the products section rewritten around the manual catalog, the claim
+that QR generation pulls from Vastra removed, the route rename recorded, and the stale
+"There is no test suite" line corrected (`tests/` has existed for some time). `DEPLOY.md`
+and `.env.example` gain `USE_SAMPLE_PRODUCTS`; their `VASTRA_API_BASE_URL` entries are
+reworded to say it powers OTP login only.
 
 ## Deferred
 
-- Merging an imported catalog with the Vastra list. v1 is strict precedence.
+- Pulling the catalog from Vastra again. Blocked on Vastra exposing design *names*;
+  `fetch_vastra_products()` is kept dormant for that day.
 - `scheme_products` still keys off the legacy local `products.id`, so product-specific
   scheme bonuses do not cover imported products. Unchanged by this work, still open.
 - An add-single-product form. CSV import plus delete covers v1.
