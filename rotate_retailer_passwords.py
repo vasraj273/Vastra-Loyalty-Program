@@ -16,8 +16,8 @@ Usage:
     # rotate everyone (local SQLite)
     python rotate_retailer_passwords.py
 
-    # rotate everyone on Neon/Postgres
-    DATABASE_URL=postgresql://... python rotate_retailer_passwords.py
+    # rotate everyone on MySQL
+    DATABASE_URL=mysql://... python rotate_retailer_passwords.py
 
     # rotate a single manufacturer's retailers
     python rotate_retailer_passwords.py --manufacturer-id 3

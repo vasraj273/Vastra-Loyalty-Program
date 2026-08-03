@@ -1,8 +1,64 @@
 # Changelog
 
 Notable changes to the Loyalty QR API. Dates are when the change went live on
-production (Render + Neon). Schema changes are additive (`_MIGRATIONS`), applied
-by `migrate()` on startup — no reseed, existing data preserved.
+production. Schema changes are additive (`_MIGRATIONS`), applied by `migrate()`
+on startup — no reseed, existing data preserved.
+
+## 2026-08-03 (MySQL migration)
+
+Production moves from PostgreSQL/Neon to **MySQL 8.0.13+** (AWS RDS). SQLite
+remains the zero-setup local dev and test backend. No API, panel or webview
+behaviour changes — see `docs/integration/MYSQL_SETUP.md` for provisioning.
+
+### Changed
+- **`app/database.py`** — the `_PGConn`/psycopg adapter is replaced by
+  `_MyConn`/PyMySQL. `lastrowid` is now native, so the `_ID_TABLES` registry
+  and its `RETURNING id` rewrite are gone. `datetime('now')`/`date('now')`
+  translate to `CAST(UTC_TIMESTAMP()/UTC_DATE() AS CHAR)` — never
+  `DATE_FORMAT`, whose `%` would collide with pyformat placeholders.
+- **`SCHEMA` column types** are now written to serve both backends from one
+  declaration: `VARCHAR(n)` for every indexed/UNIQUE/PK text column (MySQL
+  cannot index a bare `TEXT`), `DOUBLE` for coordinates, `MEDIUMTEXT` for the
+  `product_points.attrs` CSV blob. SQLite takes affinity from the type name
+  and ignores the widths, so its behaviour is unchanged.
+- **`requirements.txt`** — `psycopg[binary]` → `pymysql[rsa]`.
+- **`seed.py` / `seed_extra.py`** — the destructive-op opt-in is now
+  `ALLOW_MYSQL=1` (was `ALLOW_NEON=1`).
+- **Login is now case-insensitive** for manufacturers and retailers, a
+  consequence of MySQL's default `utf8mb4_0900_ai_ci` collation. QR tokens,
+  manual codes, session tokens, gift-claim references and SSO `external_id`s
+  keep case-sensitive matching via a per-column `utf8mb4_bin` collation.
+
+### Fixed
+- **Gift-claim double-spend under concurrency on MySQL.** InnoDB defaults to
+  REPEATABLE READ, under which the claim guard's `SELECT ... FOR UPDATE`
+  serializes correctly but the follow-up balance read still returns the
+  transaction's original snapshot. Measured on the 20-thread proof: 12 claims
+  succeeded and the wallet reached −1090. `get_db()` now pins
+  `READ COMMITTED` per connection (and `time_zone = '+00:00'`, since
+  timestamps are stored and compared as UTC strings).
+- **Foreign keys are created on MySQL.** MySQL parses inline `REFERENCES`
+  written inside a column definition and silently creates nothing, so all 24
+  relationships would have vanished — cascade deletes included.
+  `_mysql_foreign_keys()` derives them from `SCHEMA` and re-emits them as
+  table-level constraints.
+- **Partial indexes rebuilt.** MySQL has none. The two `external_id` guards
+  map directly (a MySQL UNIQUE index already allows unlimited NULLs);
+  `uq_ledger_active_scan_token` becomes the stored generated column
+  `points_ledger.active_scan_token`, which recomputes to NULL on scan reversal
+  and so releases the token for a rescan, matching the old semantics exactly.
+- **DDL is guarded by `information_schema`** rather than `IF [NOT] EXISTS`,
+  which MySQL does not support for indexes or columns.
+
+### Added
+- **`docs/integration/MYSQL_SETUP.md`** — provisioning handoff: server version,
+  charset/collation, required grants, connection-string format, and post-deploy
+  verification queries.
+- **`tests/test_mysql_schema.py`** — DDL idempotency across two startups, all
+  24 foreign keys plus cascade/orphan behaviour, the generated-column index
+  including release-on-reversal, the collation split, and UTC timestamp format.
+- `tests/test_race_postgres.py` → **`tests/test_race_mysql.py`**. Setting
+  `DATABASE_URL` now also runs the entire functional suite against MySQL.
 
 ## 2026-07-18 (YourApp server-to-server scan, phone-verified)
 

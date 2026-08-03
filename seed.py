@@ -6,12 +6,12 @@ Logins:
   heritage/ heritage123  (Heritage Weaves)
 
 Run:  .venv\\Scripts\\python seed.py
-Wipes and refills the configured database (SQLite locally, or the Postgres
-in DATABASE_URL). Run once against Neon, then the data persists.
+Wipes and refills the configured database (SQLite locally, or the MySQL
+database in DATABASE_URL). Run once against the server, then data persists.
 
 DESTRUCTIVE: reset_db() drops and rebuilds every table. Because that is
-unrecoverable against a real database, the Postgres/Neon path requires
-ALLOW_NEON=1 as an explicit opt-in (same guard as seed_extra.py). SQLite runs
+unrecoverable against a real database, the MySQL path requires
+ALLOW_MYSQL=1 as an explicit opt-in (same guard as seed_extra.py). SQLite runs
 unguarded - qr_api.db is local throwaway data.
 """
 
@@ -20,13 +20,13 @@ import random
 from datetime import date, datetime, timedelta
 
 from app.auth import hash_password
-from app.database import IS_PG, get_db, reset_db
+from app.database import IS_MYSQL, get_db, reset_db
 from app.geo import coords_for
 from app.qr_service import new_manual_code, new_reference, new_token
 
-if IS_PG and os.environ.get("ALLOW_NEON") != "1":
+if IS_MYSQL and os.environ.get("ALLOW_MYSQL") != "1":
     raise SystemExit(
-        "DATABASE_URL is set (Postgres/Neon) but ALLOW_NEON=1 was not passed - "
+        "DATABASE_URL is set (MySQL) but ALLOW_MYSQL=1 was not passed - "
         "refusing to wipe a remote database without explicit opt-in."
     )
 
@@ -289,8 +289,8 @@ def main() -> None:
 
         n = db.execute(
             "SELECT COUNT(*) AS n FROM points_ledger").fetchone()["n"]
-    from app.database import IS_PG
-    target = "Postgres (DATABASE_URL)" if IS_PG else "SQLite (qr_api.db)"
+    from app.database import IS_MYSQL
+    target = "MySQL (DATABASE_URL)" if IS_MYSQL else "SQLite (qr_api.db)"
     print(f"Seeded 2 manufacturers + super admin, {n} scans -> {target}")
     print("Manufacturer logins: admin/admin123, surya/surya123, "
           "heritage/heritage123")

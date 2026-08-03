@@ -51,17 +51,33 @@ Note: free tier sleeps after idle (first request takes ~30s) and the SQLite file
 4. **Scan**: scan a printed QR with the phone camera — it opens `/web/scan/<token>` directly → Redeem → count-up + confetti animation with the scheme bonus. Or open `/web/scan`, use the in-page camera / type the 6-char manual code; "Scan another" reopens the camera. The retailer pages share a burger-menu nav.
 5. Back in the panel: the scan is already in Claims (a box scan shows as one `📦 Box · N items` row) and on the map. Every data tab has an **Export CSV** button.
 
-## Database (Postgres / Neon)
+## Database (MySQL)
 
-The app uses Postgres when `DATABASE_URL` is set, SQLite otherwise (local dev
-needs no setup). On Render, set `DATABASE_URL` to the Neon **pooled**
-connection string. Data persists across deploys — the container creates
-tables if missing but never auto-seeds.
+The app uses MySQL when `DATABASE_URL` is set, SQLite otherwise (local dev
+needs no setup). Data persists across deploys — the container creates and
+migrates tables on boot but never auto-seeds.
 
-Seed the demo data **once** (locally, with the env var set):
+**Full provisioning requirements are in
+[docs/integration/MYSQL_SETUP.md](docs/integration/MYSQL_SETUP.md)** — server
+version, charset/collation, and the grants the app needs to run its startup
+DDL. The short version: MySQL **8.0.13+**, database created with `utf8mb4` /
+`utf8mb4_0900_ai_ci`, and a user with `CREATE`/`ALTER`/`INDEX`/`REFERENCES` in
+addition to DML.
+
+```
+DATABASE_URL=mysql://user:pass@host:3306/vastra_loyalty?ssl=true
+```
+
+If a PostgreSQL URL is left in the environment from before the MySQL
+migration, the app refuses to start and says so explicitly rather than failing
+on the first request.
+
+Seed the demo data **once** (locally, with the env var set). The MySQL path is
+destructive, so it requires an explicit opt-in:
 
 ```powershell
-$env:DATABASE_URL = '<neon pooled connection string>'
+$env:DATABASE_URL = 'mysql://user:pass@host:3306/vastra_loyalty?ssl=true'
+$env:ALLOW_MYSQL = '1'
 .\.venv\Scripts\python seed.py
 ```
 
@@ -85,7 +101,7 @@ another shop. Demo logins are seeded (e.g. `kumar/kumar123` under Surya,
 Bulk-onboard real retailers from the terminal (no website button):
 
 ```powershell
-$env:DATABASE_URL = '<neon pooled connection string>'
+$env:DATABASE_URL = 'mysql://user:pass@host:3306/vastra_loyalty?ssl=true'
 .\.venv\Scripts\python import_retailers.py sample_retailers.csv
 ```
 
@@ -151,12 +167,12 @@ in loyalty's own `product_points` table, imported via the Products tab's
 - Point `VASTRA_API_BASE_URL`/`VASTRA_API_KEY` at Vastra's **production** API (the implemented contract was verified against staging 2026-07-16; confirm the production origin + api-key with Vastra's team).
 - Set `USE_SAMPLE_PRODUCTS=0` so the Products tab prompts for a CSV import instead of listing the three built-in demo products.
 - Set a strong `YOURAPP_API_KEY` and share it only with YourApp's backend; make sure every retailer has their YourApp phone number imported (phone identifies the retailer on `/yourapp/scan`).
-- Rotate the Neon credentials if the connection string was shared.
+- Rotate the MySQL credentials if the connection string was shared.
 
 ## Emergency: block / unblock an account
 
 Sessions are single-active (a new login invalidates the old token), and any
-account can be frozen by hand in the DB — no deploy needed. Against Neon:
+account can be frozen by hand in the DB — no deploy needed. Against MySQL:
 
 ```sql
 UPDATE manufacturers SET blocked = 1 WHERE username = '<user>';   -- block

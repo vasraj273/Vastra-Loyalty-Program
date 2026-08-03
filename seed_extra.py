@@ -1,25 +1,25 @@
 """Additive demo data: 5 more manufacturers with 10 retailers each.
 
 Does NOT touch existing rows or call reset_db() - purely additive INSERTs.
-Works against local SQLite (default) or Postgres/Neon if DATABASE_URL is set
+Works against local SQLite (default) or MySQL if DATABASE_URL is set
 in the environment - since writing test data to the live production DB is
-risky, that path requires ALLOW_NEON=1 as an explicit opt-in.
+risky, that path requires ALLOW_MYSQL=1 as an explicit opt-in.
 
 Run (local):  .venv\\Scripts\\python seed_extra.py
-Run (Neon):   DATABASE_URL=... ALLOW_NEON=1 python3 seed_extra.py
+Run (MySQL):  DATABASE_URL=mysql://... ALLOW_MYSQL=1 python3 seed_extra.py
 """
 
 import os
 import random
 
 from app.auth import hash_password
-from app.database import IS_PG, get_db
+from app.database import IS_MYSQL, get_db
 from app.main import _assign_retailer_login
 from app.geo import coords_for
 
-if IS_PG and os.environ.get("ALLOW_NEON") != "1":
+if IS_MYSQL and os.environ.get("ALLOW_MYSQL") != "1":
     raise SystemExit(
-        "DATABASE_URL is set (Postgres/Neon) but ALLOW_NEON=1 was not passed - "
+        "DATABASE_URL is set (MySQL) but ALLOW_MYSQL=1 was not passed - "
         "refusing to run against production without explicit opt-in."
     )
 

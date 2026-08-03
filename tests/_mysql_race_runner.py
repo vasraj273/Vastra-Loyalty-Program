@@ -1,12 +1,18 @@
 """Standalone concurrency proof for Fix 1 (scan) and Fix 2 (claim) against a
-REAL PostgreSQL backend, driving the REAL HTTP endpoints through a live uvicorn
+REAL MySQL backend, driving the REAL HTTP endpoints through a live uvicorn
 server with genuinely concurrent client threads.
 
-Run directly (not via the shared pytest session, so it gets a clean PG-bound
-import):  DATABASE_URL=postgresql://... python tests/_pg_race_runner.py
+This is the gate for the MySQL migration. The claim half in particular fails on
+InnoDB's default REPEATABLE READ isolation: the FOR UPDATE lock serializes the
+claims, but the follow-up balance read would return the transaction's original
+snapshot and let every waiter overdraw the wallet. It passes only because
+database.get_db() sets READ COMMITTED per connection.
+
+Run directly (not via the shared pytest session, so it gets a clean MySQL-bound
+import):  DATABASE_URL=mysql://... python tests/_mysql_race_runner.py
 
 Exits 0 on success, non-zero (with a message) on any failure. Imported and
-invoked as a subprocess by test_race_postgres.py.
+invoked as a subprocess by test_race_mysql.py.
 """
 import os
 import sys
@@ -16,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 os.environ.setdefault("RL_ENABLED", "0")  # isolate the race, not the limiter
 
-assert os.environ.get("DATABASE_URL"), "DATABASE_URL must be set for the PG proof"
+assert os.environ.get("DATABASE_URL"), "DATABASE_URL must be set for the MySQL proof"
 
 import httpx  # noqa: E402
 import uvicorn  # noqa: E402
@@ -24,11 +30,11 @@ import uvicorn  # noqa: E402
 import app.database as d  # noqa: E402
 from app.auth import hash_password, issue_retailer_token  # noqa: E402
 
-assert d.IS_PG, "expected Postgres backend (DATABASE_URL set)"
+assert d.IS_MYSQL, "expected MySQL backend (DATABASE_URL set)"
 
 from app.main import app  # noqa: E402
 
-PORT = int(os.environ.get("PG_PROOF_PORT", "8099"))
+PORT = int(os.environ.get("MYSQL_PROOF_PORT", "8099"))
 BASE = f"http://127.0.0.1:{PORT}"
 N = 20
 
@@ -38,8 +44,8 @@ def reset_and_seed():
     with d.get_db() as db:
         for t in ("gift_claims", "points_ledger", "qr_codes", "qr_batches",
                   "scheme_products", "schemes", "retailer_tokens", "gifts",
-                  "retailers", "distributors", "products", "auth_tokens",
-                  "manufacturers"):
+                  "retailers", "distributors", "product_points",
+                  "products", "auth_tokens", "manufacturers"):
             db.execute(f"DELETE FROM {t}")
         cur = db.execute(
             "INSERT INTO manufacturers (username, password_hash, display_name, is_admin)"
@@ -50,8 +56,8 @@ def reset_and_seed():
             " VALUES (?,?,?,?)", (mid, "Saree", "SKU-1", 10))
         pid = cur.lastrowid
         cur = db.execute(
-            "INSERT INTO qr_batches (product_id, quantity, points_per_code)"
-            " VALUES (?,?,?)", (pid, 1, 10))
+            "INSERT INTO qr_batches (product_id, quantity, points_per_code,"
+            " manufacturer_id) VALUES (?,?,?,?)", (pid, 1, 10, mid))
         bid = cur.lastrowid
         db.execute(
             "INSERT INTO qr_codes (token, manual_code, batch_id, is_parent, parent_token)"
@@ -138,7 +144,7 @@ def main():
     if failures:
         print("FAIL:\n  " + "\n  ".join(failures))
         sys.exit(1)
-    print("PASS: single reward + single claim under 20x concurrency on Postgres")
+    print("PASS: single reward + single claim under 20x concurrency on MySQL")
 
 
 if __name__ == "__main__":

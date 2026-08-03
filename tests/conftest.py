@@ -2,9 +2,15 @@
 
 Rate limiting is disabled (RL_ENABLED=0) for deterministic functional tests;
 the dedicated test_rate_limit.py re-enables it with a low limit in isolation.
-The app is pointed at a throwaway SQLite file; every test starts from clean
-tables. The Postgres-only concurrency proof lives in test_race_postgres.py and
-is skipped unless DATABASE_URL is set.
+By default the app is pointed at a throwaway SQLite file and every test starts
+from clean tables.
+
+Setting DATABASE_URL runs the same suite against MySQL instead (point it at a
+throwaway database — the clean fixture wipes every table), and additionally
+un-skips the two MySQL-only proofs: test_race_mysql.py (concurrency) and
+test_mysql_schema.py (DDL idempotency, generated-column index, collation).
+
+    DATABASE_URL=mysql://user:pass@127.0.0.1:3306/vl_test pytest tests/ -q
 """
 import os
 

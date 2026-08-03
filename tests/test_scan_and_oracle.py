@@ -1,5 +1,5 @@
 """Fix 1 (sequential correctness) + Fix 5 (enumeration oracle) via the real
-HTTP endpoint. The concurrency proof for Fix 1 is in test_race_postgres.py."""
+HTTP endpoint. The concurrency proof for Fix 1 is in test_race_mysql.py."""
 
 
 def _auth(t):

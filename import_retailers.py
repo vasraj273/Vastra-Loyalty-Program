@@ -16,7 +16,7 @@ CSV columns (header row required):
 
 Coordinates are filled from the city lookup. Rows whose username already
 exists are skipped. Targets the configured database (SQLite locally, or the
-Postgres in DATABASE_URL).
+MySQL server in DATABASE_URL).
 
 Usage:
     python import_retailers.py sample_retailers.csv

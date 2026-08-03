@@ -19,7 +19,8 @@ COPY seed.py .
 COPY --from=panel /panel/dist panel/dist
 
 # The app creates tables on startup if missing (CREATE TABLE IF NOT EXISTS)
-# but never seeds automatically, so Postgres data persists across deploys.
-# Seed the database once manually:  python seed.py  (with DATABASE_URL set).
+# but never seeds automatically, so MySQL data persists across deploys.
+# Seed the database once manually:  ALLOW_MYSQL=1 python seed.py
+# (with DATABASE_URL set). See docs/integration/MYSQL_SETUP.md.
 ENV PORT=8000
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]

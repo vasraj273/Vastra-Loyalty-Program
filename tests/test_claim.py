@@ -1,5 +1,5 @@
 """Fix 2 (sequential correctness) via the real endpoint. Concurrency proof is
-in test_race_postgres.py."""
+in test_race_mysql.py."""
 
 
 def _auth(t):

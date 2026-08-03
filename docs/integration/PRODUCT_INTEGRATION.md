@@ -236,7 +236,7 @@ Authorization: Bearer <loyalty manufacturer token>
   its neighbour's `left`/`right` offset by the same amount. There is still no
   add-single-product form — CSV import plus delete covers v1.
 
-## 7. Migration status (additive, Neon-safe; no reseed/drop)
+## 7. Migration status (additive, production-safe; no reseed/drop)
 
 1. ✅ Reference + snapshot model on `qr_batches`/`points_ledger`
    (`product_external_id`, `manufacturer_id`, snapshot columns);
@@ -251,7 +251,7 @@ Authorization: Bearer <loyalty manufacturer token>
    the two legacy readers in §6/§8.
 5. ✅ **CSV-imported catalog (2026-08-01):** `product_points` gained `name`,
    `sku`, `attrs`, `source` via `_MIGRATIONS` (additive, applies in place on
-   Neon, no reseed); routes renamed to `/catalog/products*`; the Vastra branch
+   production, no reseed); routes renamed to `/catalog/products*`; the Vastra branch
    removed from the catalog and `fetch_vastra_products()` left dormant;
    `USE_SAMPLE_PRODUCTS` added. Covered by `tests/test_catalog_import.py`.
 6. ⏳ **Not done:** migrate `scheme_products` to `product_external_id` (§8);

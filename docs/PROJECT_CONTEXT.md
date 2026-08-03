@@ -3,7 +3,7 @@
 A one-stop orientation to what this project is, who it serves, how it's built, and
 where it stands. For deeper detail see the companion docs linked at the end.
 
-**Status:** Live in production on Render + Neon (Postgres) with real data.
+**Status:** Live in production on Render + MySQL (AWS RDS) with real data.
 **Last updated:** 2026-06-25.
 
 ---
@@ -122,12 +122,12 @@ kept verbatim and shown in the panel).
 
 - **Backend:** Python 3.12+, FastAPI, Pydantic v2, Uvicorn. PDF/QR via `reportlab`,
   `qrcode`.
-- **Database — dual backend** (`app/database.py`): Postgres when `DATABASE_URL` is
+- **Database — dual backend** (`app/database.py`): MySQL when `DATABASE_URL` is
   set, SQLite otherwise. Code is written in **SQLite style everywhere** (`?`
   placeholders, `cur.lastrowid`, `datetime('now')`); a `_PGConn` adapter translates
-  to psycopg. Schema evolution is **additive & idempotent** — new tables in
+  to PyMySQL. Schema evolution is **additive & idempotent** — new tables in
   `SCHEMA`, new columns in `_MIGRATIONS`, applied by `migrate()` on every startup.
-  **Never reseed/drop the Neon DB.** (Gotcha: no `;` inside `SCHEMA` comments.)
+  **Never reseed/drop the production DB.** (Gotchas: no `;` inside `SCHEMA` comments; no `%` literals in SQL; `VARCHAR(n)` not `TEXT` for any indexed column.)
 - **Auth:** opaque bearer tokens; two principals (`auth_tokens` for
   manufacturers/admin, `retailer_tokens` for retailers); PBKDF2 passwords. Retailer
   logins are auto-created from the shop name. **Single active session** — a new
@@ -167,10 +167,10 @@ kept verbatim and shown in the panel).
 
 - **Render** Docker web service (`vastra-loyalty.onrender.com`, free tier — spins
   down on idle, ~50s cold start), **auto-deploys from GitHub `main`**.
-- **Neon** Postgres holds production data (`DATABASE_URL`). Tables are
+- **MySQL** (AWS RDS) holds production data (`DATABASE_URL`). Tables are
   created/migrated on boot; the app **never seeds**.
 - `seed.py` is destructive (local/initial only) and does **not** run `_MIGRATIONS`.
-- **Env vars:** `QR_BASE_URL` (QR payload origin), `DATABASE_URL` (Postgres/Neon),
+- **Env vars:** `QR_BASE_URL` (QR payload origin), `DATABASE_URL` (MySQL),
   and optionally `SSO_SECRET` + `SSO_ISSUERS`/`SSO_AUDIENCE`/`SSO_MAX_AGE` to enable
   native-app SSO, and `YOURAPP_API_KEY` to enable the YourApp server-to-server
   scan endpoints (`/yourapp/*`).

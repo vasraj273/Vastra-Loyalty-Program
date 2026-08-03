@@ -1,6 +1,6 @@
 # Technical Requirements Document — Vastra Loyalty Program
 
-**Status:** Live (Render + Neon) · **Last updated:** 2026-06-24
+**Status:** Live (Render + MySQL) · **Last updated:** 2026-06-24
 
 Companion to **PRD.md** (product) and **CLAUDE.md** (contributor conventions).
 This document describes the technical design as built.
@@ -15,13 +15,13 @@ Single FastAPI service (`app/main.py`) serving three surfaces from one container
   YourApp    ───▶│  /web/*  (plain-HTML webviews: home, scan, shop, claims,        │
   Panel SPA  ───▶│            generate)                                            │
                  │  /panel  (React build from panel/dist)                          │
-                 │            └──▶ app/database.py  ──▶  SQLite (dev) / Postgres(prod)│
+                 │            └──▶ app/database.py  ──▶  SQLite (dev) / MySQL (prod)  │
                  └─────────────────────────────────────────────────────────────────┘
 ```
 
 - **Backend:** Python 3.12+, FastAPI, Pydantic v2, Uvicorn.
 - **PDF/QR:** `qrcode[pil]`, `reportlab` (A4 label sheets).
-- **DB driver:** `psycopg[binary]` (Postgres); stdlib `sqlite3` otherwise.
+- **DB driver:** `pymysql[rsa]` (MySQL 8.0.13+); stdlib `sqlite3` otherwise.
 - **Panel:** React + Vite (`panel/`), built to `panel/dist`, served at `/panel`.
   `panel/src/api.js` is the only fetch layer. Navigation is a top-right burger
   menu (`App.jsx`); the India map clusters via `leaflet.markercluster`; a
@@ -80,10 +80,10 @@ only) and resolved once into the same snapshot. Product CRUD/import is
 
 ## 3. Database backend (dual)
 
-`app/database.py` is **dual-backend**: Postgres when `DATABASE_URL` is set, SQLite
+`app/database.py` is **dual-backend**: MySQL when `DATABASE_URL` is set, SQLite
 otherwise. Application code is written in **SQLite style everywhere** (`?`
 placeholders, `cur.lastrowid`, `datetime('now')`, `:name` params); a `_PGConn`
-adapter translates to psycopg at runtime.
+adapter translates to PyMySQL at runtime.
 
 - Tables using `cur.lastrowid` on INSERT must be in `_ID_TABLES` (adapter appends
   `RETURNING id` on PG).
@@ -96,7 +96,7 @@ adapter translates to psycopg at runtime.
   `_MIGRATIONS`.
 - **No `;` in `SCHEMA` comments.** The PG `executescript` splits on `;`; a
   semicolon in a `--` comment would split a statement (SQLite tolerates it, so it
-  only fails on Postgres at deploy). `executescript` now strips full-line `--`
+  only fails on MySQL at deploy). `executescript` now strips full-line `--`
   comments before splitting, but keep schema comments semicolon-free.
 
 ## 4. Authentication & authorization
@@ -230,7 +230,7 @@ base/bonus/total points, `available`/`redeemed`) that never changes state.
   from two queries — generation `COUNT` over `qr_codes.created_at` via the batch's
   `manufacturer_id`, scans `COUNT` over `points_ledger.scanned_at` where
   `entry_type='scan'`). Month buckets use `substr(x, 1, 7)` (portable across
-  SQLite/Postgres — **not** `strftime`).
+  SQLite/MySQL — **not** `strftime`).
 - The panel renders `by_month` as two themed SVG bar charts
   (`panel/src/components/BarChart.jsx`, a viewBox chart that scales to the card —
   no charting dependency) under a **year selector**: month-wise generation, and
@@ -247,8 +247,8 @@ base/bonus/total points, `available`/`redeemed`) that never changes state.
   `points`/`base_points`/`bonus_points`, `parent_token` (`MAX`), and `id`
   (`MIN(l.id)`). `total` counts grouped rows via a `GROUP BY` subquery.
 - Done entirely at query time — **no schema change**, and it tidies box scans
-  already stored on Neon. The non-aggregated SELECT columns are repeated in
-  `GROUP BY` (identical within a group) to satisfy Postgres strict grouping; stays
+  already stored in production. The non-aggregated SELECT columns are repeated in
+  `GROUP BY` (identical within a group) to satisfy MySQL's ONLY_FULL_GROUP_BY; stays
   `?`-placeholder / sqlite-style for the dual backend.
 - The panel walks every page (`limit`/`offset`) to build the Claims CSV export.
 
@@ -304,7 +304,7 @@ base/bonus/total points, `available`/`redeemed`) that never changes state.
 
 | Env var | Purpose |
 |---|---|
-| `DATABASE_URL` | Postgres/Neon **pooled** connection string. Unset → local SQLite `qr_api.db`. |
+| `DATABASE_URL` | MySQL connection string (`mysql://user:pass@host:3306/db?ssl=true`). Unset → local SQLite `qr_api.db`. See `docs/integration/MYSQL_SETUP.md`. |
 | `QR_BASE_URL` | URL prefix baked into every QR (set to deployed HTTPS origin + `/web/scan` before any production print run). |
 | `SSO_SECRET` | Shared HMAC secret enabling native-app SSO. Unset → `/auth/sso/*` return `503`. |
 | `SSO_ISSUERS` | Allowed JWT `iss` values (comma-separated). Default `vastra,yourapp`. |
@@ -315,7 +315,7 @@ base/bonus/total points, `available`/`redeemed`) that never changes state.
 ## 8. Deployment
 
 - **Dockerfile** builds the panel, then runs the API serving `/`, `/panel`,
-  `/web/*`. Render (Docker web service) + Neon Postgres.
+  `/web/*`. Render (Docker web service) + MySQL (AWS RDS).
 - **Auto-deploy** from GitHub `main`; container creates/migrates tables on boot,
   never seeds — data persists across deploys.
 - Free tier spins down on idle (~50s cold start). See **DEPLOY.md**.
@@ -331,4 +331,4 @@ base/bonus/total points, `available`/`redeemed`) that never changes state.
   per-manufacturer unique index blocks cross-tenant resolution.
 - Known backlog (not yet implemented): rate limiting, scan/redeem
   race-condition (TOCTOU) hardening, broader input/XSS review. Treat production
-  Neon data as real — never reseed/drop it.
+  production data as real — never reseed/drop it.

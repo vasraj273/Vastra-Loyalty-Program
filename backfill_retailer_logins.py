@@ -8,7 +8,7 @@ repeatedly; already-set logins are skipped. Generated passwords are printed once
 so they can be handed to each retailer.
 
 Usage (local SQLite):   python backfill_retailer_logins.py
-Usage (Neon/Postgres):  set DATABASE_URL, then run the same command.
+Usage (MySQL):  set DATABASE_URL, then run the same command.
 """
 
 from app.auth import hash_password, new_temp_password

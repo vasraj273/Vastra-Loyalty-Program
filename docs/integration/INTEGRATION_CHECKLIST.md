@@ -111,7 +111,7 @@ product-list API contract (see [PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#
 ## DevOps
 
 **Environment variables** ✅
-- [ ] `DATABASE_URL` (Neon pooled), `QR_BASE_URL` (HTTPS origin + `/web/scan`).
+- [ ] `DATABASE_URL` (MySQL, see `docs/integration/MYSQL_SETUP.md`), `QR_BASE_URL` (HTTPS origin + `/web/scan`).
 - [ ] `SSO_SECRET` (+ optional `SSO_ISSUERS`/`SSO_AUDIENCE`/`SSO_MAX_AGE`).
 - [ ] `VASTRA_API_BASE_URL` + `VASTRA_API_KEY` (+ optional `VASTRA_API_TIMEOUT`) —
       required for the panel's Products tab / QR generation to load a catalog.
@@ -135,7 +135,7 @@ product-list API contract (see [PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#
 **Logging**
 - [ ] Capture request id, status, route, latency. **Never log** the `SSO_SECRET`,
       bearer tokens, or `?token=` query values.
-- [ ] Retain Neon backups / point-in-time restore window for rollback.
+- [ ] Retain RDS automated backups / point-in-time restore window for rollback.
 
 ---
 

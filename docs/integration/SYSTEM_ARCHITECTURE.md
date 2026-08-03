@@ -5,7 +5,7 @@
 ## 1. Overview
 
 The Loyalty QR backend is a single **FastAPI** service (Python 3.12+) backed by
-**PostgreSQL** in production (SQLite for local dev). It powers a
+**MySQL** in production (SQLite for local dev). It powers a
 manufacturer→retailer loyalty program: manufacturers generate QR codes that are
 printed on product/box stickers; retailers scan them to earn points and redeem
 gifts.
@@ -34,7 +34,7 @@ flowchart TB
   end
   subgraph Loyalty["Loyalty Backend (this service)"]
     API["FastAPI REST API"]
-    DB[("PostgreSQL / Neon\n(loyalty domain + ledger)")]
+    DB[("MySQL / AWS RDS\n(loyalty domain + ledger)")]
     Panel["React Admin Panel /panel"]
     Web["Webviews /web/*"]
     API --> DB

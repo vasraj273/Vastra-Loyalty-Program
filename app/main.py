@@ -27,7 +27,7 @@ from .auth import (current_admin, current_manufacturer, current_retailer,
                    current_user, hash_password, issue_retailer_token,
                    issue_token, new_temp_password, verify_password,
                    verify_sso_assertion)
-from .database import IS_PG, create_constraints, get_db, init_db, migrate
+from .database import IS_MYSQL, create_constraints, get_db, init_db, migrate
 from .geo import coords_for, known_places, nearest_city, reverse_address
 from .pdf_service import build_pdf
 from .qr_service import (new_manual_code, new_reference, new_token,
@@ -2469,7 +2469,7 @@ def dashboard(user: dict = Depends(current_manufacturer)):
         # with scan activity appear (loyalty is no longer the product catalog).
         by_product = db.execute(
             """SELECT COALESCE(l.product_external_id, l.product_sku,
-                               CAST(l.product_id AS TEXT)) AS id,
+                               CAST(l.product_id AS CHAR)) AS id,
                       MAX(l.product_name) AS name,
                       MAX(l.product_sku) AS sku,
                       MAX(l.product_external_id) AS product_external_id,
@@ -2478,7 +2478,7 @@ def dashboard(user: dict = Depends(current_manufacturer)):
                FROM points_ledger l
                WHERE l.manufacturer_id = ? AND l.entry_type = 'scan'
                GROUP BY COALESCE(l.product_external_id, l.product_sku,
-                                 CAST(l.product_id AS TEXT))
+                                 CAST(l.product_id AS CHAR))
                ORDER BY scans DESC""",
             (mid,),
         ).fetchall()
@@ -2504,7 +2504,7 @@ def dashboard(user: dict = Depends(current_manufacturer)):
             (mid,),
         ).fetchall()
         # Monthly QR generation vs scans. Month bucket is substr(...,1,7) ->
-        # 'YYYY-MM', portable across both SQLite and Postgres (no strftime).
+        # 'YYYY-MM', portable across both SQLite and MySQL (no strftime).
         gen_rows = db.execute(
             """SELECT substr(c.created_at, 1, 7) AS month, COUNT(*) AS n
                FROM qr_codes c
@@ -2707,12 +2707,15 @@ def claim_gift(request: Request, body: GiftClaimIn,
             raise HTTPException(403, "Gift belongs to another manufacturer")
         # Fix 2 (claim double-spend race): serialize concurrent claims for this
         # retailer by taking a row lock on the retailer BEFORE reading the
-        # balance. On PostgreSQL, SELECT ... FOR UPDATE makes a second
-        # simultaneous claim block until the first commits, so it then re-reads
-        # the already-reduced balance and is correctly rejected — a wallet can
-        # never go negative. SQLite serializes writers at the database level, so
-        # no explicit lock clause is needed (and it has no FOR UPDATE syntax).
-        if IS_PG:
+        # balance. On MySQL, SELECT ... FOR UPDATE makes a second simultaneous
+        # claim block until the first commits, so it then re-reads the
+        # already-reduced balance and is correctly rejected — a wallet can never
+        # go negative. This depends on the READ COMMITTED isolation level set per
+        # connection in database.get_db(): under InnoDB's REPEATABLE READ default
+        # the _balance() re-read below would still see the pre-claim snapshot.
+        # SQLite serializes writers at the database level, so no explicit lock
+        # clause is needed (and it has no FOR UPDATE syntax).
+        if IS_MYSQL:
             db.execute("SELECT id FROM retailers WHERE id = ? FOR UPDATE", (rid,))
         if _balance(db, rid) < gift["points_cost"]:
             raise HTTPException(409, "Not enough points")
