@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "helvetica",
+        "createdAt": "2026-08-04T11:38:42.964Z",
+        "reason": "Vastra brand system uses a Helvetica system stack; confirmed as the company's system design font"
+      }
+    ]
+  }
+}

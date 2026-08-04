@@ -31,13 +31,22 @@
   button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); box-shadow:none; }
   .error { background:#fee9e5; border:1px solid var(--madder); color:#e34a33; padding:10px 13px; border-radius:8px; margin-top:12px; font-size:14px; display:none; }
   .hidden { display:none; }
-  .wallet { text-align:center; padding:6px 0 4px; }
-  .wallet .label { font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--soft); }
-  .wallet .bal { font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-weight:700; font-size:48px; line-height:1; color:var(--indigo); }
-  .who { font-size:13px; color:var(--soft); text-align:center; margin-bottom:6px; }
-  .who strong { color:var(--ink); }
-  .big-actions button { font-size:17px; padding:18px; }
-  .logout { margin-top:6px; font-size:13px; }
+  .points-card { background:linear-gradient(155deg,var(--primary) 0%,var(--indigo) 100%); border:none; color:#fff;
+                 padding:30px 22px 32px; text-align:center; box-shadow:0 10px 28px rgba(29,70,111,.28); }
+  .points-card .who { font-size:14px; color:rgba(255,255,255,.8); margin:0 0 24px; }
+  .points-card .who strong { color:#fff; font-weight:600; }
+  .points-card .who span:not(:empty)::before { content:" · "; }
+  .wallet .label { font-size:11px; letter-spacing:2px; text-transform:uppercase; color:rgba(255,255,255,.75); font-weight:600; }
+  .wallet .bal { font-weight:700; font-size:62px; line-height:1.05; color:#fff; margin-top:8px; letter-spacing:-1px; }
+  .scan-cta { display:flex; align-items:center; gap:14px; width:100%; margin:0; padding:20px 22px; text-align:left;
+              font-size:18px; border-radius:14px; background:var(--card); color:var(--ink); border:1px solid var(--line);
+              box-shadow:0 1px 2px rgba(34,41,79,.08),0 8px 24px rgba(34,41,79,.07); }
+  .scan-cta .ic { flex:none; width:52px; height:52px; border-radius:14px; background:rgba(1,145,208,.12);
+                  display:flex; align-items:center; justify-content:center; font-size:26px; }
+  .scan-cta .t { display:block; font-weight:700; font-size:18px; }
+  .scan-cta .s { display:block; font-weight:400; font-size:13px; color:var(--soft); margin-top:2px; }
+  .scan-cta .arw { margin-left:auto; font-size:22px; color:var(--primary); }
+  .scan-cta:active { transform:translateY(1px); }
   .appbar { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
   .navmenu { position:relative; flex:none; }
   .menu-btn { width:auto; margin:0; padding:10px; background:transparent; box-shadow:none; border:1px solid var(--line);
@@ -70,9 +79,8 @@
       <button class="menu-btn" id="navBtn" onclick="toggleMenu()" aria-label="Menu" aria-haspopup="menu"><i></i><i></i><i></i></button>
       <div class="menu-pop" id="navPop" role="menu">
         <button class="active" onclick="go('/web')">Home</button>
-        <button onclick="go('/web/scan')">Scan</button>
-        <button onclick="go('/web/shop')">Reward shop</button>
-        <button onclick="go('/web/claims')">Claims history</button>
+        <button onclick="go('/web/shop')">Redeem shop</button>
+        <button onclick="go('/web/claims')">Claims</button>
         <div class="sep"></div>
         <button class="logout" onclick="logout()">Log out</button>
       </div>
@@ -91,16 +99,18 @@
 
   <!-- dashboard -->
   <div class="hidden" id="dash">
-    <div class="card">
-      <p class="who">Signed in as <strong id="whoShop"></strong><br/><span id="whoManuf" class="sub" style="letter-spacing:1px"></span></p>
-      <div class="wallet"><div class="label">Your points</div><div class="bal" id="bal">—</div></div>
+    <div class="card points-card">
+      <p class="who"><strong id="whoShop"></strong><span id="whoManuf"></span></p>
+      <div class="wallet">
+        <div class="label">Total points</div>
+        <div class="bal" id="bal">—</div>
+      </div>
     </div>
-    <div class="card big-actions">
-      <button onclick="go('/web/scan')">📷 Scan QR code</button>
-      <button class="secondary" onclick="go('/web/shop')">🎁 Rewards shop</button>
-      <button class="ghost" onclick="go('/web/claims')">🧾 My claims</button>
-      <button class="ghost logout" onclick="logout()">Log out</button>
-    </div>
+    <button class="scan-cta" onclick="go('/web/scan')">
+      <span class="ic">📷</span>
+      <span><span class="t">Scan QR code</span><span class="s">Scan a sticker to earn points</span></span>
+      <span class="arw">→</span>
+    </button>
   </div>
 </div>
 
