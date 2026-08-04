@@ -302,9 +302,15 @@ class GiftClaimIn(BaseModel):
 @limiter.limit(RL_LOGIN, key_func=get_remote_address)
 def login(request: Request, body: LoginIn):
     with get_db() as db:
+        # Exact match, no case folding: a login is a credential and is compared
+        # byte-for-byte, like the password and the session token. Stored
+        # usernames are canonicalised to lowercase at creation time (see
+        # create_manufacturer / _assign_retailer_login / _vastra_username), so
+        # in practice the username must be typed lowercase. The MySQL column
+        # carries COLLATE utf8mb4_bin so the database agrees.
         row = db.execute(
             "SELECT * FROM manufacturers WHERE username = ?",
-            (body.username.strip().lower(),),
+            (body.username.strip(),),
         ).fetchone()
         if not row or not verify_password(body.password, row["password_hash"]):
             raise HTTPException(401, "Invalid username or password")
@@ -467,9 +473,10 @@ def vastra_verify_otp(request: Request, body: VastraOtpVerifyIn):
 @limiter.limit(RL_LOGIN, key_func=get_remote_address)
 def retailer_login(request: Request, body: LoginIn):
     with get_db() as db:
+        # Exact match — see the note in login() above.
         row = db.execute(
             "SELECT * FROM retailers WHERE username = ?",
-            (body.username.strip().lower(),),
+            (body.username.strip(),),
         ).fetchone()
         if (not row or not row["password_hash"]
                 or not verify_password(body.password, row["password_hash"])):

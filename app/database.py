@@ -45,19 +45,27 @@ if IS_MYSQL:
     import pymysql
     from pymysql.cursors import DictCursor
 
-# Case-sensitive identifier columns get an explicit binary collation on MySQL.
-# SQLite compares text case-sensitively by default, but MySQL's default
-# collation (utf8mb4_0900_ai_ci) does not — without this, QR tokens, session
-# tokens and manual codes would match case-insensitively, unlike today.
-# Human-facing text (usernames, shop names, regions) deliberately keeps the
-# case-insensitive default. NOTE: a foreign key's collation must match its
-# referent, which is why points_ledger.token carries this too.
+# Case-sensitive columns get an explicit binary collation on MySQL. SQLite
+# compares text case-sensitively by default, but MySQL's default collation
+# (utf8mb4_0900_ai_ci) does not — without this, QR tokens, manual codes,
+# session tokens and login usernames would all match case-insensitively,
+# unlike today.
+#
+# Applied to every credential and identifier: login usernames, QR/session
+# tokens, manual codes, gift-claim references and SSO external ids.
+# (Passwords need nothing here — verify_password runs PBKDF2 in Python and
+# compares with secrets.compare_digest; password_hash is never compared in
+# SQL, so it has always been byte-exact regardless of collation.)
+# Descriptive text — shop names, people's names, regions, notes — keeps the
+# case-insensitive default, so searching and grouping behave naturally.
+# NOTE: a foreign key's collation must match its referent, which is why
+# points_ledger.token carries this too.
 _CS = " COLLATE utf8mb4_bin" if IS_MYSQL else ""
 
 _SCHEMA_TMPL = """
 CREATE TABLE IF NOT EXISTS manufacturers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username VARCHAR(100) NOT NULL UNIQUE,
+    username VARCHAR(100){CS} NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,   -- pbkdf2 salt$hash (hex)
     display_name VARCHAR(255) NOT NULL,
     is_admin INTEGER NOT NULL DEFAULT 0,  -- 1 = super admin (creates accounts)
@@ -87,7 +95,7 @@ CREATE TABLE IF NOT EXISTS retailers (
     shop_name VARCHAR(255) NOT NULL,
     region VARCHAR(120) NOT NULL,
     phone VARCHAR(32),
-    username VARCHAR(100) UNIQUE,    -- retailer login (null = no login yet)
+    username VARCHAR(100){CS} UNIQUE,   -- retailer login (null = no login yet)
     password_hash VARCHAR(255),
     lat DOUBLE,   -- auto-filled from region city lookup, manual override allowed
     lng DOUBLE,
@@ -476,7 +484,7 @@ _MIGRATIONS = [
     ("points_ledger", "counterparty_retailer_id", "INTEGER"),
     ("points_ledger", "note", "TEXT"),
     ("points_ledger", "created_by", "INTEGER"),
-    ("retailers", "username", "VARCHAR(100)"),
+    ("retailers", "username", "VARCHAR(100){CS}"),
     ("retailers", "password_hash", "VARCHAR(255)"),
     ("gift_claims", "reference", "VARCHAR(32){CS}"),
     # Per-scan capture location (where the QR was actually scanned), distinct

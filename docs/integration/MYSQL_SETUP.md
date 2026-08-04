@@ -17,7 +17,7 @@ unset). MySQL is only for deployed environments.
 | Engine | **MySQL 8.0.13 or newer** | `created_at` columns use expression defaults (`DEFAULT (CAST(UTC_TIMESTAMP() AS CHAR))`), added in 8.0.13. 8.0.x and 8.4.x are both fine. |
 | Storage engine | **InnoDB** (default) | Foreign keys, row locks, and `SELECT ... FOR UPDATE` are all required for correct points accounting. |
 | Character set | **`utf8mb4`** | Product names and CSV catalog data are free-form text. |
-| Collation | **`utf8mb4_0900_ai_ci`** (the 8.0 default) | Deliberate: usernames compare case-insensitively. Identifier columns override this per-column with `utf8mb4_bin` — do not set a server-wide binary collation. |
+| Collation | **`utf8mb4_0900_ai_ci`** (the 8.0 default) | Credential/identifier columns override this per-column with `utf8mb4_bin` (see §5). Do not change the server-wide default — descriptive text is meant to compare case-insensitively. |
 | `sql_mode` | Default (includes `STRICT_TRANS_TABLES`) | The app assumes over-long values are rejected, not silently truncated. |
 | Time zone | Any | The app pins `time_zone = '+00:00'` per connection; the server's own setting is irrelevant. |
 
@@ -115,11 +115,15 @@ month buckets), which is what keeps the SQL identical across SQLite and MySQL.
 Do not "fix" these to `DATETIME` — it would return Python `datetime` objects and
 break every comparison and JSON response.
 
-**Identifier columns use `utf8mb4_bin`, everything else the DB default.** QR
-tokens, manual codes, session tokens, gift-claim references and SSO
-`external_id`s must match exactly; usernames and shop names are deliberately
-case-insensitive. A foreign key's collation must match its referent, which is
-why `points_ledger.token` is binary too.
+**Credential and identifier columns use `utf8mb4_bin`, everything else the DB
+default.** Login usernames, QR tokens, manual codes, session tokens,
+gift-claim references and SSO `external_id`s all match exactly. Descriptive
+text (shop names, people's names, regions) is deliberately case-insensitive so
+search and analytics grouping behave naturally. A foreign key's collation must
+match its referent, which is why `points_ledger.token` is binary too.
+
+Passwords are unaffected by collation either way: they are PBKDF2 hashes
+verified in Python with `secrets.compare_digest` and never compared in SQL.
 
 **`points_ledger.active_scan_token` is a generated column — never write to it.**
 MySQL has no partial indexes, so the rule "at most one *active* scan credit per

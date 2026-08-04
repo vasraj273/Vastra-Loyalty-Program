@@ -199,7 +199,8 @@ def main():
     check(row is not None, "qr_codes.token exact-case lookup failed")
     print("[collation] tokens compare case-sensitively")
 
-    # Usernames are case-INSENSITIVE, so 'ACME' collides with 'acme'.
+    # Login usernames are case-SENSITIVE too: credentials must match exactly,
+    # as they do on SQLite. 'ACME' is a DIFFERENT account from 'acme'.
     clash = None
     try:
         with d.get_db() as db:
@@ -209,10 +210,38 @@ def main():
                 ("ACME", hash_password("p"), "Acme Caps"))
     except Exception as exc:
         clash = str(exc)
-    check(clash is not None and "UNIQUE constraint failed" in clash,
-          "username 'ACME' did not collide with 'acme' (expected "
-          "case-insensitive collation)")
-    print("[collation] usernames compare case-insensitively")
+    check(clash is None,
+          f"username 'ACME' collided with 'acme' — expected case-sensitive "
+          f"collation on the login column: {clash}")
+    with d.get_db() as db:
+        row = db.execute("SELECT display_name FROM manufacturers"
+                         " WHERE username = ?", ("acme",)).fetchone()
+    check(row is not None and row["display_name"] == "Acme",
+          f"login lookup for 'acme' returned the wrong row: {row}")
+    with d.get_db() as db:
+        row = db.execute("SELECT display_name FROM manufacturers"
+                         " WHERE username = ?", ("AcMe",)).fetchone()
+    check(row is None, f"login lookup for 'AcMe' matched a row: {row}")
+    print("[collation] login usernames compare case-sensitively")
+
+    # Retailer logins too (the other credential column).
+    with d.get_db() as db:
+        db.execute(
+            "INSERT INTO retailers (manufacturer_id, name, shop_name, region,"
+            " username, password_hash) VALUES (?,?,?,?,?,?)",
+            (mid, "Case", "Case Shop", "Surat", "casetest", hash_password("p")))
+        row = db.execute("SELECT id FROM retailers WHERE username = ?",
+                         ("CaseTest",)).fetchone()
+    check(row is None, "retailer login matched case-insensitively")
+    print("[collation] retailer logins compare case-sensitively")
+
+    # Descriptive text stays case-insensitive on purpose, so analytics grouping
+    # and search behave naturally.
+    with d.get_db() as db:
+        row = db.execute("SELECT id FROM retailers WHERE shop_name = ?",
+                         ("CASE SHOP",)).fetchone()
+    check(row is not None, "shop_name unexpectedly case-sensitive")
+    print("[collation] descriptive text stays case-insensitive")
 
     # ---- 4. timestamps are UTC strings in the app's exact format ----
     with d.get_db() as db:

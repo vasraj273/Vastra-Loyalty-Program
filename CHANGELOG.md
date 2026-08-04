@@ -24,10 +24,15 @@ behaviour changes — see `docs/integration/MYSQL_SETUP.md` for provisioning.
 - **`requirements.txt`** — `psycopg[binary]` → `pymysql[rsa]`.
 - **`seed.py` / `seed_extra.py`** — the destructive-op opt-in is now
   `ALLOW_MYSQL=1` (was `ALLOW_NEON=1`).
-- **Login is now case-insensitive** for manufacturers and retailers, a
-  consequence of MySQL's default `utf8mb4_0900_ai_ci` collation. QR tokens,
-  manual codes, session tokens, gift-claim references and SSO `external_id`s
-  keep case-sensitive matching via a per-column `utf8mb4_bin` collation.
+- **Logins are now compared exactly.** Both login endpoints previously
+  case-folded the submitted username (`body.username.strip().lower()`), so
+  `SURYA` logged in as `surya` on every backend. They now match byte-for-byte,
+  and `manufacturers.username`/`retailers.username` carry `utf8mb4_bin` so the
+  database agrees. Stored usernames are still canonicalised to lowercase at
+  creation, so a login is typed in lowercase. Passwords were never affected —
+  PBKDF2 is verified in Python and `password_hash` is never compared in SQL.
+  QR tokens, manual codes, session tokens, gift-claim references and SSO
+  `external_id`s are likewise case-sensitive via `utf8mb4_bin`.
 
 ### Fixed
 - **Gift-claim double-spend under concurrency on MySQL.** InnoDB defaults to

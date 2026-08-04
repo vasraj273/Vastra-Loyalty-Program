@@ -68,3 +68,24 @@ def test_password_change_flow(client, seed):
                         json={"username": "ravi", "password": "BrandNew99"})
     assert relog.status_code == 200
     assert relog.json()["must_change"] is False
+
+
+def test_login_is_case_sensitive(client, seed):
+    """Usernames are credentials: they match byte-for-byte, like the password
+    and the session token. Backend-independent (the app no longer case-folds;
+    the MySQL column additionally carries COLLATE utf8mb4_bin)."""
+    ok = client.post("/auth/retailer/login",
+                     json={"username": "ravi", "password": "TempPass123"})
+    assert ok.status_code == 200, ok.text
+
+    for wrong in ("Ravi", "RAVI", "rAvI"):
+        r = client.post("/auth/retailer/login",
+                        json={"username": wrong, "password": "TempPass123"})
+        assert r.status_code == 401, f"{wrong!r} should not log in: {r.text}"
+
+    # ...and the password itself stays case-sensitive (it always was: PBKDF2 is
+    # verified in Python, never compared by the database).
+    for wrong_pw in ("temppass123", "TEMPPASS123"):
+        r = client.post("/auth/retailer/login",
+                        json={"username": "ravi", "password": wrong_pw})
+        assert r.status_code == 401, f"{wrong_pw!r} should not log in"
