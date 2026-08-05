@@ -1,8 +1,35 @@
-# Deploying the demo
+# Deploying
 
-One container serves everything: API + admin panel (`/panel`) + webview pages (`/web/generate`, `/web/scan`). HTTPS is required for the phone camera on the scan page — both hosts below give it automatically.
+One container serves everything: API + admin panel (`/panel`) + webview pages (`/web/generate`, `/web/scan`). HTTPS is required for the phone camera on the scan page — every host below gives it automatically.
 
-## Option A: Render (free tier, easiest)
+| | Target | Use for |
+|---|---|---|
+| **A** | **AWS Lambda + RDS** | **Production.** Full runbook: [`docs/integration/AWS_LAMBDA_DEPLOY.md`](docs/integration/AWS_LAMBDA_DEPLOY.md) |
+| B | Render | Demos, review environments |
+| C | Railway | Demos |
+
+## Option A: AWS Lambda + RDS for MySQL (production)
+
+The production target. Lambda runs this app well, but it is a container-shaped
+app on a serverless runtime, so five settings are load-bearing rather than
+optional — the image needs the **Lambda Web Adapter**, the entry point must be a
+**Function URL in `RESPONSE_STREAM` mode** (API Gateway's 29s cap is shorter
+than a CSV import, and the 6 MB buffered response cap is smaller than a
+2,000-sticker print PDF), the function needs **≥1,769 MB** (CPU is proportional
+to memory and the import path is CPU-bound on PBKDF2), it needs **egress to the
+internet** or manufacturer OTP login cannot reach Vastra, and it needs **RDS
+Proxy** because `get_db()` opens a connection per request.
+
+**→ [`docs/integration/AWS_LAMBDA_DEPLOY.md`](docs/integration/AWS_LAMBDA_DEPLOY.md)**
+carries the step-by-step version, the measured numbers behind each threshold,
+and a launch checklist. Read §4 (networking) before launch day — it is the one
+that silently breaks manufacturer login.
+
+Environment variables go in the **function's own configuration** (see the ⚠️
+note under Option B: this app has no dotenv loader, so anything missing fails
+closed in production while working locally).
+
+## Option B: Render (free tier, easiest — demo)
 
 1. Push this folder to a GitHub repo.
 2. https://render.com → New → Web Service → connect the repo.
@@ -22,11 +49,15 @@ One container serves everything: API + admin panel (`/panel`) + webview pages (`
    - `VASTRA_API_BASE_URL` / `VASTRA_API_KEY` — power the panel's **Vastra OTP login** (see below); omit for a plain demo (OTP login fails closed with a 502 until set; password login keeps working). These do **not** affect the product catalog.
    - `USE_SAMPLE_PRODUCTS` — leave unset (defaults to `0`) for a real client. Set it to `1` only for demos/testing, which makes the Products tab show three built-in demo products until the manufacturer imports their CSV.
    - `YOURAPP_API_KEY` = a long random string shared with YourApp's backend — enables the server-to-server scan endpoints (`/yourapp/qr/lookup`, `/yourapp/scan`, see "YourApp server-to-server scan" below); omit and they return `503`.
-5. Deploy. First boot auto-seeds demo data (`admin/admin123`, `surya/surya123`, `heritage/heritage123`).
+5. Deploy. First boot creates and migrates the tables but **does not seed** — a
+   fresh database therefore has **no accounts at all** and nobody can log into
+   `/panel`. Seed once, by hand, from your machine with `DATABASE_URL` set (see
+   "Database (MySQL)" below); `seed.py` is destructive, so never run it a second
+   time against a database holding real data.
 
 Note: free tier sleeps after idle (first request takes ~30s) and the SQLite file resets on redeploy — fine for a demo, not for production.
 
-## Option B: Railway
+## Option C: Railway
 
 1. Push to GitHub → https://railway.app → New Project → Deploy from repo (Dockerfile auto-detected).
 2. Set `QR_BASE_URL` = `https://<your-app>.up.railway.app/web/scan`.
@@ -83,6 +114,32 @@ $env:ALLOW_MYSQL = '1'
 
 Re-running `seed.py` wipes and refills — don't run it against a database
 holding real data.
+
+### Creating the first account without wiping (`bootstrap_admin.py`)
+
+`seed.py` is for a scratch/demo database. For a **real** one — an empty RDS
+instance, or one already holding data — use `bootstrap_admin.py`, which is
+non-destructive and idempotent: it ensures the schema, then inserts only the
+accounts that don't exist yet. An existing username is left untouched and no
+password is ever reset, so it is safe to re-run.
+
+```bash
+export DATABASE_URL='mysql://user:pass@host:3306/vastra_loyalty?ssl=true'
+python bootstrap_admin.py --admin-user admin           # prompts for the password
+python bootstrap_admin.py --admin-user admin --mfr-user acme --mfr-name 'Acme Textiles'
+```
+
+No `ALLOW_MYSQL` opt-in is needed, because nothing is dropped. It also runs
+`init_db()` + `migrate()` + `create_constraints()`, so it doubles as the
+out-of-band way to apply the schema before traffic arrives (which is what you
+want on Lambda, where boot DDL otherwise runs on every cold start).
+
+**You may not need it at all:** Vastra OTP login *auto-provisions* the
+manufacturer — `POST /auth/vastra/verify-otp` inserts a new manufacturer when
+the Vastra `organization_Id` doesn't match an existing `external_id`. So the
+first successful OTP login creates the account by itself. `bootstrap_admin.py`
+covers the super admin (the Manufacturers tab) and the case where Vastra's API
+isn't reachable yet.
 
 > **Note:** `seed.py` rebuilds tables from `SCHEMA` only; it does **not** run
 > the column migrations in `_MIGRATIONS`. The app applies them automatically on
@@ -161,6 +218,14 @@ in loyalty's own `product_points` table, imported via the Products tab's
 
 ## Before real (non-demo) use
 
+- **On Lambda, work through
+  [`docs/integration/AWS_LAMBDA_DEPLOY.md`](docs/integration/AWS_LAMBDA_DEPLOY.md) §11**
+  first — adapter, `RESPONSE_STREAM` Function URL, ≥1,769 MB, verified egress,
+  RDS Proxy. Several of those are silent failures rather than loud ones.
+- **Make sure an account exists.** Startup never seeds, so a fresh database has
+  none. Either let Vastra OTP login auto-provision the manufacturer (it inserts
+  the account on first successful login), or run the non-destructive
+  `bootstrap_admin.py` (below).
 - Rotate the seeded passwords / disable seed.
 - Restrict CORS origins to the real app domains.
 - Set a strong `SSO_SECRET` (and keep it out of source control) if native-app SSO is used.

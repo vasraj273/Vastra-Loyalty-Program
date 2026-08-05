@@ -15,6 +15,15 @@
 - **Stateless app**; all state is in MySQL. Safe to run behind a load balancer
   (but see rate-limit storage in §3).
 
+> **Production runs this on AWS Lambda + RDS.** The bullets above still hold,
+> but "on boot" becomes "on every cold start", and three request-shaped limits
+> appear that a container doesn't have: a response size cap, an invocation
+> timeout, and one database connection per concurrent invocation. Lambda also
+> has no internet egress inside a VPC, which is what manufacturer OTP login
+> needs. All of that is covered — with measured thresholds — in
+> **[AWS_LAMBDA_DEPLOY.md](AWS_LAMBDA_DEPLOY.md)**. Read it instead of §6 when
+> deploying to Lambda.
+
 ## 2. Required environment variables
 
 | Var | Required | Default | Purpose |
@@ -35,7 +44,7 @@
 | `RL_SCAN` | No | `60/minute` | Limit for `/scan`. |
 | `RL_CLAIM` | No | `20/minute` | Limit for `/retailer/claim`. |
 | `RL_QRGEN` | No | `30/minute` | Limit for `/qr/generate`. |
-| `RL_IMPORT` | No | `10/hour` | Limit for CSV imports. |
+| `RL_IMPORT` | No | `600/hour` | Limit for CSV imports. Generous on purpose: the panel splits a large list into 250-row chunks, so one customer import is many requests. |
 | `RL_STORAGE_URI` | **If >1 process** | in-memory | Shared store (e.g. `redis://…`) so rate limits hold across replicas. |
 
 > Dependency: `pyjwt` (in `requirements.txt`) is required for SSO.
@@ -45,6 +54,14 @@
 Rate limiting defaults to **in-memory** storage. If you run **more than one
 process/replica**, set `RL_STORAGE_URI` to a shared backend (e.g. Redis) or each
 replica enforces its own independent limits (effectively multiplying them).
+
+**On Lambda this is not optional.** Every execution environment keeps its own
+counters and loses them on cold start, so without `RL_STORAGE_URI` (ElastiCache
+Redis, reachable from the function's subnets) login throttling is close to
+meaningless. Same section also covers connection limits: `get_db()` opens one
+connection per request, so concurrent invocations map 1:1 onto RDS connections
+— put **RDS Proxy** in front and cap reserved concurrency.
+See [AWS_LAMBDA_DEPLOY.md](AWS_LAMBDA_DEPLOY.md) §5 and §8.
 
 ## 4. Database & migrations
 
@@ -82,7 +99,19 @@ flowchart LR
 4. Verify: an unset `SSO_SECRET` makes `/auth/sso/*` return `503` — a quick way to
    confirm whether SSO is enabled in an environment.
 
-## 6. Production deployment (Render + MySQL, representative)
+## 6. Production deployment
+
+**Production target: AWS Lambda + RDS for MySQL → follow
+[AWS_LAMBDA_DEPLOY.md](AWS_LAMBDA_DEPLOY.md), not the steps below.** It covers
+the Lambda Web Adapter, the `RESPONSE_STREAM` Function URL (API Gateway's 29s
+cap is shorter than a CSV import; the 6 MB buffered response cap is smaller
+than a 2,000-sticker print PDF), memory sizing, VPC egress, RDS Proxy, and
+cold-start DDL — with a launch checklist in §11.
+
+The steps below are the generic container flow (Render, App Runner, ECS), kept
+as the reference for demo and review environments.
+
+### Container flow (Render + MySQL, representative)
 
 1. Provision MySQL 8.0.13+ (AWS RDS) per `MYSQL_SETUP.md`; copy the connection string.
 2. Create the Docker web service from the repo; region close to users (India).
@@ -146,7 +175,9 @@ There is no dedicated `/health` endpoint. Recommended liveness/readiness probes:
 - [ ] `SSO_SECRET` set (strong, secret); `SSO_*` aligned with parent backends.
 - [ ] `VASTRA_API_BASE_URL` + `VASTRA_API_KEY` pointed at Vastra's **production** API (contract implemented + verified against staging 2026-07-16; confirm the production origin/api-key with Vastra's team) — otherwise the panel's OTP login and Products tab / QR generation can't work.
 - [ ] `YOURAPP_API_KEY` set (strong, secret) and shared only with YourApp's backend; every retailer imported with their YourApp phone number (phone identifies the retailer on `/yourapp/scan`).
-- [ ] `RL_STORAGE_URI` set if running >1 replica.
+- [ ] `RL_STORAGE_URI` set if running >1 replica — **always, on Lambda** (§3).
+- [ ] **Lambda only:** adapter in the image, Function URL in `RESPONSE_STREAM` mode, memory ≥1,769 MB, egress to Vastra verified, RDS Proxy in front of RDS — [AWS_LAMBDA_DEPLOY.md](AWS_LAMBDA_DEPLOY.md) §11.
+- [ ] **An account exists.** Startup never seeds. Either Vastra OTP login auto-provisions the manufacturer on first login, or `bootstrap_admin.py` created one (non-destructive; unlike `seed.py`, which drops every table).
 - [ ] HTTPS enforced; CORS restricted to real app/panel origins.
 - [ ] Manufacturers imported with `external_id`; retailers provisioned with `external_id`.
 - [ ] Smoke checklist (§8) passes.
