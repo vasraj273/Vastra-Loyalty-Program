@@ -6,6 +6,7 @@ import { downloadCSV, today } from '../utils/csv.js'
 
 const EMPTY = { name: '', shop_name: '', region: '', phone: '', distributor_id: '' }
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
+const PAGE_SIZES = [10, 25, 50, 100, 500]
 
 export default function Customers() {
   const [list, setList] = useState(null)
@@ -15,6 +16,8 @@ export default function Customers() {
   const [notice, setNotice] = useState(null)
   const [busy, setBusy] = useState(false)
   const [query, setQuery] = useState('')
+  const [pageSize, setPageSize] = useState(PAGE_SIZES[0])
+  const [page, setPage] = useState(0)
   const [editing, setEditing] = useState(null)
   const [modal, setModal] = useState(null) // {type:'adjust', r} | {type:'transfer'}
   const [pts, setPts] = useState('')
@@ -315,6 +318,14 @@ function splitCsvChunks(csvText, chunkSize = 250) {
       )
     : list
 
+  const pages = Math.max(1, Math.ceil(filtered.length / pageSize))
+  const from = page * pageSize
+  const visible = filtered.slice(from, from + pageSize)
+
+  useEffect(() => {
+    if (page >= pages) setPage(pages - 1)
+  }, [page, pages])
+
   return (
     <div className="customers">
       <div className="schemes-head">
@@ -495,13 +506,44 @@ function splitCsvChunks(csvText, chunkSize = 250) {
       )}
 
       <div className="panel-card table-card">
-        <div className="table-tools">
+        <div className="table-toolbar">
           <input
             className="search"
             placeholder="Search name, shop, city, phone…"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setPage(0)
+            }}
           />
+          <span>
+            {visible.length > 0 ? (
+              <>
+                Showing <strong>{from + 1}</strong>–
+                <strong>{from + visible.length}</strong> of{' '}
+                <strong>{filtered.length}</strong>
+              </>
+            ) : (
+              <>No matches</>
+            )}
+            {q && ` (filtered from ${list.length})`}
+          </span>
+          <label>
+            Rows{' '}
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value))
+                setPage(0)
+              }}
+            >
+              {PAGE_SIZES.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <div className="table-wrapper">
           <table className="data-table">
@@ -519,7 +561,7 @@ function splitCsvChunks(csvText, chunkSize = 250) {
             </tr>
           </thead>
           <tbody>
-            {filtered.map((r) =>
+            {visible.map((r) =>
               editing?.id === r.id ? (
                 <tr key={r.id} className="editing-row">
                   <td>
@@ -684,6 +726,28 @@ function splitCsvChunks(csvText, chunkSize = 250) {
           </tbody>
           </table>
         </div>
+
+        {pages > 1 && (
+          <div className="pager">
+            <button
+              className="btn-ghost"
+              disabled={page === 0}
+              onClick={() => setPage((p) => p - 1)}
+            >
+              ← Prev
+            </button>
+            <span>
+              Page {page + 1} of {pages}
+            </span>
+            <button
+              className="btn-ghost"
+              disabled={page >= pages - 1}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next →
+            </button>
+          </div>
+        )}
       </div>
 
       {modal?.type === 'adjust' && (

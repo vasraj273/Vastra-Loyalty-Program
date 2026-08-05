@@ -14,7 +14,7 @@ const CSV_HELP =
   'any case). A points column is optional. Every other column is kept and ' +
   'shown here.'
 
-const PAGE_SIZES = [10, 25, 50, 100]
+const PAGE_SIZES = [10, 25, 50, 100, 500]
 
 export default function Products() {
   const [catalog, setCatalog] = useState(null) // {products, columns, source}
