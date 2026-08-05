@@ -163,8 +163,10 @@ Password login for retailers. Default initial password is `<username>123` (deriv
 
 ### POST /retailers/import — Auth M
 - **Purpose:** bulk-provision retailers from CSV text.
-- **Request:** `{ "csv": "shop_name,name,region,phone,distributor,external_id\n…" }` (`shop_name` required; `external_id` optional, unique per manufacturer).
-- **Response 200:** `{ "created": 12, "skipped": 1, "errors": [...], "credentials": [{ "shop_name": "…", "username": "…", "password": "…" }] }`
+- **Request:** `{ "csv": "shop_name,name,region,phone,distributor,points,external_id\n…" }` (a shop *or* name column is required; everything else is optional). Headers are matched against alias lists, not dictated: `Mobile`→phone, `City`→region, `address1`→address, `Distributor`/`Dealer`/`Agency`/`Parent`→distributor, `Point Balance`/`Balance`→points. `external_id` is read only from a column literally named that, and is unique per manufacturer.
+- **A points/balance column carries the wallet over:** it is written as one `import_opening` ledger row per newly created retailer, so the balance shows in the wallet and the panel's Points column but never counts as scan history. Rows skipped as duplicates keep their existing balance untouched (re-importing cannot double-credit).
+- **A distributor named in the file is find-or-created and linked**, matching existing distributors case-insensitively by name.
+- **Response 200:** `{ "created": 12, "skipped": 1, "points_credited": 8858, "errors": [...], "columns": { "shop_name": "Name", "points": "Point Balance", … }, "credentials": [{ "shop_name": "…", "username": "…", "password": "…" }] }`
 - **Errors:** `422 CSV must have a 'shop_name' column` · `429`.
 
 ---

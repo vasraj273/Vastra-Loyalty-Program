@@ -749,7 +749,19 @@ _CSV_RET_NAME_HEADERS = ("name", "owner_name", "owner", "contact_person",
 _CSV_RET_ADDRESS_HEADERS = ("address", "address1", "address_1", "street",
                             "street_address", "shop_address", "addr")
 _CSV_RET_DISTRIBUTOR_HEADERS = ("distributor", "distributor_name", "dealer",
-                                "agency", "supplier")
+                                "dealer_name", "agency", "agency_name",
+                                "supplier", "supplier_name", "wholesaler",
+                                "stockist", "parent", "parent_name",
+                                "mapped_distributor", "assigned_distributor",
+                                "under", "belongs_to")
+# The retailer's *current wallet balance* as the manufacturer's system reports
+# it — "Point Balance" is what the client's export calls it. Imported as one
+# opening-balance ledger entry, not as scan history (see import_retailers_csv).
+# Balance spellings come first so a file carrying both a balance and some other
+# "points" column credits the balance.
+_CSV_RET_POINTS_HEADERS = ("point_balance", "points_balance", "balance",
+                           "current_points", "total_points", "wallet_balance",
+                           "wallet", "opening_balance", "points", "point")
 # Deliberately narrow: external_id is the SSO identity key, so it is only ever
 # read from a column that says so outright — never guessed from an "id" column.
 _CSV_RET_EXTERNAL_ID_HEADERS = ("external_id", "externalid")
@@ -786,6 +798,20 @@ def _pick_col(fields: list[str], norm: dict, aliases) -> str | None:
 def _clean_cell(v) -> str:
     s = (v or "").strip()
     return "" if s.lower() in _CSV_NULLISH else s
+
+
+def _parse_points(v) -> int | None:
+    """Whole points from a CSV cell, or None if it isn't a number.
+
+    Balances export as '14.00', '1,005.00' or '₹ 500' depending on the source
+    system; the ledger stores whole points, so the decimal is rounded away."""
+    s = _clean_cell(v).replace(",", "").replace("₹", "").replace("+", "").strip()
+    if not s:
+        return None
+    try:
+        return int(round(float(s)))
+    except ValueError:
+        return None
 
 
 def _first_image(cell: str) -> str:
@@ -1235,14 +1261,21 @@ def delete_retailer(retailer_id: int,
         ).fetchone()
         if not row:
             raise HTTPException(404, "Retailer not found")
+        # An untouched imported opening balance is not history — it is part of
+        # the import being undone, so it does not protect the row (and goes
+        # with it). Anything else — a scan, a claim, a manual adjustment —
+        # does: those rows and claims need to keep an owner.
         scans = db.execute(
-            "SELECT COUNT(*) AS n FROM points_ledger WHERE retailer_id = ?",
+            """SELECT COUNT(*) AS n FROM points_ledger
+               WHERE retailer_id = ? AND entry_type <> 'import_opening'""",
             (retailer_id,),
         ).fetchone()["n"]
         if scans:
             raise HTTPException(
                 409, "Retailer has scan history; cannot delete "
                      "(claims would lose their owner)")
+        db.execute("DELETE FROM points_ledger WHERE retailer_id = ?",
+                   (retailer_id,))
         db.execute("DELETE FROM retailers WHERE id = ?", (retailer_id,))
 
 
@@ -1253,29 +1286,34 @@ def delete_all_retailers(user: dict = Depends(current_manufacturer)):
 
     Retailers with scan history are kept, not deleted — their ledger rows and
     claims have to keep pointing at an owner, which is the same rule the
-    single-retailer delete enforces with a 409. Logins of the deleted
-    retailers go with them (retailer_tokens cascades). Returns how many of
-    each, so the panel can say why a few rows survived."""
+    single-retailer delete enforces with a 409. An `import_opening` row is the
+    one exception: a balance carried over by the very import being undone is
+    not history, so it is deleted along with its retailer — otherwise a bad
+    customer-list import would be un-undoable. Logins of the deleted retailers
+    go with them (retailer_tokens cascades). Returns how many of each, so the
+    panel can say why a few rows survived."""
     mid = user["id"]
     with get_db() as db:
-        keep = db.execute(
-            """SELECT COUNT(*) AS n FROM retailers r
-               WHERE r.manufacturer_id = ?
-                 AND EXISTS (SELECT 1 FROM points_ledger l
-                             WHERE l.retailer_id = r.id)""",
+        total = db.execute(
+            "SELECT COUNT(*) AS n FROM retailers WHERE manufacturer_id = ?",
             (mid,)).fetchone()["n"]
-        gone = db.execute(
-            """SELECT COUNT(*) AS n FROM retailers r
+        # Resolved to ids in Python: MySQL cannot reference the table a DELETE
+        # targets from a subquery inside the same statement.
+        doomed = [r["id"] for r in db.execute(
+            """SELECT r.id FROM retailers r
                WHERE r.manufacturer_id = ?
                  AND NOT EXISTS (SELECT 1 FROM points_ledger l
-                                 WHERE l.retailer_id = r.id)""",
-            (mid,)).fetchone()["n"]
-        db.execute(
-            """DELETE FROM retailers
-               WHERE manufacturer_id = ?
-                 AND NOT EXISTS (SELECT 1 FROM points_ledger l
-                                 WHERE l.retailer_id = retailers.id)""", (mid,))
-    return {"deleted": gone, "skipped": keep}
+                                 WHERE l.retailer_id = r.id
+                                   AND l.entry_type <> 'import_opening')""",
+            (mid,))]
+        for i in range(0, len(doomed), 500):
+            chunk = doomed[i:i + 500]
+            qs = ",".join("?" for _ in chunk)
+            db.execute(
+                f"DELETE FROM points_ledger WHERE retailer_id IN ({qs})", chunk)
+            db.execute(
+                f"DELETE FROM retailers WHERE id IN ({qs})", chunk)
+    return {"deleted": len(doomed), "skipped": total - len(doomed)}
 
 
 def _balance(db, retailer_id: int) -> int:
@@ -1565,7 +1603,16 @@ def import_retailers_csv(request: Request, body: ImportIn,
     from a column that says so) is the parent-system id used by the SSO
     exchange and is unique per manufacturer. Each retailer gets an auto-login
     and the distributor is found-or-created by name and linked. Returns
-    generated credentials so the panel can show them once."""
+    generated credentials so the panel can show them once.
+
+    **A points/balance column carries the wallet over.** "Point Balance" (and
+    the other `_CSV_RET_POINTS_HEADERS` spellings) is the retailer's current
+    balance in the manufacturer's existing system, so it is written as a single
+    `adjustment` ledger row — the wallet and the Customers tab's Points column
+    pick it up, while `entry_type='scan'` analytics stay untouched (an imported
+    balance is not scan history). Only *newly created* retailers get it: a row
+    skipped as a duplicate is left alone, so re-importing a stale list can never
+    double-credit or claw back points a retailer has since earned."""
     import csv as csvmod
     import io
     mid = user["id"]
@@ -1582,7 +1629,9 @@ def import_retailers_csv(request: Request, body: ImportIn,
     address_col = _pick_col(fields, norm, _CSV_RET_ADDRESS_HEADERS)
     dist_col = _pick_col(fields, norm, _CSV_RET_DISTRIBUTOR_HEADERS)
     ext_col = _pick_col(fields, norm, _CSV_RET_EXTERNAL_ID_HEADERS)
+    points_col = _pick_col(fields, norm, _CSV_RET_POINTS_HEADERS)
     created = skipped = 0
+    points_credited = 0
     errors: list[str] = []
     credentials: list[dict] = []
     with get_db() as db:
@@ -1686,12 +1735,22 @@ def import_retailers_csv(request: Request, body: ImportIn,
             password = f"{username}123"
             name_val = (_clean_cell(raw.get(name_col)) if name_col else "") or shop
 
+            # Carried-over wallet balance. It becomes one 'adjustment' ledger
+            # row after the insert — never a 'scan', so it lands in the wallet
+            # and the Customers "Points" column without inventing scan history
+            # in the dashboard, claims or region/product analytics.
+            opening = _parse_points(raw.get(points_col)) if points_col else None
+            if opening is not None and opening < 0:
+                errors.append(f"row {i}: negative points '{raw.get(points_col)}' ignored")
+                opening = None
+
             to_create.append({
                 "name": name_val, "shop_name": shop, "region": region,
                 "phone": phone, "lat": lat, "lng": lng,
                 "source": "city" if coords else None,
                 "distributor_id": distributor_id, "external_id": external_id,
                 "address": address, "username": username, "password": password,
+                "points": opening or 0,
             })
 
         import concurrent.futures
@@ -1705,7 +1764,7 @@ def import_retailers_csv(request: Request, body: ImportIn,
             p_hashes = []
 
         for item, phash in zip(to_create, p_hashes):
-            db.execute(
+            cur = db.execute(
                 """INSERT INTO retailers
                    (manufacturer_id, name, shop_name, region, phone, lat, lng,
                     location_source, distributor_id, external_id, address,
@@ -1715,6 +1774,17 @@ def import_retailers_csv(request: Request, body: ImportIn,
                  item["lat"], item["lng"], item["source"], item["distributor_id"],
                  item["external_id"], item["address"], item["username"], phash),
             )
+            if item["points"]:
+                db.execute(
+                    """INSERT INTO points_ledger
+                       (manufacturer_id, retailer_id, entry_type, points, note,
+                        created_by, distributor_id)
+                       VALUES (?, ?, 'import_opening', ?, ?, ?, ?)""",
+                    (mid, cur.lastrowid, item["points"],
+                     "Opening balance imported from customer list", mid,
+                     item["distributor_id"]),
+                )
+                points_credited += item["points"]
             created += 1
             credentials.append(
                 {"shop_name": item["shop_name"], "username": item["username"],
@@ -1723,11 +1793,12 @@ def import_retailers_csv(request: Request, body: ImportIn,
     # Echo the resolved mapping so the panel can show which of the file's own
     # columns were read (a wrong guess is otherwise invisible).
     return {"created": created, "skipped": skipped,
+            "points_credited": points_credited,
             "errors": errors, "credentials": credentials,
             "columns": {"shop_name": shop_col, "name": name_col,
                         "phone": phone_col, "region": region_col,
                         "address": address_col, "distributor": dist_col,
-                        "external_id": ext_col}}
+                        "points": points_col, "external_id": ext_col}}
 
 
 @app.post("/distributors/import")

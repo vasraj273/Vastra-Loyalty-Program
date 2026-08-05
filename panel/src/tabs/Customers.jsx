@@ -192,6 +192,7 @@ function splitCsvChunks(csvText, chunkSize = 250) {
 
       let totalCreated = 0
       let totalSkipped = 0
+      let totalPoints = 0
       const allErrors = []
       const allCredentials = []
       let lastColumns = null
@@ -205,6 +206,7 @@ function splitCsvChunks(csvText, chunkSize = 250) {
         const res = await post('/retailers/import', { csv: chunks[i] })
         totalCreated += res.created || 0
         totalSkipped += res.skipped || 0
+        totalPoints += res.points_credited || 0
         if (res.errors) allErrors.push(...res.errors)
         if (res.credentials) allCredentials.push(...res.credentials)
         if (res.columns) lastColumns = res.columns
@@ -213,12 +215,14 @@ function splitCsvChunks(csvText, chunkSize = 250) {
       setImportResult({
         created: totalCreated,
         skipped: totalSkipped,
+        pointsCredited: totalPoints,
         errors: allErrors,
         credentials: allCredentials,
         columns: lastColumns,
       })
       setNotice(
-        `Import completed! ${totalCreated} customer(s) created, ${totalSkipped} skipped.`,
+        `Import completed! ${totalCreated} customer(s) created, ${totalSkipped} skipped` +
+          (totalPoints ? `, ${fmt(totalPoints)} points carried over.` : '.'),
       )
       load()
       loadDistributors()
@@ -364,7 +368,7 @@ function splitCsvChunks(csvText, chunkSize = 250) {
             className="btn-secondary"
             disabled={busy}
             onClick={() => fileRef.current?.click()}
-            title="Needs a shop or name column. Phone, city, address and distributor are matched from your own headers (Mobile, city, address1…)."
+            title="Needs a shop or name column. Phone, city, address, distributor and point balance are matched from your own headers (Mobile, City, address1, Distributor, Point Balance…). A distributor name that isn't on file yet is created and linked; a balance is carried over into the wallet."
           >
             Import CSV
           </button>
@@ -388,6 +392,9 @@ function splitCsvChunks(csvText, chunkSize = 250) {
           <div className="schemes-head" style={{ marginBottom: 6 }}>
             <strong>
               Imported {importResult.created} · skipped {importResult.skipped}
+              {importResult.pointsCredited
+                ? ` · ${fmt(importResult.pointsCredited)} points carried over`
+                : ''}
               {importResult.errors.length
                 ? ` · ${importResult.errors.length} error(s)`
                 : ''}

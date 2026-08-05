@@ -55,8 +55,12 @@ def test_real_retailer_export_maps_every_column(client, seed):
     assert body["columns"] == {
         "shop_name": "Name", "name": "Name", "phone": "Mobile",
         "region": "city",  # city beats state — the more precise pin
-        "address": "address1", "distributor": None, "external_id": None,
+        "address": "address1", "distributor": None,
+        # The file carries three points columns; the balance is the wallet,
+        # "Point Earned" and the redeemed total are its history and are not read.
+        "points": "Point Balance", "external_id": None,
     }
+    assert body["points_credited"] == 5288 + 2070
 
     rows = {x["shop_name"]: x for x in client.get("/retailers",
                                                   headers=headers).json()}
@@ -67,6 +71,10 @@ def test_real_retailer_export_maps_every_column(client, seed):
     # "null" cells never reach the table.
     assert rows["Test Ganesh"]["address"] is None
     assert rows["Test Ganesh"]["region"] == ""
+    # The carried-over balance lands in the wallet without inventing scans.
+    assert rows["Test Ganesh"]["points"] == 2070
+    assert rows["Test Ganesh"]["scans"] == 0
+    assert rows["Sankalp Ahluwalia"]["points"] == 0
 
 
 def test_same_name_different_phone_both_import(client, seed):
@@ -214,6 +222,63 @@ def test_delete_all_retailers_keeps_those_with_history(client, seed):
     assert [r["shop_name"] for r in left] == ["Ravi Shop"]
     # The kept retailer's wallet is untouched.
     assert left[0]["points"] == 10
+
+
+def test_delete_all_clears_imported_opening_balances(client, seed):
+    """A carried-over balance must not make a bad import un-undoable.
+
+    RETAILER_CSV credits two shops from its "Point Balance" column. Those
+    'import_opening' ledger rows are part of the import, so Delete all takes
+    them with the retailer — unlike a scan, a claim or a manual adjustment,
+    which keep their retailer alive."""
+    headers = auth(client)
+    client.post("/retailers/import", json={"csv": RETAILER_CSV},
+                headers=headers)
+    assert client.post("/scan", json={"code": "TOKCHILD"},
+                       headers=rauth(seed["rtoken"])).status_code == 200
+    rows = client.get("/retailers", headers=headers).json()
+    imported = [r for r in rows if r["shop_name"] != "Ravi Shop"]
+    assert sum(r["points"] for r in imported) == 5288 + 2070, "balances imported"
+
+    # Give one imported shop real history: it must now survive the clear.
+    kept = next(r for r in rows if r["shop_name"] == "Test Ganesh")
+    assert client.post(f"/retailers/{kept['id']}/adjust",
+                       json={"points": 5, "note": "manual"},
+                       headers=headers).status_code == 200
+
+    res = client.delete("/retailers", headers=headers)
+    assert res.status_code == 200, res.text
+    # 5 imported + seed's Ravi Shop = 6; Ravi scanned, Test Ganesh was adjusted.
+    assert res.json() == {"deleted": 4, "skipped": 2}
+    left = {r["shop_name"]: r for r in client.get("/retailers",
+                                                  headers=headers).json()}
+    assert set(left) == {"Ravi Shop", "Test Ganesh"}
+    # The survivor keeps its imported balance plus the adjustment.
+    assert left["Test Ganesh"]["points"] == 2075
+
+
+def test_delete_one_retailer_clears_its_opening_balance(client, seed):
+    """Same rule on the single-row delete: an imported balance alone does not
+    409, but any other ledger row still does."""
+    headers = auth(client)
+    client.post("/retailers/import", json={"csv": RETAILER_CSV},
+                headers=headers)
+    rows = {r["shop_name"]: r for r in client.get("/retailers",
+                                                  headers=headers).json()}
+    ganesh = rows["Test Ganesh"]
+    assert ganesh["points"] == 2070
+
+    assert client.delete(f"/retailers/{ganesh['id']}",
+                         headers=headers).status_code == 204
+    assert "Test Ganesh" not in {
+        r["shop_name"] for r in client.get("/retailers", headers=headers).json()}
+
+    # A shop with a real scan is still protected.
+    ravi = rows["Ravi Shop"]
+    assert client.post("/scan", json={"code": "TOKCHILD"},
+                       headers=rauth(seed["rtoken"])).status_code == 200
+    assert client.delete(f"/retailers/{ravi['id']}",
+                         headers=headers).status_code == 409
 
 
 def test_delete_all_retailers_is_tenant_scoped(client, seed):
