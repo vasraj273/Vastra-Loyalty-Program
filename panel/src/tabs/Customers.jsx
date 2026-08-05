@@ -503,7 +503,8 @@ function splitCsvChunks(csvText, chunkSize = 250) {
             onChange={(e) => setQuery(e.target.value)}
           />
         </div>
-        <table className="data-table">
+        <div className="table-wrapper">
+          <table className="data-table">
           <thead>
             <tr>
               <th>Shop</th>
@@ -681,7 +682,8 @@ function splitCsvChunks(csvText, chunkSize = 250) {
               </tr>
             )}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       {modal?.type === 'adjust' && (

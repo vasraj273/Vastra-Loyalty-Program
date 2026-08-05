@@ -587,7 +587,12 @@ body {
   color: var(--ink-soft);
 }
 
-.table-card { padding: 10px 16px 14px; }
+.table-card { padding: 10px 16px 14px; overflow: hidden; }
+.table-wrapper { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+.data-table .actions-col { white-space: nowrap; text-align: right; }
+.data-table th.actions-col { text-align: right; }
+.data-table td.actions-col button { margin-left: 4px; }
 
 .claims-table { font-size: 13px; }
 
