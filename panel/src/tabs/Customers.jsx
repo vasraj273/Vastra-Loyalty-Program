@@ -306,17 +306,16 @@ function splitCsvChunks(csvText, chunkSize = 250) {
     }
   }
 
-  if (!list) return <p className="loading">Loading…</p>
-
+  const items = list ?? []
   const q = query.trim().toLowerCase()
   const filtered = q
-    ? list.filter((r) =>
+    ? items.filter((r) =>
         [r.name, r.shop_name, r.region, r.phone ?? '']
           .join(' ')
           .toLowerCase()
           .includes(q),
       )
-    : list
+    : items
 
   const pages = Math.max(1, Math.ceil(filtered.length / pageSize))
   const from = page * pageSize
@@ -325,6 +324,8 @@ function splitCsvChunks(csvText, chunkSize = 250) {
   useEffect(() => {
     if (page >= pages) setPage(pages - 1)
   }, [page, pages])
+
+  if (!list) return <p className="loading">Loading…</p>
 
   return (
     <div className="customers">
