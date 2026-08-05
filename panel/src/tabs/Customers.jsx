@@ -207,7 +207,17 @@ function splitCsvChunks(csvText, chunkSize = 250) {
         totalCreated += res.created || 0
         totalSkipped += res.skipped || 0
         totalPoints += res.points_credited || 0
-        if (res.errors) allErrors.push(...res.errors)
+        // Each chunk carries its own header, so the server numbers its rows
+        // from 2 again. Shift them back onto the real file so a reported row
+        // can actually be found in the spreadsheet.
+        if (res.errors) {
+          const offset = i * 250
+          allErrors.push(
+            ...res.errors.map((er) =>
+              er.replace(/^row (\d+)/, (_, n) => `row ${Number(n) + offset}`),
+            ),
+          )
+        }
         if (res.credentials) allCredentials.push(...res.credentials)
         if (res.columns) lastColumns = res.columns
       }

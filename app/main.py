@@ -739,9 +739,10 @@ _CSV_DIST_NAME_HEADERS = ("name", "distributor_name", "distributor",
                           "party_name", "firm_name", "agency_name",
                           "company_name", "shop_name")
 
-# A retailer row needs a shop; the owner's name is a bonus. Files that carry
-# only "Name" (the common case) use it for both, matching what the panel's
-# single-retailer form does with a blank owner.
+# A retailer row needs a shop *or* a person — per row, not just per file. Files
+# carrying only "Name" use it for both; files carrying both columns (the client's
+# export does) leave the firm blank for retailers trading under their own name,
+# and those rows fall back to the person rather than being rejected.
 _CSV_RET_SHOP_HEADERS = ("shop_name", "shop", "store_name", "firm_name",
                          "business_name", "party_name", "name")
 _CSV_RET_NAME_HEADERS = ("name", "owner_name", "owner", "contact_person",
@@ -1677,7 +1678,12 @@ def import_retailers_csv(request: Request, body: ImportIn,
         to_create: list[dict] = []
 
         for i, raw in enumerate(reader, start=2):  # row 1 is the header
-            shop = _clean_cell(raw.get(shop_col))
+            # A file carrying both "Firm Name" and "Name" fills the firm in only
+            # for shops that trade under one; an individual retailer leaves it
+            # blank. Fall back to the person's name rather than dropping the
+            # row — the same substitution line 'name_val' makes in reverse.
+            person = _clean_cell(raw.get(name_col)) if name_col else ""
+            shop = _clean_cell(raw.get(shop_col)) or person
             if not shop:
                 errors.append(f"row {i}: missing shop name")
                 continue
@@ -1733,7 +1739,7 @@ def import_retailers_csv(request: Request, body: ImportIn,
             next_id += 1
 
             password = f"{username}123"
-            name_val = (_clean_cell(raw.get(name_col)) if name_col else "") or shop
+            name_val = person or shop
 
             # Carried-over wallet balance. It becomes one 'adjustment' ledger
             # row after the insert — never a 'scan', so it lands in the wallet
