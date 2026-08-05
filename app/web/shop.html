@@ -86,6 +86,10 @@
   .modal.confirm { text-align:left; }
   .modal.confirm h2 { color:var(--ink); }
   .modal.confirm p { color:var(--soft); font-size:14px; line-height:1.5; }
+  .modal-backdrop { position:fixed; inset:0; background:rgba(17,33,52,.5); backdrop-filter:blur(3px); z-index:100;
+                    display:flex; align-items:center; justify-content:center; padding:16px; }
+  .modal-card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; width:100%; max-width:380px;
+                 text-align:left; box-shadow:0 20px 45px rgba(34,41,79,.25); }
 </style>
 </head>
 <body>
@@ -103,6 +107,7 @@
           <button class="active" onclick="go('/web/shop')">Redeem shop</button>
           <button onclick="go('/web/claims')">Claims</button>
           <div class="sep"></div>
+          <button onclick="openChangePwModal()">Change password</button>
           <button class="logout" onclick="menuLogout()">Log out</button>
         </div>
       </div>
@@ -139,6 +144,24 @@
       <p id="cfMsg"></p>
       <button class="claim" id="cfYes">Confirm</button>
       <button class="copy" id="cfNo">Cancel</button>
+    </div>
+  </div>
+
+  <!-- change password modal (from burger menu) -->
+  <div class="modal-backdrop hidden" id="changePwModal">
+    <div class="modal-card">
+      <h3 style="margin-top:0; margin-bottom:6px; font-size:18px; color:var(--ink);">Change Password</h3>
+      <p style="font-size:13px; color:var(--soft); margin-top:0; margin-bottom:14px;">Update your password for your retailer account.</p>
+      <label style="font-size:13px; font-weight:600; color:var(--soft); display:block; margin-bottom:4px;">Current Password</label>
+      <input id="modalCurPw" type="password" style="width:100%; padding:10px 12px; font-size:14px; border:1px solid var(--line); border-radius:8px; margin-bottom:10px;" placeholder="Current password" />
+      <label style="font-size:13px; font-weight:600; color:var(--soft); display:block; margin-bottom:4px;">New Password (min 8 chars)</label>
+      <input id="modalNewPw" type="password" style="width:100%; padding:10px 12px; font-size:14px; border:1px solid var(--line); border-radius:8px; margin-bottom:10px;" placeholder="New password" />
+      <label style="font-size:13px; font-weight:600; color:var(--soft); display:block; margin-bottom:4px;">Confirm New Password</label>
+      <input id="modalConfirmPw" type="password" style="width:100%; padding:10px 12px; font-size:14px; border:1px solid var(--line); border-radius:8px; margin-bottom:14px;" placeholder="Re-enter new password" />
+      <button class="claim" onclick="submitModalPwChange()" style="margin-top:0; width:100%;">Update Password</button>
+      <button class="copy" onclick="closeChangePwModal()" style="margin-top:8px; width:100%;">Cancel</button>
+      <div class="error" id="modalPwError" style="margin-top:10px; display:none;"></div>
+      <div id="modalPwSuccess" style="margin-top:10px; padding:10px; background:#e6f4ea; color:#137333; border:1px solid #ceead6; border-radius:8px; font-size:13px; display:none;">Password updated successfully!</div>
     </div>
   </div>
 
@@ -240,6 +263,42 @@ async function claim(giftId, name, cost) {
     $('successModal').style.display = 'flex';
     loadShop();
   } catch (e) { flash('err', e.message); }
+}
+function openChangePwModal() {
+  $('navPop').classList.remove('open');
+  $('navBtn').classList.remove('open');
+  $('modalCurPw').value = '';
+  $('modalNewPw').value = '';
+  $('modalConfirmPw').value = '';
+  $('modalPwError').style.display = 'none';
+  $('modalPwSuccess').style.display = 'none';
+  $('changePwModal').classList.remove('hidden');
+}
+function closeChangePwModal() {
+  $('changePwModal').classList.add('hidden');
+}
+async function submitModalPwChange() {
+  const errEl = $('modalPwError');
+  const succEl = $('modalPwSuccess');
+  errEl.style.display = 'none';
+  succEl.style.display = 'none';
+  const curP = $('modalCurPw').value;
+  const newP = $('modalNewPw').value;
+  const confP = $('modalConfirmPw').value;
+  if (!curP) { errEl.textContent = 'Please enter your current password'; errEl.style.display = 'block'; return; }
+  if (newP.length < 8) { errEl.textContent = 'New password must be at least 8 characters'; errEl.style.display = 'block'; return; }
+  if (newP !== confP) { errEl.textContent = 'Passwords do not match'; errEl.style.display = 'block'; return; }
+  try {
+    await api('/retailer/password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: curP, new_password: newP })
+    });
+    succEl.style.display = 'block';
+    setTimeout(() => closeChangePwModal(), 1500);
+  } catch (e) {
+    errEl.textContent = e.message;
+    errEl.style.display = 'block';
+  }
 }
 
 function copyRef(btn) {
