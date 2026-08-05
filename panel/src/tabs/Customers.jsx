@@ -150,8 +150,31 @@ export default function Customers() {
     }
   }
 
-  // Bulk import retailers (+ their distributors) from a CSV file, read
-  // client-side and posted as text so no multipart dependency is needed.
+function splitCsvChunks(csvText, chunkSize = 250) {
+  const lines = csvText.split(/\r?\n/)
+  if (lines.length <= 1) return [csvText]
+
+  let headerIndex = 0
+  while (headerIndex < lines.length && !lines[headerIndex].trim()) {
+    headerIndex++
+  }
+  if (headerIndex >= lines.length) return [csvText]
+
+  const header = lines[headerIndex]
+  const dataLines = lines.slice(headerIndex + 1).filter((l) => l.trim().length > 0)
+
+  if (dataLines.length <= chunkSize) return [csvText]
+
+  const chunks = []
+  for (let i = 0; i < dataLines.length; i += chunkSize) {
+    const batch = dataLines.slice(i, i + chunkSize)
+    chunks.push([header, ...batch].join('\n'))
+  }
+  return chunks
+}
+
+  // Bulk import retailers (+ their distributors) from a CSV file in chunks
+  // to prevent request timeouts and provide real-time batch progress.
   const onImportFile = async (e) => {
     const file = e.target.files?.[0]
     if (file) e.target.value = '' // allow re-importing the same filename
@@ -162,8 +185,38 @@ export default function Customers() {
     setImportResult(null)
     try {
       const csv = await file.text()
-      const res = await post('/retailers/import', { csv })
-      setImportResult(res)
+      const chunks = splitCsvChunks(csv, 250)
+
+      let totalCreated = 0
+      let totalSkipped = 0
+      const allErrors = []
+      const allCredentials = []
+      let lastColumns = null
+
+      for (let i = 0; i < chunks.length; i++) {
+        if (chunks.length > 1) {
+          setNotice(
+            `Importing customers: batch ${i + 1} of ${chunks.length}...`,
+          )
+        }
+        const res = await post('/retailers/import', { csv: chunks[i] })
+        totalCreated += res.created || 0
+        totalSkipped += res.skipped || 0
+        if (res.errors) allErrors.push(...res.errors)
+        if (res.credentials) allCredentials.push(...res.credentials)
+        if (res.columns) lastColumns = res.columns
+      }
+
+      setImportResult({
+        created: totalCreated,
+        skipped: totalSkipped,
+        errors: allErrors,
+        credentials: allCredentials,
+        columns: lastColumns,
+      })
+      setNotice(
+        `Import completed! ${totalCreated} customer(s) created, ${totalSkipped} skipped.`,
+      )
       load()
       loadDistributors()
     } catch (err) {

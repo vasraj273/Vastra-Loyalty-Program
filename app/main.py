@@ -134,7 +134,7 @@ RL_LOGIN = _os.environ.get("RL_LOGIN", "10/minute")        # manuf + retailer lo
 RL_SCAN = _os.environ.get("RL_SCAN", "60/minute")          # generous for bulk scanning
 RL_CLAIM = _os.environ.get("RL_CLAIM", "20/minute")
 RL_QRGEN = _os.environ.get("RL_QRGEN", "30/minute")
-RL_IMPORT = _os.environ.get("RL_IMPORT", "10/hour")
+RL_IMPORT = _os.environ.get("RL_IMPORT", "600/hour")
 
 
 def _client_key(request: Request) -> str:
