@@ -684,8 +684,10 @@ def list_products(user: dict = Depends(current_manufacturer)):
 # Never merged: one import and the samples are gone for that manufacturer.
 
 # Testing fallback so the QR-generate → scan → redeem flow works without
-# importing a CSV first. Set USE_SAMPLE_PRODUCTS=0 at go-live.
-USE_SAMPLE_PRODUCTS = _os.environ.get("USE_SAMPLE_PRODUCTS", "1") == "1"
+# importing a CSV first. Off by default so a new deployment is go-live safe:
+# a manufacturer with an empty catalog is prompted to import rather than shown
+# three demo products they never created. Set USE_SAMPLE_PRODUCTS=1 for demos.
+USE_SAMPLE_PRODUCTS = _os.environ.get("USE_SAMPLE_PRODUCTS", "0") == "1"
 
 _SAMPLE_PRODUCTS = [
     {"external_id": "SAMPLE-001", "name": "Banarasi Silk Saree",
@@ -713,11 +715,36 @@ _CSV_IGNORED_HEADERS = ("", "sno", "s_no", "sr_no", "serial", "no")
 # word out of the manufacturer's table.
 _CSV_NULLISH = {"null", "none", "n/a", "na", "-", "--"}
 
+# Accepted spellings for the distributor columns, same generous matching as the
+# product catalog: the manufacturer exports the distributor list from whatever
+# system they already run, so "Mobile" has to land in `phone` without anyone
+# hand-editing the header row first.
+_CSV_DIST_NAME_HEADERS = ("name", "distributor_name", "distributor",
+                          "party_name", "firm_name", "agency_name",
+                          "company_name", "shop_name")
+_CSV_DIST_PHONE_HEADERS = ("phone", "mobile", "mobile_no", "mobile_number",
+                           "phone_no", "phone_number", "contact",
+                           "contact_no", "contact_number", "whatsapp")
+_CSV_DIST_REGION_HEADERS = ("region", "city", "state", "area", "district",
+                            "zone", "territory", "location")
+
 
 def _norm_header(h: str) -> str:
     """'Product Name' / 'PRODUCT_NAME' / 'Product  Name' -> 'product_name'."""
     squashed = "".join(c if c.isalnum() else "_" for c in (h or "").strip().lower())
     return "_".join(p for p in squashed.split("_") if p)
+
+
+def _pick_col(fields: list[str], norm: dict, aliases) -> str | None:
+    """The CSV field matching the earliest alias in `aliases`.
+
+    Alias order beats column order on purpose: a file carrying both "Name" and
+    "Shop Name" must resolve to "Name" whichever way round its columns sit."""
+    for alias in aliases:
+        for f in fields:
+            if norm[f] == alias:
+                return f
+    return None
 
 
 def _clean_cell(v) -> str:
@@ -1502,23 +1529,32 @@ def import_retailers_csv(request: Request, body: ImportIn,
 @limiter.limit(RL_IMPORT)
 def import_distributors_csv(request: Request, body: ImportIn,
                             user: dict = Depends(current_manufacturer)):
-    """Bulk-create distributors from CSV text. Columns (header row,
-    case-insensitive): name (required), phone, region. Rows whose name already
-    exists for this manufacturer are skipped."""
+    """Bulk-create distributors from CSV text.
+
+    Headers are matched the same generous way the product catalog import matches
+    them (`_norm_header` + alias lists), so a distributor list exported from the
+    manufacturer's own system imports as-is: "Mobile"/"Contact No" fill `phone`,
+    "City"/"State" fill `region`, and row-number columns are ignored. Only a
+    name column is required. Rows whose name already exists for this
+    manufacturer are skipped."""
     import csv as csvmod
     import io
     mid = user["id"]
     reader = csvmod.DictReader(io.StringIO(body.csv))
-    headers = {(h or "").strip().lower() for h in (reader.fieldnames or [])}
-    if "name" not in headers:
-        raise HTTPException(422, "CSV must have a 'name' column")
+    fields = [f for f in (reader.fieldnames or []) if (f or "").strip()]
+    norm = {f: _norm_header(f) for f in fields}
+    name_col = _pick_col(fields, norm, _CSV_DIST_NAME_HEADERS)
+    if not name_col:
+        raise HTTPException(422, "CSV is missing a distributor name column "
+                                 "(one of: "
+                                 + ", ".join(_CSV_DIST_NAME_HEADERS) + ")")
+    phone_col = _pick_col(fields, norm, _CSV_DIST_PHONE_HEADERS)
+    region_col = _pick_col(fields, norm, _CSV_DIST_REGION_HEADERS)
     created = skipped = 0
     errors: list[str] = []
     with get_db() as db:
-        for i, raw in enumerate(reader, start=2):
-            row = {(k or "").strip().lower(): (v or "").strip()
-                   for k, v in raw.items()}
-            name = row.get("name", "")
+        for i, raw in enumerate(reader, start=2):  # row 1 is the header
+            name = _clean_cell(raw.get(name_col))
             if not name:
                 errors.append(f"row {i}: missing name")
                 continue
@@ -1529,14 +1565,19 @@ def import_distributors_csv(request: Request, body: ImportIn,
             ).fetchone():
                 skipped += 1
                 continue
+            phone = _clean_cell(raw.get(phone_col)) if phone_col else ""
+            region = _clean_cell(raw.get(region_col)) if region_col else ""
             db.execute(
                 """INSERT INTO distributors (manufacturer_id, name, phone, region)
                    VALUES (?, ?, ?, ?)""",
-                (mid, name, row.get("phone", "") or None,
-                 row.get("region", "") or None),
+                (mid, name, phone or None, region or None),
             )
             created += 1
-    return {"created": created, "skipped": skipped, "errors": errors}
+    # Echo the resolved mapping so the panel can show which of the file's
+    # columns were actually read (a wrong guess is otherwise invisible).
+    return {"created": created, "skipped": skipped, "errors": errors,
+            "columns": {"name": name_col, "phone": phone_col,
+                        "region": region_col}}
 
 
 # ---------- QR generation (manufacturer-scoped) ----------

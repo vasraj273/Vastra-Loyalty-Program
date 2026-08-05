@@ -25,7 +25,7 @@
 | `SSO_ISSUERS` | No | `vastra,yourapp` | Allowed JWT `iss` values (comma-separated). |
 | `SSO_AUDIENCE` | No | `loyalty` | Required JWT `aud`. |
 | `SSO_MAX_AGE` | No | `120` | Max assertion age (seconds); bounds replay. |
-| `USE_SAMPLE_PRODUCTS` | **Set to `0` for a real client** | `1` | While on, `GET /catalog/products` falls back to three hardcoded demo products for any manufacturer with an empty catalog. Set `0` so the Products tab prompts for a CSV import instead. |
+| `USE_SAMPLE_PRODUCTS` | Leave unset for a real client | `0` | Off by default, so `GET /catalog/products` returns `[]` for an empty catalog and the Products tab prompts for a CSV import. Set `1` only for demos/testing, which falls back to three hardcoded demo products. |
 | `VASTRA_API_BASE_URL` | **Yes (to power the panel's Vastra OTP login)** | — | Vastra's API origin, called server-side only (`app/vastra_client.py`). Unset → OTP login fails closed with `502 "VASTRA_API_BASE_URL is not configured"` (password login still works). **Does not affect the product catalog** — that is CSV-imported. Companions: `VASTRA_API_KEY` (`api-key` header), `VASTRA_UDID`/`VASTRA_DEVICE_TYPE` (device headers, fixed defaults ok), `VASTRA_API_TIMEOUT` (default 10s). |
 | `VASTRA_API_KEY` | Depends on Vastra's contract | — | Credential for Vastra's login API; never sent to the browser. |
 | `VASTRA_API_TIMEOUT` | No | `10` | Timeout (seconds) for the outbound call to Vastra. |
@@ -89,8 +89,9 @@ flowchart LR
 3. Set env: `DATABASE_URL`, `QR_BASE_URL=https://<host>/web/scan`, `SSO_SECRET`,
    `VASTRA_API_BASE_URL` + `VASTRA_API_KEY` (needed for the panel's **Vastra
    OTP login** — otherwise it returns `502 "VASTRA_API_BASE_URL is not
-   configured"`), `USE_SAMPLE_PRODUCTS=0` (+ optional `SSO_*`,
-   `VASTRA_API_TIMEOUT`, `RL_*`, `RL_STORAGE_URI` if multi-replica).
+   configured"`) (+ optional `SSO_*`, `VASTRA_API_TIMEOUT`, `RL_*`,
+   `RL_STORAGE_URI` if multi-replica). `USE_SAMPLE_PRODUCTS` needs no entry —
+   it is off by default.
    **`.env` is gitignored and is not in the image — every variable must be
    entered in the host's own environment settings**, or the feature fails
    closed in production while working locally.

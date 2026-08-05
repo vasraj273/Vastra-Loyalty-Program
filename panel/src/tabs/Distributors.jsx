@@ -16,7 +16,8 @@ export default function Distributors() {
   const [importResult, setImportResult] = useState(null)
   const fileRef = useRef(null)
 
-  // Bulk import distributors from a CSV file (name, phone, region).
+  // Bulk import distributors from a CSV file. The server matches the headers
+  // rather than requiring ours, so the manufacturer's own export imports as-is.
   const onImportFile = async (e) => {
     const file = e.target.files?.[0]
     if (file) e.target.value = '' // allow re-importing the same filename
@@ -137,7 +138,7 @@ export default function Distributors() {
             className="btn-secondary"
             disabled={busy}
             onClick={() => fileRef.current?.click()}
-            title="CSV columns: name, phone, region"
+            title="Needs a name column. Phone and region are matched from your own headers (Mobile, Contact No, City, State…)."
           >
             Import CSV
           </button>
@@ -149,7 +150,9 @@ export default function Distributors() {
       <p className="hint">
         Distributors sit between you and your retailers (you → distributor →
         retailer). Assign retailers to a distributor in the Customers tab, or via
-        the <strong>distributor</strong> column when importing a CSV.
+        the <strong>distributor</strong> column when importing a CSV. An imported
+        file only needs a name column — phone and region are matched from
+        whatever your export calls them.
       </p>
       {error && <p className="error">{error}</p>}
       <ImportResult result={importResult} onDismiss={() => setImportResult(null)} />

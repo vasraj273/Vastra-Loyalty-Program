@@ -188,7 +188,8 @@ supply unusable product names. Vastra OTP login is a separate, unaffected path.
   between the fixed name/code columns and Points.
 - `source` — **strict precedence, never merged:** `"import"` (the manufacturer
   has imported products) → `"sample"` (three hardcoded demo products, only while
-  `USE_SAMPLE_PRODUCTS` is on **and** the catalog is empty) → `"empty"`.
+  `USE_SAMPLE_PRODUCTS=1` — off by default — **and** the catalog is empty) →
+  `"empty"`.
 - **Errors:** `401`.
 
 ### POST /catalog/products/import — Auth M

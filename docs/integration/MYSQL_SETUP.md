@@ -75,7 +75,7 @@ than failing obscurely later:
 ## 4. First deploy
 
 1. Set `DATABASE_URL` (plus the other env vars in `DEPLOY.md`: `QR_BASE_URL`,
-   `SSO_SECRET`, `VASTRA_API_BASE_URL`, `USE_SAMPLE_PRODUCTS=0`).
+   `SSO_SECRET`, `VASTRA_API_BASE_URL`).
 2. Start the container. On boot it creates all 14 tables, applies every column
    migration, and adds the indexes, foreign keys and the generated-column unique
    index. This is idempotent — restarting changes nothing.

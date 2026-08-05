@@ -138,8 +138,9 @@ panel renders between the fixed name/code columns and Points:
 }
 ```
 Resolves in strict precedence, **never merged**: imported rows (`source:
-"import"`) → else the three hardcoded samples when `USE_SAMPLE_PRODUCTS`
-(`"sample"`) → else `[]` (`"empty"`) and the panel prompts for an import. One
+"import"`) → else the three hardcoded samples when `USE_SAMPLE_PRODUCTS=1`
+(`"sample"`; off by default) → else `[]` (`"empty"`) and the panel prompts for
+an import. One
 import and the samples are gone for that manufacturer. It never calls Vastra.
 
 **`POST /catalog/products/import`** — CSV text as JSON (no multipart), like

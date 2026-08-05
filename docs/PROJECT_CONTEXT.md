@@ -100,7 +100,9 @@ auto-camera on "Scan another"), rewards **shop**, **claims** history.
 
 **Bulk import (CSV-as-JSON, no file-upload dependency):**
 `/retailers/import` (auto-logins + find-or-create distributor),
-`/distributors/import`, and `/catalog/products/import` (the product catalog —
+`/distributors/import` (needs only a name column — phone and region are matched
+from the manufacturer's own headers, e.g. `Mobile`, `Contact No`, `City`),
+and `/catalog/products/import` (the product catalog —
 required columns: a product name and a product code; every other CSV column is
 kept verbatim and shown in the panel).
 

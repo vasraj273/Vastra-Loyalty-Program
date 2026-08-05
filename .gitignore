@@ -24,6 +24,7 @@ ruvector.db
 .playwright-mcp/
 skill-observations/
 .pytest_cache/
+.impeccable/
 
 # stray lockfile from running npm at repo root (real one lives in panel/)
 /package-lock.json

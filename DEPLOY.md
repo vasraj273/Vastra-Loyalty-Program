@@ -20,7 +20,7 @@ One container serves everything: API + admin panel (`/panel`) + webview pages (`
    - `QR_BASE_URL` = `https://<your-service>.onrender.com/web/scan`
    - `SSO_SECRET` = a long random string — only needed to enable native-app SSO (see below); omit for a plain demo.
    - `VASTRA_API_BASE_URL` / `VASTRA_API_KEY` — power the panel's **Vastra OTP login** (see below); omit for a plain demo (OTP login fails closed with a 502 until set; password login keeps working). These do **not** affect the product catalog.
-   - `USE_SAMPLE_PRODUCTS` = `0` for a real client — otherwise the Products tab shows three built-in demo products until the manufacturer imports their CSV. Leave unset (`1`) only for demos/testing.
+   - `USE_SAMPLE_PRODUCTS` — leave unset (defaults to `0`) for a real client. Set it to `1` only for demos/testing, which makes the Products tab show three built-in demo products until the manufacturer imports their CSV.
    - `YOURAPP_API_KEY` = a long random string shared with YourApp's backend — enables the server-to-server scan endpoints (`/yourapp/qr/lookup`, `/yourapp/scan`, see "YourApp server-to-server scan" below); omit and they return `503`.
 5. Deploy. First boot auto-seeds demo data (`admin/admin123`, `surya/surya123`, `heritage/heritage123`).
 
@@ -165,7 +165,7 @@ in loyalty's own `product_points` table, imported via the Products tab's
 - Restrict CORS origins to the real app domains.
 - Set a strong `SSO_SECRET` (and keep it out of source control) if native-app SSO is used.
 - Point `VASTRA_API_BASE_URL`/`VASTRA_API_KEY` at Vastra's **production** API (the implemented contract was verified against staging 2026-07-16; confirm the production origin + api-key with Vastra's team).
-- Set `USE_SAMPLE_PRODUCTS=0` so the Products tab prompts for a CSV import instead of listing the three built-in demo products.
+- Leave `USE_SAMPLE_PRODUCTS` unset (it defaults to `0`) so the Products tab prompts for a CSV import instead of listing the three built-in demo products. If a demo set it to `1`, remove it.
 - Set a strong `YOURAPP_API_KEY` and share it only with YourApp's backend; make sure every retailer has their YourApp phone number imported (phone identifies the retailer on `/yourapp/scan`).
 - Rotate the MySQL credentials if the connection string was shared.
 
