@@ -97,6 +97,22 @@
     <div class="error" id="loginError"></div>
   </div>
 
+  <!-- password change required -->
+  <div class="card hidden" id="pwChangeCard">
+    <h3 style="margin-top:0; color:var(--madder);">Security Update Required</h3>
+    <p class="sub" style="text-transform:none; letter-spacing:normal; color:var(--soft); margin-bottom:12px;">
+      For security reasons, you must set a new password before accessing your account.
+    </p>
+    <label>Current Password</label>
+    <input id="curPassword" type="password" placeholder="e.g. shopname123" />
+    <label>New Password (min 8 chars)</label>
+    <input id="newPassword" type="password" placeholder="Enter new password" />
+    <label>Confirm New Password</label>
+    <input id="confirmPassword" type="password" placeholder="Re-enter new password" />
+    <button onclick="submitPasswordChange()">Set New Password & Continue</button>
+    <div class="error" id="pwChangeError"></div>
+  </div>
+
   <!-- dashboard -->
   <div class="hidden" id="dash">
     <div class="card points-card">
@@ -160,9 +176,34 @@ async function login() {
       username: $('username').value.trim(), password: $('password').value }) });
     token = out.token;
     localStorage.setItem('vl_rtoken', token);
+    if (out.must_change) {
+      render();
+      return;
+    }
     if (nextDest) { window.location.href = nextDest; return; }
     render();
   } catch (e) { err(e.message); }
+}
+
+async function submitPasswordChange() {
+  const pwErr = (m) => { const e = $('pwChangeError'); e.textContent = m || ''; e.style.display = m ? 'block' : 'none'; };
+  pwErr('');
+  const curP = $('curPassword').value;
+  const newP = $('newPassword').value;
+  const confP = $('confirmPassword').value;
+  if (!curP) { pwErr('Please enter your current password'); return; }
+  if (newP.length < 8) { pwErr('New password must be at least 8 characters'); return; }
+  if (newP !== confP) { pwErr('Passwords do not match'); return; }
+  try {
+    await api('/retailer/password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: curP, new_password: newP })
+    });
+    if (nextDest) { window.location.href = nextDest; return; }
+    render();
+  } catch (e) {
+    pwErr(e.message);
+  }
 }
 
 async function logout() {
@@ -173,14 +214,22 @@ async function logout() {
 function go(path) { window.location.href = path; }
 
 async function render() {
-  if (!token) { show('loginCard', true); show('dash', false); show('navWrap', false); return; }
+  if (!token) { show('loginCard', true); show('dash', false); show('navWrap', false); show('pwChangeCard', false); return; }
   try {
     const me = await api('/retailer/me');
+    if (me.must_change) {
+      show('loginCard', false);
+      show('dash', false);
+      show('navWrap', false);
+      show('pwChangeCard', true);
+      return;
+    }
+    show('pwChangeCard', false);
     $('whoShop').textContent = me.shop_name;
     $('whoManuf').textContent = me.manufacturer || '';
     $('bal').textContent = Number(me.balance).toLocaleString('en-IN');
     show('loginCard', false); show('dash', true); show('navWrap', true);
-  } catch { show('loginCard', true); show('dash', false); show('navWrap', false); }
+  } catch { show('loginCard', true); show('dash', false); show('navWrap', false); show('pwChangeCard', false); }
 }
 render();
 </script>

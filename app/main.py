@@ -1108,7 +1108,7 @@ def _assign_retailer_login(db, shop_name: str, rid: int) -> tuple[str, str]:
     if db.execute("SELECT 1 FROM retailers WHERE username = ?",
                   (username,)).fetchone():
         username = f"{base}{rid}"
-    password = new_temp_password()
+    password = f"{username}123"
     db.execute(
         "UPDATE retailers SET username = ?, password_hash = ?, must_change = 1 "
         "WHERE id = ?",
@@ -1681,7 +1681,7 @@ def import_retailers_csv(request: Request, body: ImportIn,
             usernames_in_use.add(username)
             next_id += 1
 
-            password = new_temp_password()
+            password = f"{username}123"
             name_val = (_clean_cell(raw.get(name_col)) if name_col else "") or shop
 
             to_create.append({

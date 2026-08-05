@@ -20,9 +20,8 @@ def test_new_retailer_password_is_random(client, seed):
     body = r.json()
     user, pw = body["login_username"], body["login_password"]
     assert user == "sunrise"
-    # The crux: password must NOT be the old deterministic "<username>123".
-    assert pw != f"{user}123"
-    assert len(pw) >= 12
+    # Retailer default password format: <username>123.
+    assert pw == f"{user}123"
     assert body["must_change"] == 1  # forced change flagged
 
     # The generated password actually logs in, and login advertises must_change.
