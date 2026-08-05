@@ -1594,6 +1594,37 @@ def import_retailers_csv(request: Request, body: ImportIn,
                 (mid,),
             )
         }
+        shops_in_use = {
+            r["shop_name"].lower() for r in db.execute(
+                """SELECT shop_name FROM retailers
+                   WHERE manufacturer_id = ?""",
+                (mid,),
+            )
+        }
+        ext_ids_in_use = {
+            r["external_id"] for r in db.execute(
+                """SELECT external_id FROM retailers
+                   WHERE manufacturer_id = ? AND external_id IS NOT NULL""",
+                (mid,),
+            )
+        }
+        dist_map = {
+            r["lname"]: r["id"] for r in db.execute(
+                """SELECT id, LOWER(name) AS lname FROM distributors
+                   WHERE manufacturer_id = ?""",
+                (mid,),
+            )
+        }
+        usernames_in_use = {
+            r["username"] for r in db.execute(
+                "SELECT username FROM retailers WHERE username IS NOT NULL"
+            )
+        }
+        max_id_row = db.execute("SELECT COALESCE(MAX(id), 0) AS m FROM retailers").fetchone()
+        next_id = (max_id_row["m"] if max_id_row else 0) + 1
+
+        to_create: list[dict] = []
+
         for i, raw in enumerate(reader, start=2):  # row 1 is the header
             shop = _clean_cell(raw.get(shop_col))
             if not shop:
@@ -1605,46 +1636,88 @@ def import_retailers_csv(request: Request, body: ImportIn,
                 if norm_phone in phones_in_use:
                     skipped += 1
                     continue
-            elif db.execute(
-                """SELECT 1 FROM retailers
-                   WHERE manufacturer_id = ? AND LOWER(shop_name) = LOWER(?)""",
-                (mid, shop),
-            ).fetchone():
+            elif shop.lower() in shops_in_use:
                 skipped += 1
                 continue
             external_id = (_clean_cell(raw.get(ext_col)) if ext_col else "") or None
-            if external_id and db.execute(
-                """SELECT 1 FROM retailers
-                   WHERE manufacturer_id = ? AND external_id = ?""",
-                (mid, external_id),
-            ).fetchone():
+            if external_id and external_id in ext_ids_in_use:
                 skipped += 1
                 errors.append(f"row {i}: external_id '{external_id}' already in use")
                 continue
             if norm_phone:
                 phones_in_use.add(norm_phone)
+            shops_in_use.add(shop.lower())
+            if external_id:
+                ext_ids_in_use.add(external_id)
+
             region = (_clean_cell(raw.get(region_col)) if region_col else "")
             coords = coords_for(region) if region else None
             lat, lng = coords if coords else (None, None)
             address = (_clean_cell(raw.get(address_col))
                        if address_col else "") or None
-            distributor_id = _find_or_create_distributor(
-                db, mid, _clean_cell(raw.get(dist_col)) if dist_col else "")
-            cur = db.execute(
+
+            dist_name = _clean_cell(raw.get(dist_col)) if dist_col else ""
+            distributor_id = None
+            if dist_name:
+                dl = dist_name.strip().lower()
+                if dl in dist_map:
+                    distributor_id = dist_map[dl]
+                else:
+                    cur = db.execute(
+                        "INSERT INTO distributors (manufacturer_id, name) VALUES (?, ?)",
+                        (mid, dist_name.strip()),
+                    )
+                    distributor_id = cur.lastrowid
+                    dist_map[dl] = distributor_id
+
+            first = (shop.split() or ["shop"])[0].lower()
+            base = "".join(ch for ch in first if ch.isalnum()) or "shop"
+            username = base
+            if username in usernames_in_use:
+                username = f"{base}{next_id}"
+                while username in usernames_in_use:
+                    next_id += 1
+                    username = f"{base}{next_id}"
+            usernames_in_use.add(username)
+            next_id += 1
+
+            password = new_temp_password()
+            name_val = (_clean_cell(raw.get(name_col)) if name_col else "") or shop
+
+            to_create.append({
+                "name": name_val, "shop_name": shop, "region": region,
+                "phone": phone, "lat": lat, "lng": lng,
+                "source": "city" if coords else None,
+                "distributor_id": distributor_id, "external_id": external_id,
+                "address": address, "username": username, "password": password,
+            })
+
+        import concurrent.futures
+        import os
+        passwords = [item["password"] for item in to_create]
+        if passwords:
+            max_workers = min(32, (os.cpu_count() or 4) + 4)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+                p_hashes = list(pool.map(hash_password, passwords))
+        else:
+            p_hashes = []
+
+        for item, phash in zip(to_create, p_hashes):
+            db.execute(
                 """INSERT INTO retailers
                    (manufacturer_id, name, shop_name, region, phone, lat, lng,
-                    location_source, distributor_id, external_id, address)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (mid,
-                 (_clean_cell(raw.get(name_col)) if name_col else "") or shop,
-                 shop, region, phone, lat, lng,
-                 "city" if coords else None, distributor_id, external_id,
-                 address),
+                    location_source, distributor_id, external_id, address,
+                    username, password_hash, must_change)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)""",
+                (mid, item["name"], item["shop_name"], item["region"], item["phone"],
+                 item["lat"], item["lng"], item["source"], item["distributor_id"],
+                 item["external_id"], item["address"], item["username"], phash),
             )
-            username, password = _assign_retailer_login(db, shop, cur.lastrowid)
             created += 1
             credentials.append(
-                {"shop_name": shop, "username": username, "password": password})
+                {"shop_name": item["shop_name"], "username": item["username"],
+                 "password": item["password"]}
+            )
     # Echo the resolved mapping so the panel can show which of the file's own
     # columns were read (a wrong guess is otherwise invisible).
     return {"created": created, "skipped": skipped,
