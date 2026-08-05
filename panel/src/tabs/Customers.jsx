@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { get, post, patch, del } from '../api.js'
+import { ColumnMap } from '../components/ImportResult.jsx'
 import { useConfirm } from '../confirm.jsx'
 import { downloadCSV, today } from '../utils/csv.js'
 
@@ -100,6 +101,38 @@ export default function Customers() {
       load()
     } catch (err) {
       setError(err.message)
+    }
+  }
+
+  const removeAll = async () => {
+    const ok = await confirm({
+      title: `Delete all ${list.length} customers?`,
+      message:
+        'Your entire customer list is cleared and you would need to import a ' +
+        'CSV again to rebuild it. Their logins stop working immediately. ' +
+        'Customers who already have scan history are kept — their points and ' +
+        'claims need an owner.',
+      confirmLabel: `Delete all ${list.length}`,
+      danger: true,
+    })
+    if (!ok) return
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    try {
+      const res = await del('/retailers')
+      setImportResult(null)
+      setNotice(
+        res.skipped
+          ? `Deleted ${res.deleted}. Kept ${res.skipped} with scan history — ` +
+            'delete their scans first, or leave them.'
+          : `Deleted ${res.deleted} customer(s).`,
+      )
+      load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -266,12 +299,19 @@ export default function Customers() {
             className="btn-secondary"
             disabled={busy}
             onClick={() => fileRef.current?.click()}
-            title="CSV columns: shop_name, name, region, phone, distributor"
+            title="Needs a shop or name column. Phone, city, address and distributor are matched from your own headers (Mobile, city, address1…)."
           >
             Import CSV
           </button>
           <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
             {showForm ? 'Close' : '+ Add customer'}
+          </button>
+          <button
+            className="btn-ghost"
+            disabled={busy || list.length === 0}
+            onClick={removeAll}
+          >
+            Delete all
           </button>
         </div>
       </div>
@@ -291,6 +331,7 @@ export default function Customers() {
               Dismiss
             </button>
           </div>
+          <ColumnMap columns={importResult.columns} />
           {importResult.errors.length > 0 && (
             <ul className="hint" style={{ marginTop: 0 }}>
               {importResult.errors.slice(0, 8).map((er, i) => (

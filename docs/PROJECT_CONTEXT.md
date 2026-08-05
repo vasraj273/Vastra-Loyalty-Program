@@ -98,13 +98,24 @@ shop/Claims history/Log out): home/login, **scan** (camera + manual code, with a
 location-verification popup; a count-up + confetti animation on success and
 auto-camera on "Scan another"), rewards **shop**, **claims** history.
 
-**Bulk import (CSV-as-JSON, no file-upload dependency):**
-`/retailers/import` (auto-logins + find-or-create distributor),
-`/distributors/import` (needs only a name column — phone and region are matched
-from the manufacturer's own headers, e.g. `Mobile`, `Contact No`, `City`),
-and `/catalog/products/import` (the product catalog —
-required columns: a product name and a product code; every other CSV column is
-kept verbatim and shown in the panel).
+**Bulk import (CSV-as-JSON, no file-upload dependency).** Four lists import:
+`/retailers/import` (auto-logins + find-or-create distributor; dedupes on
+phone), `/distributors/import`, `/catalog/products/import` (every column the
+file has beyond name/code/points is kept verbatim and shown in the panel) and
+`/gifts/import`. **Headers are matched, not dictated** — each import resolves
+its fields against alias lists, so a list exported from the manufacturer's own
+system imports as it comes: `Mobile` → phone, `city` → region (in preference to
+`state`), `address1` → address, `retailer_points` → product points,
+`Product Points` → reward cost, and a JSON-array `images` cell → the reward's
+single image. Only the identity columns are required (a retailer needs a shop or
+name column; a reward needs a name and points; a product needs a name and code;
+a distributor needs a name). Each response echoes which of the file's columns
+was read for each field, and the panel displays it.
+
+**Delete all.** Products, Customers, Distributors and Gifts each have a bulk
+clear behind a confirmation, for undoing a bad import. Rows that history
+depends on are kept rather than blocking the whole operation: customers with
+scans and rewards with claims survive, and the panel says so.
 
 ## 5. How location works (current behavior)
 

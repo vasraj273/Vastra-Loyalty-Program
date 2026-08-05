@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { get, post, patch, del } from '../api.js'
+import ImportResult from '../components/ImportResult.jsx'
+import { useConfirm } from '../confirm.jsx'
 import { downloadCSV, today } from '../utils/csv.js'
+
+const CSV_HELP =
+  'Needs a reward name and a points column. Description and image are matched ' +
+  'from your own headers (Product Points, images, description…).'
 
 // Shows the image, or a clean emoji fallback if it fails to load. Uses React
 // state instead of DOM surgery so one broken image never affects other cards.
@@ -25,7 +31,11 @@ export default function Gifts() {
   const [editingId, setEditingId] = useState(null) // null = creating new
   const [showForm, setShowForm] = useState(false)
   const [error, setError] = useState(null)
+  const [notice, setNotice] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [importResult, setImportResult] = useState(null)
+  const fileRef = useRef(null)
+  const confirm = useConfirm()
 
   const load = useCallback(() => {
     get('/gifts').then(setList).catch((e) => setError(e.message))
@@ -145,6 +155,57 @@ export default function Gifts() {
     }
   }
 
+  // Bulk import rewards from a CSV file, read client-side and posted as text
+  // so no multipart dependency is needed (same shape as the other imports).
+  const onImportFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (file) e.target.value = '' // allow re-importing the same filename
+    if (!file) return
+    setBusy(true)
+    setError(null)
+    setNotice(null)
+    setImportResult(null)
+    try {
+      const csv = await file.text()
+      setImportResult(await post('/gifts/import', { csv }))
+      load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const removeAll = async () => {
+    const ok = await confirm({
+      title: `Delete all ${list.length} rewards?`,
+      message:
+        'Your entire reward shop is cleared and you would need to import a ' +
+        'CSV again to rebuild it. Rewards that already have claims are kept — ' +
+        'a claim has to keep pointing at what was redeemed. Hide those instead.',
+      confirmLabel: `Delete all ${list.length}`,
+      danger: true,
+    })
+    if (!ok) return
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await del('/gifts')
+      setImportResult(null)
+      setNotice(
+        res.skipped
+          ? `Deleted ${res.deleted}. Kept ${res.skipped} reward(s) that have ` +
+            'claims — hide those instead of deleting.'
+          : `Deleted ${res.deleted} reward(s).`,
+      )
+      load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (!list) return <p className="loading">Loading…</p>
 
   return (
@@ -161,16 +222,40 @@ export default function Gifts() {
           >
             ↓ Export CSV
           </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,text/csv"
+            style={{ display: 'none' }}
+            onChange={onImportFile}
+          />
+          <button
+            className="btn-secondary"
+            disabled={busy}
+            onClick={() => fileRef.current?.click()}
+            title={CSV_HELP}
+          >
+            Import CSV
+          </button>
           <button className="btn-primary" onClick={showForm ? () => setShowForm(false) : openAdd}>
             {showForm ? 'Close' : '+ Add reward'}
+          </button>
+          <button
+            className="btn-ghost"
+            disabled={busy || list.length === 0}
+            onClick={removeAll}
+          >
+            Delete all
           </button>
         </div>
       </div>
       <p className="hint">
         Rewards retailers redeem with their points. Claims arrive in the{' '}
-        <strong>Redemptions</strong> tab for approval.
+        <strong>Redemptions</strong> tab for approval. {CSV_HELP}
       </p>
       {error && <p className="error">{error}</p>}
+      {notice && <p className="created-note">{notice}</p>}
+      <ImportResult result={importResult} onDismiss={() => setImportResult(null)} />
 
       {showForm && (
         <form className="panel-card scheme-form" onSubmit={submit}>

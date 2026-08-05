@@ -74,6 +74,48 @@ def test_bad_rows_skipped_not_fatal(appmod):
     assert len(parsed["errors"]) == 3
 
 
+# The verbatim header row of the client's real product export, plus two of its
+# rows. Its loyalty value lives in "retailer_points" (it also carries a
+# distributor_points column, which is not ours to read).
+REAL_EXPORT_CSV = (
+    "product_id,Name,brand_id,brand_name,description,images,category_id,"
+    "category_name,Product Code,unit_id,unit_name,uom_key,uom_value,qty,"
+    "qr_type,Entry Status,mrp,created_at,Created By,retailer_points,"
+    "points_active,distributor_points,color,size\n"
+    "1249,93-TENCEL OVERSIZE T-SHIRT,3,LONDON DREAM,null,\"[\"\"undefined\"\"]\","
+    "12,LOUNGE WEAR,93-TENCEL OVERSIZE T-SHIRT S TO 3XL,1,box,,null,6,1,"
+    "Active,0,\"16/05/2026, 19:14:56\",Hirshita Leggings,10.00,1,0.00,null,null\n"
+    "1183,91-RAYON PANT,2,HARSHITA,null,\"[\"\"undefined\"\"]\",10,PANT,"
+    "91-RAYON PANT M TO 3XL,1,box,,null,5,1,Active,0,"
+    "\"06/04/2026, 19:48:55\",Hirshita Leggings,14.00,1,0.00,null,null\n"
+)
+
+
+def test_real_product_export_reads_retailer_points(appmod):
+    """Their loyalty value is "retailer_points"; distributor_points is not."""
+    parsed = appmod._parse_catalog_csv(REAL_EXPORT_CSV)
+    assert parsed["has_points"] is True
+    by_code = {r["external_id"]: r for r in parsed["rows"]}
+    tencel = by_code["93-TENCEL OVERSIZE T-SHIRT S TO 3XL"]
+    assert tencel["name"] == "93-TENCEL OVERSIZE T-SHIRT"
+    assert tencel["points"] == 10
+    assert by_code["91-RAYON PANT M TO 3XL"]["points"] == 14
+    # Everything else is kept verbatim for the panel, including the column
+    # we deliberately do not read as points.
+    assert tencel["attrs"]["distributor_points"] == "0.00"
+    assert tencel["attrs"]["brand_name"] == "LONDON DREAM"
+    assert "Name" not in parsed["columns"]  # the name column is not an attr
+    assert "retailer_points" not in parsed["columns"]
+
+
+def test_alias_priority_beats_column_order(appmod):
+    """A file with two plausible code columns resolves by alias, not by which
+    column happens to come first."""
+    parsed = appmod._parse_catalog_csv(
+        "Name,SKU,Product Code\nSaree,OLD-1,BNS-01\n")
+    assert parsed["rows"][0]["external_id"] == "BNS-01"
+
+
 def test_duplicate_code_last_row_wins(appmod):
     parsed = appmod._parse_catalog_csv(
         "name,code\nFirst,DUP\nSecond,DUP\n")

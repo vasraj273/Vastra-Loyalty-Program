@@ -19,9 +19,18 @@ def imp(client, headers, csv):
                        headers=headers)
 
 
-# The real client's distributor export: their column names, a row-number
-# column, a profile-pic column we have nowhere to put, and "Mobile" for phone.
+# The real client's distributor export: their column names, columns we have
+# nowhere to put, and "Mobile" for phone. There is no region column at all.
 REAL_CSV = (
+    "Name,Email,Mobile,User Type,gender\n"
+    "KAILASH HOSIERY,null,8209575016,distributor,null\n"
+    "MITTAL TRADERS,null,9437201426,distributor,null\n"
+    "BHAGWAN HOSIERY,null,9887782820,distributor,null\n"
+)
+
+# The same list as rendered in their web portal, which exports a row-number
+# column and a profile-pic column too.
+PORTAL_CSV = (
     "SNo,Profile Pic,Name,Mobile,UserType,Shop Id,Shop Name\n"
     "1,,KAILASH HOSIERY,8209575016,distributor,,\n"
     "2,,MITTAL TRADERS,9437201426,distributor,,\n"
@@ -43,6 +52,23 @@ def test_real_export_keeps_phone(client, seed):
     assert rows["KAILASH HOSIERY"]["phone"] == "8209575016"
     assert rows["MITTAL TRADERS"]["phone"] == "9437201426"
     assert rows["BHAGWAN HOSIERY"]["phone"] == "9887782820"
+    # "null" cells never reach the table.
+    assert rows["KAILASH HOSIERY"]["region"] is None
+
+
+def test_portal_export_with_row_numbers(client, seed):
+    """The same list exported from their portal, with SNo/Profile Pic/Shop
+    columns we have nowhere to put."""
+    headers = auth(client)
+    r = client.post("/distributors/import", json={"csv": PORTAL_CSV},
+                    headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["created"] == 3
+    assert r.json()["columns"] == {"name": "Name", "phone": "Mobile",
+                                   "region": None}
+    rows = {d["name"]: d for d in client.get("/distributors",
+                                             headers=headers).json()}
+    assert rows["KAILASH HOSIERY"]["phone"] == "8209575016"
 
 
 def test_header_aliases(client, seed):

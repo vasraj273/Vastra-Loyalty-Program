@@ -707,7 +707,10 @@ _CSV_NAME_HEADERS = ("name", "product_name", "p_name", "item_name",
                      "design_name", "product")
 _CSV_CODE_HEADERS = ("code", "product_code", "p_code", "sku", "item_code",
                      "design_number", "style_code", "article_code")
-_CSV_POINTS_HEADERS = ("points", "loyalty_points", "points_per_scan")
+# retailer_points is what the client's product export calls the loyalty value
+# (their file also carries distributor_points, which is not ours to read).
+_CSV_POINTS_HEADERS = ("points", "loyalty_points", "points_per_scan",
+                       "retailer_points")
 # Row-number columns are a render index that re-numbers on every export; they
 # carry no meaning once imported. "" catches headers like "#".
 _CSV_IGNORED_HEADERS = ("", "sno", "s_no", "sr_no", "serial", "no")
@@ -715,18 +718,50 @@ _CSV_IGNORED_HEADERS = ("", "sno", "s_no", "sr_no", "serial", "no")
 # word out of the manufacturer's table.
 _CSV_NULLISH = {"null", "none", "n/a", "na", "-", "--"}
 
-# Accepted spellings for the distributor columns, same generous matching as the
-# product catalog: the manufacturer exports the distributor list from whatever
-# system they already run, so "Mobile" has to land in `phone` without anyone
-# hand-editing the header row first.
+# Accepted spellings for the retailer / distributor / gift columns, matched the
+# same generous way as the product catalog: every one of these lists is exported
+# from whatever system the manufacturer already runs, so "Mobile" has to land in
+# `phone` and "city" in `region` without anyone hand-editing a header row first.
+#
+# Within a list, earlier aliases win (see _pick_col) — that is how a retailer
+# file carrying both "Shop Name" and "Name" resolves each to the right field.
+_CSV_PHONE_HEADERS = ("phone", "mobile", "mobile_no", "mobile_number",
+                      "phone_no", "phone_number", "contact",
+                      "contact_no", "contact_number", "whatsapp",
+                      "whatsapp_number")
+# City before state: the client's retailer export carries both, and the city is
+# the more precise pin for geo.coords_for.
+_CSV_REGION_HEADERS = ("region", "city", "state", "area", "district",
+                       "zone", "territory", "location")
+
 _CSV_DIST_NAME_HEADERS = ("name", "distributor_name", "distributor",
                           "party_name", "firm_name", "agency_name",
                           "company_name", "shop_name")
-_CSV_DIST_PHONE_HEADERS = ("phone", "mobile", "mobile_no", "mobile_number",
-                           "phone_no", "phone_number", "contact",
-                           "contact_no", "contact_number", "whatsapp")
-_CSV_DIST_REGION_HEADERS = ("region", "city", "state", "area", "district",
-                            "zone", "territory", "location")
+
+# A retailer row needs a shop; the owner's name is a bonus. Files that carry
+# only "Name" (the common case) use it for both, matching what the panel's
+# single-retailer form does with a blank owner.
+_CSV_RET_SHOP_HEADERS = ("shop_name", "shop", "store_name", "firm_name",
+                         "business_name", "party_name", "name")
+_CSV_RET_NAME_HEADERS = ("name", "owner_name", "owner", "contact_person",
+                         "person_name", "retailer_name", "proprietor")
+_CSV_RET_ADDRESS_HEADERS = ("address", "address1", "address_1", "street",
+                            "street_address", "shop_address", "addr")
+_CSV_RET_DISTRIBUTOR_HEADERS = ("distributor", "distributor_name", "dealer",
+                                "agency", "supplier")
+# Deliberately narrow: external_id is the SSO identity key, so it is only ever
+# read from a column that says so outright — never guessed from an "id" column.
+_CSV_RET_EXTERNAL_ID_HEADERS = ("external_id", "externalid")
+
+_CSV_GIFT_NAME_HEADERS = ("name", "gift_name", "reward_name", "product_name",
+                          "item_name", "product", "title")
+_CSV_GIFT_POINTS_HEADERS = ("points_cost", "product_points", "points",
+                            "points_required", "redeem_points",
+                            "loyalty_points")
+_CSV_GIFT_DESC_HEADERS = ("description", "desc", "details", "subtitle",
+                          "sub_title")
+_CSV_GIFT_IMAGE_HEADERS = ("image_url", "image", "images", "photo", "picture",
+                           "img", "image_link")
 
 
 def _norm_header(h: str) -> str:
@@ -752,6 +787,30 @@ def _clean_cell(v) -> str:
     return "" if s.lower() in _CSV_NULLISH else s
 
 
+def _first_image(cell: str) -> str:
+    """One image URL out of an image cell.
+
+    The client's reward export writes the column as a JSON array of URLs
+    (`["https://…"]`) because their system allows several photos per reward;
+    loyalty stores a single `gifts.image_url`, so the first usable entry wins.
+    A plain URL is passed through untouched."""
+    s = _clean_cell(cell)
+    if not s.startswith("["):
+        return s
+    import json
+    try:
+        items = json.loads(s)
+    except ValueError:
+        return ""
+    for item in items if isinstance(items, list) else []:
+        url = _clean_cell(item if isinstance(item, str) else "")
+        # Their exporter writes the literal string "undefined" for a missing
+        # image, which would render as a broken thumbnail in the shop.
+        if url and url.lower() != "undefined":
+            return url
+    return ""
+
+
 def _parse_catalog_csv(text: str) -> dict:
     """Parse a product CSV. Returns rows ready for product_points plus the
     free-form column list (original header text, in CSV order).
@@ -765,8 +824,8 @@ def _parse_catalog_csv(text: str) -> dict:
     reader = csvmod.DictReader(io.StringIO(text))
     fields = [f for f in (reader.fieldnames or []) if (f or "").strip()]
     norm = {f: _norm_header(f) for f in fields}
-    name_col = next((f for f in fields if norm[f] in _CSV_NAME_HEADERS), None)
-    code_col = next((f for f in fields if norm[f] in _CSV_CODE_HEADERS), None)
+    name_col = _pick_col(fields, norm, _CSV_NAME_HEADERS)
+    code_col = _pick_col(fields, norm, _CSV_CODE_HEADERS)
     missing = []
     if not name_col:
         missing.append("a product name column (one of: "
@@ -776,7 +835,7 @@ def _parse_catalog_csv(text: str) -> dict:
                        + ", ".join(_CSV_CODE_HEADERS) + ")")
     if missing:
         raise HTTPException(422, "CSV is missing " + " and ".join(missing))
-    points_col = next((f for f in fields if norm[f] in _CSV_POINTS_HEADERS), None)
+    points_col = _pick_col(fields, norm, _CSV_POINTS_HEADERS)
     attr_cols = [f for f in fields
                  if f not in (name_col, code_col, points_col)
                  and norm[f] not in _CSV_IGNORED_HEADERS]
@@ -1185,6 +1244,38 @@ def delete_retailer(retailer_id: int,
         db.execute("DELETE FROM retailers WHERE id = ?", (retailer_id,))
 
 
+@app.delete("/retailers")
+def delete_all_retailers(user: dict = Depends(current_manufacturer)):
+    """Clear the customer list (the panel's "Delete all", behind a
+    confirmation).
+
+    Retailers with scan history are kept, not deleted — their ledger rows and
+    claims have to keep pointing at an owner, which is the same rule the
+    single-retailer delete enforces with a 409. Logins of the deleted
+    retailers go with them (retailer_tokens cascades). Returns how many of
+    each, so the panel can say why a few rows survived."""
+    mid = user["id"]
+    with get_db() as db:
+        keep = db.execute(
+            """SELECT COUNT(*) AS n FROM retailers r
+               WHERE r.manufacturer_id = ?
+                 AND EXISTS (SELECT 1 FROM points_ledger l
+                             WHERE l.retailer_id = r.id)""",
+            (mid,)).fetchone()["n"]
+        gone = db.execute(
+            """SELECT COUNT(*) AS n FROM retailers r
+               WHERE r.manufacturer_id = ?
+                 AND NOT EXISTS (SELECT 1 FROM points_ledger l
+                                 WHERE l.retailer_id = r.id)""",
+            (mid,)).fetchone()["n"]
+        db.execute(
+            """DELETE FROM retailers
+               WHERE manufacturer_id = ?
+                 AND NOT EXISTS (SELECT 1 FROM points_ledger l
+                                 WHERE l.retailer_id = retailers.id)""", (mid,))
+    return {"deleted": gone, "skipped": keep}
+
+
 def _balance(db, retailer_id: int) -> int:
     return db.execute(
         "SELECT COALESCE(SUM(points), 0) AS total FROM points_ledger"
@@ -1433,6 +1524,22 @@ def delete_distributor(distributor_id: int,
         db.execute("DELETE FROM distributors WHERE id = ?", (distributor_id,))
 
 
+@app.delete("/distributors")
+def delete_all_distributors(user: dict = Depends(current_manufacturer)):
+    """Clear the distributor list (the panel's "Delete all", behind a
+    confirmation). Like the single delete, retailers are only unlinked (never
+    deleted) and past scans keep the distributor_id they recorded at scan
+    time — so the dashboard's history stays intact."""
+    mid = user["id"]
+    with get_db() as db:
+        n = db.execute("SELECT COUNT(*) AS n FROM distributors "
+                       "WHERE manufacturer_id = ?", (mid,)).fetchone()["n"]
+        db.execute("UPDATE retailers SET distributor_id = NULL "
+                   "WHERE manufacturer_id = ?", (mid,))
+        db.execute("DELETE FROM distributors WHERE manufacturer_id = ?", (mid,))
+    return {"deleted": n}
+
+
 class ImportIn(BaseModel):
     csv: str = Field(min_length=1, description="Raw CSV text")
 
@@ -1441,20 +1548,38 @@ class ImportIn(BaseModel):
 @limiter.limit(RL_IMPORT)
 def import_retailers_csv(request: Request, body: ImportIn,
                          user: dict = Depends(current_manufacturer)):
-    """Bulk-create retailers from CSV text. Columns (header row, case-insensitive):
-    shop_name (required), name, region, phone, distributor, external_id (optional).
-    external_id is the parent-system (YourApp) id used by the SSO exchange; it is
-    unique per manufacturer. Each retailer gets an auto-login; the distributor is
-    found-or-created by name and linked. Rows whose shop_name already exists for
-    this manufacturer are skipped. Returns generated credentials so the panel can
-    show them once."""
+    """Bulk-create retailers from CSV text.
+
+    Headers are matched, not dictated (`_norm_header` + the `_CSV_RET_*` alias
+    lists), so the manufacturer's own export lands in the right fields: "Mobile"
+    fills `phone`, "city" fills `region` (in preference to "state"), "address1"
+    fills `address`. Only a shop or name column is required — a file carrying
+    just "Name" uses it for both the shop and the owner.
+
+    **Phone is the dedupe key when present**, because phone is what identifies
+    the retailer on /yourapp/scan; two different shops legitimately share an
+    owner's first name, so falling back to the name would drop real rows. Rows
+    with no phone at all dedupe on shop name instead. `external_id` (read only
+    from a column that says so) is the parent-system id used by the SSO
+    exchange and is unique per manufacturer. Each retailer gets an auto-login
+    and the distributor is found-or-created by name and linked. Returns
+    generated credentials so the panel can show them once."""
     import csv as csvmod
     import io
     mid = user["id"]
     reader = csvmod.DictReader(io.StringIO(body.csv))
-    headers = {(h or "").strip().lower() for h in (reader.fieldnames or [])}
-    if "shop_name" not in headers:
-        raise HTTPException(422, "CSV must have a 'shop_name' column")
+    fields = [f for f in (reader.fieldnames or []) if (f or "").strip()]
+    norm = {f: _norm_header(f) for f in fields}
+    shop_col = _pick_col(fields, norm, _CSV_RET_SHOP_HEADERS)
+    if not shop_col:
+        raise HTTPException(422, "CSV is missing a shop or name column (one "
+                                 "of: " + ", ".join(_CSV_RET_SHOP_HEADERS) + ")")
+    name_col = _pick_col(fields, norm, _CSV_RET_NAME_HEADERS)
+    phone_col = _pick_col(fields, norm, _CSV_PHONE_HEADERS)
+    region_col = _pick_col(fields, norm, _CSV_REGION_HEADERS)
+    address_col = _pick_col(fields, norm, _CSV_RET_ADDRESS_HEADERS)
+    dist_col = _pick_col(fields, norm, _CSV_RET_DISTRIBUTOR_HEADERS)
+    ext_col = _pick_col(fields, norm, _CSV_RET_EXTERNAL_ID_HEADERS)
     created = skipped = 0
     errors: list[str] = []
     credentials: list[dict] = []
@@ -1470,21 +1595,24 @@ def import_retailers_csv(request: Request, body: ImportIn,
             )
         }
         for i, raw in enumerate(reader, start=2):  # row 1 is the header
-            row = {(k or "").strip().lower(): (v or "").strip()
-                   for k, v in raw.items()}
-            shop = row.get("shop_name", "")
+            shop = _clean_cell(raw.get(shop_col))
             if not shop:
-                errors.append(f"row {i}: missing shop_name")
+                errors.append(f"row {i}: missing shop name")
                 continue
-            dup = db.execute(
+            phone = (_clean_cell(raw.get(phone_col)) if phone_col else "") or None
+            norm_phone = _norm_phone(phone) if phone else ""
+            if norm_phone:
+                if norm_phone in phones_in_use:
+                    skipped += 1
+                    continue
+            elif db.execute(
                 """SELECT 1 FROM retailers
                    WHERE manufacturer_id = ? AND LOWER(shop_name) = LOWER(?)""",
                 (mid, shop),
-            ).fetchone()
-            if dup:
+            ).fetchone():
                 skipped += 1
                 continue
-            external_id = row.get("external_id", "") or None
+            external_id = (_clean_cell(raw.get(ext_col)) if ext_col else "") or None
             if external_id and db.execute(
                 """SELECT 1 FROM retailers
                    WHERE manufacturer_id = ? AND external_id = ?""",
@@ -1493,36 +1621,38 @@ def import_retailers_csv(request: Request, body: ImportIn,
                 skipped += 1
                 errors.append(f"row {i}: external_id '{external_id}' already in use")
                 continue
-            phone = row.get("phone", "") or None
-            norm = _norm_phone(phone) if phone else ""
-            if norm:
-                if norm in phones_in_use:
-                    skipped += 1
-                    errors.append(
-                        f"row {i}: phone '{phone}' already in use by another "
-                        "retailer")
-                    continue
-                phones_in_use.add(norm)
-            region = row.get("region", "")
+            if norm_phone:
+                phones_in_use.add(norm_phone)
+            region = (_clean_cell(raw.get(region_col)) if region_col else "")
             coords = coords_for(region) if region else None
             lat, lng = coords if coords else (None, None)
+            address = (_clean_cell(raw.get(address_col))
+                       if address_col else "") or None
             distributor_id = _find_or_create_distributor(
-                db, mid, row.get("distributor", ""))
+                db, mid, _clean_cell(raw.get(dist_col)) if dist_col else "")
             cur = db.execute(
                 """INSERT INTO retailers
                    (manufacturer_id, name, shop_name, region, phone, lat, lng,
-                    location_source, distributor_id, external_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (mid, row.get("name", "") or shop, shop, region,
-                 phone, lat, lng,
-                 "city" if coords else None, distributor_id, external_id),
+                    location_source, distributor_id, external_id, address)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (mid,
+                 (_clean_cell(raw.get(name_col)) if name_col else "") or shop,
+                 shop, region, phone, lat, lng,
+                 "city" if coords else None, distributor_id, external_id,
+                 address),
             )
             username, password = _assign_retailer_login(db, shop, cur.lastrowid)
             created += 1
             credentials.append(
                 {"shop_name": shop, "username": username, "password": password})
+    # Echo the resolved mapping so the panel can show which of the file's own
+    # columns were read (a wrong guess is otherwise invisible).
     return {"created": created, "skipped": skipped,
-            "errors": errors, "credentials": credentials}
+            "errors": errors, "credentials": credentials,
+            "columns": {"shop_name": shop_col, "name": name_col,
+                        "phone": phone_col, "region": region_col,
+                        "address": address_col, "distributor": dist_col,
+                        "external_id": ext_col}}
 
 
 @app.post("/distributors/import")
@@ -1548,8 +1678,8 @@ def import_distributors_csv(request: Request, body: ImportIn,
         raise HTTPException(422, "CSV is missing a distributor name column "
                                  "(one of: "
                                  + ", ".join(_CSV_DIST_NAME_HEADERS) + ")")
-    phone_col = _pick_col(fields, norm, _CSV_DIST_PHONE_HEADERS)
-    region_col = _pick_col(fields, norm, _CSV_DIST_REGION_HEADERS)
+    phone_col = _pick_col(fields, norm, _CSV_PHONE_HEADERS)
+    region_col = _pick_col(fields, norm, _CSV_REGION_HEADERS)
     created = skipped = 0
     errors: list[str] = []
     with get_db() as db:
@@ -2710,6 +2840,109 @@ def delete_gift(gift_id: int, user: dict = Depends(current_manufacturer)):
             raise HTTPException(
                 409, "Gift has claims; deactivate it instead of deleting")
         db.execute("DELETE FROM gifts WHERE id = ?", (gift_id,))
+
+
+@app.delete("/gifts")
+def delete_all_gifts(user: dict = Depends(current_manufacturer)):
+    """Clear the reward shop (the panel's "Delete all", behind a confirmation).
+
+    Rewards that already have claims are kept, not deleted — a claim has to
+    keep pointing at the reward it was made for, which is the same rule the
+    single-reward delete enforces with a 409. Returns how many of each."""
+    mid = user["id"]
+    with get_db() as db:
+        keep = db.execute(
+            """SELECT COUNT(*) AS n FROM gifts g
+               WHERE g.manufacturer_id = ?
+                 AND EXISTS (SELECT 1 FROM gift_claims gc
+                             WHERE gc.gift_id = g.id)""", (mid,)).fetchone()["n"]
+        gone = db.execute(
+            """SELECT COUNT(*) AS n FROM gifts g
+               WHERE g.manufacturer_id = ?
+                 AND NOT EXISTS (SELECT 1 FROM gift_claims gc
+                                 WHERE gc.gift_id = g.id)""",
+            (mid,)).fetchone()["n"]
+        db.execute(
+            """DELETE FROM gifts
+               WHERE manufacturer_id = ?
+                 AND NOT EXISTS (SELECT 1 FROM gift_claims gc
+                                 WHERE gc.gift_id = gifts.id)""", (mid,))
+    return {"deleted": gone, "skipped": keep}
+
+
+@app.post("/gifts/import")
+@limiter.limit(RL_IMPORT)
+def import_gifts_csv(request: Request, body: ImportIn,
+                     user: dict = Depends(current_manufacturer)):
+    """Bulk-create rewards from CSV text.
+
+    Same generous header matching as the other imports (`_CSV_GIFT_*`). A
+    reward name and a points column are both required — a reward with no price
+    in points cannot go in the shop — while description and image are optional.
+    The image cell may be a plain URL or the JSON array the client's export
+    writes (`_first_image`). Rows whose name already exists are skipped."""
+    import csv as csvmod
+    import io
+    mid = user["id"]
+    reader = csvmod.DictReader(io.StringIO(body.csv))
+    fields = [f for f in (reader.fieldnames or []) if (f or "").strip()]
+    norm = {f: _norm_header(f) for f in fields}
+    name_col = _pick_col(fields, norm, _CSV_GIFT_NAME_HEADERS)
+    points_col = _pick_col(fields, norm, _CSV_GIFT_POINTS_HEADERS)
+    missing = []
+    if not name_col:
+        missing.append("a reward name column (one of: "
+                       + ", ".join(_CSV_GIFT_NAME_HEADERS) + ")")
+    if not points_col:
+        missing.append("a points column (one of: "
+                       + ", ".join(_CSV_GIFT_POINTS_HEADERS) + ")")
+    if missing:
+        raise HTTPException(422, "CSV is missing " + " and ".join(missing))
+    desc_col = _pick_col(fields, norm, _CSV_GIFT_DESC_HEADERS)
+    image_col = _pick_col(fields, norm, _CSV_GIFT_IMAGE_HEADERS)
+    created = skipped = 0
+    errors: list[str] = []
+    with get_db() as db:
+        for i, raw in enumerate(reader, start=2):  # row 1 is the header
+            name = _clean_cell(raw.get(name_col))
+            if not name:
+                errors.append(f"row {i}: missing reward name")
+                continue
+            cell = _clean_cell(raw.get(points_col))
+            try:
+                points = int(float(cell))
+            except ValueError:
+                skipped += 1
+                errors.append(f"row {i}: points '{cell}' is not a number")
+                continue
+            if points < 1:
+                skipped += 1
+                errors.append(f"row {i}: points must be 1 or more")
+                continue
+            if db.execute(
+                """SELECT 1 FROM gifts
+                   WHERE manufacturer_id = ? AND LOWER(name) = LOWER(?)""",
+                (mid, name),
+            ).fetchone():
+                skipped += 1
+                continue
+            image = _first_image(raw.get(image_col)) if image_col else ""
+            if len(image) > 500:  # gifts.image_url is VARCHAR(500)
+                errors.append(f"row {i}: image URL too long — reward imported "
+                              "without it")
+                image = ""
+            db.execute(
+                """INSERT INTO gifts
+                   (manufacturer_id, name, description, points_cost, image_url)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (mid, name,
+                 (_clean_cell(raw.get(desc_col)) if desc_col else ""),
+                 points, image or None),
+            )
+            created += 1
+    return {"created": created, "skipped": skipped, "errors": errors,
+            "columns": {"name": name_col, "points_cost": points_col,
+                        "description": desc_col, "image_url": image_col}}
 
 
 # ---------- gift shop + claims (retailer side, authenticated) ----------

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { get, post, patch, del } from '../api.js'
 import ImportResult from '../components/ImportResult.jsx'
+import { useConfirm } from '../confirm.jsx'
 import { downloadCSV, today } from '../utils/csv.js'
 
 const EMPTY = { name: '', phone: '', region: '' }
@@ -15,6 +16,7 @@ export default function Distributors() {
   const [busy, setBusy] = useState(false)
   const [importResult, setImportResult] = useState(null)
   const fileRef = useRef(null)
+  const confirm = useConfirm()
 
   // Bulk import distributors from a CSV file. The server matches the headers
   // rather than requiring ours, so the manufacturer's own export imports as-is.
@@ -111,6 +113,31 @@ export default function Distributors() {
     }
   }
 
+  const removeAll = async () => {
+    const ok = await confirm({
+      title: `Delete all ${list.length} distributors?`,
+      message:
+        'Your entire distributor list is cleared and you would need to import ' +
+        'a CSV again to rebuild it. Customers assigned to them are only ' +
+        'unassigned, never deleted, and past scans keep the distributor they ' +
+        'were recorded against.',
+      confirmLabel: `Delete all ${list.length}`,
+      danger: true,
+    })
+    if (!ok) return
+    setBusy(true)
+    setError(null)
+    try {
+      await del('/distributors')
+      setImportResult(null)
+      load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (!list) return <p className="loading">Loading…</p>
 
   return (
@@ -144,6 +171,13 @@ export default function Distributors() {
           </button>
           <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
             {showForm ? 'Close' : '+ Add distributor'}
+          </button>
+          <button
+            className="btn-ghost"
+            disabled={busy || list.length === 0}
+            onClick={removeAll}
+          >
+            Delete all
           </button>
         </div>
       </div>
