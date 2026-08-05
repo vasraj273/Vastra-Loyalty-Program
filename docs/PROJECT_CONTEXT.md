@@ -4,7 +4,7 @@ A one-stop orientation to what this project is, who it serves, how it's built, a
 where it stands. For deeper detail see the companion docs linked at the end.
 
 **Status:** Live in production on Render + MySQL (AWS RDS) with real data.
-**Last updated:** 2026-06-25.
+**Last updated:** 2026-08-05.
 
 ---
 
@@ -34,7 +34,7 @@ One FastAPI service serves three surfaces from a single container:
 - **Super admin** — creates manufacturer accounts; owns no catalog data.
 - **Manufacturer** — manages products, schemes, gifts, retailers, distributors;
   generates/prints QR; sees analytics, claims, redemptions.
-- **Retailer** — logs into the webview, scans codes, sees wallet, redeems gifts.
+- **Retailer** — logs into the webview using shop username + default `<username>123` password, undergoes mandatory password change on first login (`must_change=1`), scans codes, sees wallet, redeems gifts, and can update password via the burger menu.
 - **Distributor** — *not a login.* A tracking/attribution entity only (see below).
 
 ## 3. Core concepts

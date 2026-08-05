@@ -130,9 +130,9 @@ Step 2: verify the OTP with Vastra, log the manufacturer in. Matches by `externa
 - **Errors:** `401`.
 
 ### POST /auth/retailer/login — None
-Password login for retailers (dev/test; production retailer access is SSO-only).
-- **Request:** `{ "username": "kumar", "password": "•••" }`
-- **Response 200:** `{ "token": "…", "retailer_id": 12, "shop_name": "…", "name": "…", "region": "…", "manufacturer": "…", "must_change": false }`
+Password login for retailers. Default initial password is `<username>123` (derived from lowercased first word of shop name). Returns `must_change: true` on initial login to enforce compulsory password change.
+- **Request:** `{ "username": "kumar", "password": "kumar123" }`
+- **Response 200:** `{ "token": "…", "retailer_id": 12, "shop_name": "…", "name": "…", "region": "…", "manufacturer": "…", "must_change": true }`
 - **Errors:** `401` · `403 Account is blocked` (emergency lockout) · `429`.
 - **Single active session:** as with manufacturer login, a new login invalidates the retailer's previous token.
 

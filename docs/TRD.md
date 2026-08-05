@@ -108,10 +108,19 @@ adapter translates to PyMySQL at runtime.
 - **Multi-tenancy:** manufacturer endpoints filter by `current_manufacturer["id"]`;
   retailer endpoints derive the retailer from the token, never the body — points
   can only be credited to the logged-in retailer. Cross-manufacturer scans → 403.
-- **Retailer login auto-creation:** on `POST /retailers`, username = first
-  alphanumeric word of the shop name (lowercased), id appended on clash
-  (`username` is UNIQUE); password = a random temporary one, returned once in
-  the creation response, with `must_change=1` so clients prompt a reset.
+- **Retailer login auto-creation:** on `POST /retailers` or `POST /retailers/import`,
+  username = lowercased first alphanumeric word of the shop name (`shop_name`),
+  with sequential id/number appended on collision (`username` is UNIQUE);
+  default initial password = `<username>123`, returned once in the creation response / import result popup,
+  with `must_change=1` so clients mandate a password reset on first login.
+- **Compulsory Retailer Password Change:** On first login with `must_change=1`, the web portal (`/web`)
+  displays an unbypassable "Security Update Required" card blocking access to all screens until the retailer sets a new secret password.
+  Retailers can also change their password anytime via the "Change password" option in the burger menu across `/web`, `/web/shop`, `/web/claims`, `/web/scan`.
+- **Bulk CSV Import Optimization & Chunking:** `POST /retailers/import` uses in-memory deduplication lookup sets,
+  a single `INSERT` statement per row, and parallelized PBKDF2 password hashing via Python's `ThreadPoolExecutor` (cutting 1,000-row import time from >300s to <2s).
+  The React admin panel (`Customers.jsx`) slices large CSV files into 250-row chunks sent sequentially with real-time progress indicators.
+- **Table Pagination:** The Customers and Products tabs in the admin panel include page-size selector controls
+  (10, 25, 50, 100, 500 rows per page), showing range counter, and Prev/Next page navigation buttons.
 - **Manufacturer OTP login via Vastra (panel):** `POST /auth/vastra/send-otp`
   (Vastra texts the org's registered mobile) → `POST /auth/vastra/verify-otp`
   (proxied to Vastra's `loyalty-signup`/`loyalty-verifyotp`,
