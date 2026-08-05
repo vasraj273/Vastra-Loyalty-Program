@@ -69,12 +69,14 @@ def verify_sso_assertion(assertion: str, expected_role: str) -> dict:
     return claims
 
 
-def hash_password(password: str) -> str:
+def hash_password(password: str, iterations: int = _ITERATIONS) -> str:
     salt = secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac(
-        "sha256", password.encode(), bytes.fromhex(salt), _ITERATIONS
+        "sha256", password.encode(), bytes.fromhex(salt), iterations
     ).hex()
-    return f"{salt}${digest}"
+    if iterations == _ITERATIONS:
+        return f"{salt}${digest}"
+    return f"{salt}${iterations}${digest}"
 
 
 # Unambiguous alphabet (no O/0/I/l/1) so a manufacturer can read a generated
@@ -91,11 +93,19 @@ def new_temp_password(length: int = 12) -> str:
 
 def verify_password(password: str, stored: str) -> bool:
     try:
-        salt, digest = stored.split("$", 1)
+        parts = stored.split("$")
+        if len(parts) == 3:
+            salt, iters_str, digest = parts
+            iterations = int(iters_str)
+        elif len(parts) == 2:
+            salt, digest = parts
+            iterations = _ITERATIONS
+        else:
+            return False
     except ValueError:
         return False
     candidate = hashlib.pbkdf2_hmac(
-        "sha256", password.encode(), bytes.fromhex(salt), _ITERATIONS
+        "sha256", password.encode(), bytes.fromhex(salt), iterations
     ).hex()
     return secrets.compare_digest(candidate, digest)
 

@@ -1698,7 +1698,7 @@ def import_retailers_csv(request: Request, body: ImportIn,
         if passwords:
             max_workers = min(32, (os.cpu_count() or 4) + 4)
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-                p_hashes = list(pool.map(hash_password, passwords))
+                p_hashes = list(pool.map(lambda p: hash_password(p, iterations=20_000), passwords))
         else:
             p_hashes = []
 
