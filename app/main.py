@@ -495,8 +495,9 @@ def retailer_login(request: Request, body: LoginIn):
         "name": row["name"],
         "region": row["region"],
         "manufacturer": manufacturer["display_name"] if manufacturer else None,
-        # Fix 3: tells the client to prompt for a password change on first login
-        # (set for retailers created with a system-generated temp password).
+        # Set while the retailer is still on the auto-generated password. It is
+        # advisory: the webview shows a reminder pointing at the burger menu's
+        # Change password — it never forces a reset or blocks login.
         "must_change": bool(row["must_change"]),
     }
 
@@ -550,9 +551,9 @@ class RetailerPasswordIn(BaseModel):
 @app.post("/retailer/password")
 def change_retailer_password(body: RetailerPasswordIn,
                              retailer: dict = Depends(current_retailer)):
-    """Retailer sets a new password. Verifies the current one, stores only the
-    PBKDF2 hash, and clears the must_change flag. Lets a retailer move off the
-    system-generated temporary password (Fix 3)."""
+    """Retailer sets a new password from the webview burger menu. Verifies the
+    current one, stores only the PBKDF2 hash, and clears the must_change flag
+    (which drops the default-password reminder). Always voluntary."""
     if body.new_password == body.current_password:
         raise HTTPException(422, "New password must differ from the current one")
     with get_db() as db:
@@ -1096,10 +1097,11 @@ def create_retailer(body: RetailerIn, user: dict = Depends(current_manufacturer)
 
 def _assign_retailer_login(db, shop_name: str, rid: int) -> tuple[str, str]:
     """Derive and store a retailer login: username = first alphanumeric word of
-    the shop name (lowercased); password = a cryptographically random temporary
-    password (Fix 3 — no longer the guessable ``<username>123``). A username
+    the shop name (lowercased); password = ``<username>123``. A username
     clash gets the id appended so the UNIQUE constraint always holds. The login
-    is flagged must_change=1 so the client can prompt for a reset on first use.
+    is flagged must_change=1 — a *reminder* flag only: the webview shows a
+    "you're still on the default password" notice linking to the burger menu's
+    Change password, and never blocks the retailer from using the app.
     Returns (username, plaintext temporary pw) — surfaced once at creation so
     the panel can show the manufacturer the credentials to hand over."""
     first = (shop_name.split() or ["shop"])[0].lower()

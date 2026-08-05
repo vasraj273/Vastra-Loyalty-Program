@@ -34,7 +34,7 @@ One FastAPI service serves three surfaces from a single container:
 - **Super admin** — creates manufacturer accounts; owns no catalog data.
 - **Manufacturer** — manages products, schemes, gifts, retailers, distributors;
   generates/prints QR; sees analytics, claims, redemptions.
-- **Retailer** — logs into the webview using shop username + default `<username>123` password, undergoes mandatory password change on first login (`must_change=1`), scans codes, sees wallet, redeems gifts, and can update password via the burger menu.
+- **Retailer** — logs into the webview using shop username + default `<username>123` password, sees a reminder to change it while still on that default (`must_change=1`, advisory only — nothing is blocked), scans codes, sees wallet, redeems gifts, and can update password via the burger menu.
 - **Distributor** — *not a login.* A tracking/attribution entity only (see below).
 
 ## 3. Core concepts

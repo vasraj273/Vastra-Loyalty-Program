@@ -90,6 +90,8 @@
                     display:flex; align-items:center; justify-content:center; padding:16px; }
   .modal-card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; width:100%; max-width:380px;
                  text-align:left; box-shadow:0 20px 45px rgba(34,41,79,.25); }
+  /* this page has no generic .hidden rule — the modal supplies its own */
+  .modal-backdrop.hidden { display:none; }
 </style>
 </head>
 <body>

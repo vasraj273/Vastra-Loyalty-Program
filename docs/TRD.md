@@ -112,10 +112,11 @@ adapter translates to PyMySQL at runtime.
   username = lowercased first alphanumeric word of the shop name (`shop_name`),
   with sequential id/number appended on collision (`username` is UNIQUE);
   default initial password = `<username>123`, returned once in the creation response / import result popup,
-  with `must_change=1` so clients mandate a password reset on first login.
-- **Compulsory Retailer Password Change:** On first login with `must_change=1`, the web portal (`/web`)
-  displays an unbypassable "Security Update Required" card blocking access to all screens until the retailer sets a new secret password.
-  Retailers can also change their password anytime via the "Change password" option in the burger menu across `/web`, `/web/shop`, `/web/claims`, `/web/scan`.
+  with `must_change=1` flagging that the account is still on that default password.
+- **Retailer Password Change (voluntary):** `must_change=1` is advisory only — it never blocks login or any screen.
+  The `/web` home shows a dismissable-by-doing reminder ("You're still using your default password") that opens
+  the change-password modal; the reminder disappears once `POST /retailer/password` clears the flag.
+  Retailers can change their password anytime via the "Change password" option in the burger menu across `/web`, `/web/shop`, `/web/claims`, `/web/scan`.
 - **Bulk CSV Import Optimization & Chunking:** `POST /retailers/import` uses in-memory deduplication lookup sets,
   a single `INSERT` statement per row, and parallelized PBKDF2 password hashing via Python's `ThreadPoolExecutor` (cutting 1,000-row import time from >300s to <2s).
   The React admin panel (`Customers.jsx`) slices large CSV files into 250-row chunks sent sequentially with real-time progress indicators.

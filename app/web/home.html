@@ -66,10 +66,20 @@
   .menu-pop button.active { color:var(--primary-deep); font-weight:600; background:rgba(1,145,208,.10); }
   .menu-pop button.logout { color:var(--madder); margin-top:0; }
   .menu-pop .sep { height:1px; background:var(--line); margin:6px 8px; }
+  .pw-notice { display:flex; align-items:center; gap:12px; width:100%; margin:0 0 14px; padding:13px 15px; text-align:left;
+               background:#fff6f4; border:1px solid var(--madder); border-radius:12px; box-shadow:none;
+               font-size:13px; font-weight:400; color:var(--ink); cursor:pointer; }
+  .pw-notice:active { transform:translateY(1px); }
+  .pw-notice .ic { flex:none; font-size:20px; }
+  .pw-notice strong { font-weight:700; }
+  .pw-notice .s { display:block; color:var(--soft); margin-top:2px; }
   .modal-backdrop { position:fixed; inset:0; background:rgba(17,33,52,.5); backdrop-filter:blur(3px); z-index:100;
                     display:flex; align-items:center; justify-content:center; padding:16px; }
   .modal-card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:20px; width:100%; max-width:380px;
                  box-shadow:0 20px 45px rgba(34,41,79,.25); }
+  /* .hidden is declared above these display:flex rules, so it needs the extra
+     specificity to actually hide them */
+  .pw-notice.hidden, .modal-backdrop.hidden { display:none; }
 </style>
 </head>
 <body>
@@ -102,24 +112,14 @@
     <div class="error" id="loginError"></div>
   </div>
 
-  <!-- password change required -->
-  <div class="card hidden" id="pwChangeCard">
-    <h3 style="margin-top:0; color:var(--madder);">Security Update Required</h3>
-    <p class="sub" style="text-transform:none; letter-spacing:normal; color:var(--soft); margin-bottom:12px;">
-      For security reasons, you must set a new password before accessing your account.
-    </p>
-    <label>Current Password</label>
-    <input id="curPassword" type="password" placeholder="e.g. shopname123" />
-    <label>New Password (min 8 chars)</label>
-    <input id="newPassword" type="password" placeholder="Enter new password" />
-    <label>Confirm New Password</label>
-    <input id="confirmPassword" type="password" placeholder="Re-enter new password" />
-    <button onclick="submitPasswordChange()">Set New Password & Continue</button>
-    <div class="error" id="pwChangeError"></div>
-  </div>
-
   <!-- dashboard -->
   <div class="hidden" id="dash">
+    <!-- reminder only: changing the password is optional, done from the menu -->
+    <button class="pw-notice hidden" id="pwNotice" onclick="openChangePwModal()">
+      <span class="ic">🔐</span>
+      <span><strong>You're still using your default password.</strong>
+        <span class="s">Tap here — or Menu → Change password — to set your own.</span></span>
+    </button>
     <div class="card points-card">
       <p class="who"><strong id="whoShop"></strong><span id="whoManuf"></span></p>
       <div class="wallet">
@@ -199,34 +199,9 @@ async function login() {
       username: $('username').value.trim(), password: $('password').value }) });
     token = out.token;
     localStorage.setItem('vl_rtoken', token);
-    if (out.must_change) {
-      render();
-      return;
-    }
     if (nextDest) { window.location.href = nextDest; return; }
     render();
   } catch (e) { err(e.message); }
-}
-
-async function submitPasswordChange() {
-  const pwErr = (m) => { const e = $('pwChangeError'); e.textContent = m || ''; e.style.display = m ? 'block' : 'none'; };
-  pwErr('');
-  const curP = $('curPassword').value;
-  const newP = $('newPassword').value;
-  const confP = $('confirmPassword').value;
-  if (!curP) { pwErr('Please enter your current password'); return; }
-  if (newP.length < 8) { pwErr('New password must be at least 8 characters'); return; }
-  if (newP !== confP) { pwErr('Passwords do not match'); return; }
-  try {
-    await api('/retailer/password', {
-      method: 'POST',
-      body: JSON.stringify({ current_password: curP, new_password: newP })
-    });
-    if (nextDest) { window.location.href = nextDest; return; }
-    render();
-  } catch (e) {
-    pwErr(e.message);
-  }
 }
 
 function openChangePwModal() {
@@ -259,6 +234,7 @@ async function submitModalPwChange() {
       body: JSON.stringify({ current_password: curP, new_password: newP })
     });
     succEl.style.display = 'block';
+    show('pwNotice', false);   // must_change is now cleared server-side
     setTimeout(() => closeChangePwModal(), 1500);
   } catch (e) {
     errEl.textContent = e.message;
@@ -274,22 +250,16 @@ async function logout() {
 function go(path) { window.location.href = path; }
 
 async function render() {
-  if (!token) { show('loginCard', true); show('dash', false); show('navWrap', false); show('pwChangeCard', false); return; }
+  if (!token) { show('loginCard', true); show('dash', false); show('navWrap', false); return; }
   try {
     const me = await api('/retailer/me');
-    if (me.must_change) {
-      show('loginCard', false);
-      show('dash', false);
-      show('navWrap', false);
-      show('pwChangeCard', true);
-      return;
-    }
-    show('pwChangeCard', false);
     $('whoShop').textContent = me.shop_name;
     $('whoManuf').textContent = me.manufacturer || '';
     $('bal').textContent = Number(me.balance).toLocaleString('en-IN');
+    // must_change no longer blocks anything — it only raises the reminder.
+    show('pwNotice', !!me.must_change);
     show('loginCard', false); show('dash', true); show('navWrap', true);
-  } catch { show('loginCard', true); show('dash', false); show('navWrap', false); show('pwChangeCard', false); }
+  } catch { show('loginCard', true); show('dash', false); show('navWrap', false); }
 }
 render();
 </script>
