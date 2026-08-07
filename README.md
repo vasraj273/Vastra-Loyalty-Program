@@ -24,8 +24,11 @@ Multi-tenant backend for a manufacturer→retailer loyalty program in the Vastra
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/uvicorn app.main:app --port 8000        # API + webviews + built panel
+cp .env.example .env                              # then fill in DATABASE_URL etc.
+.venv/bin/uvicorn app.main:app --port 8000 --env-file .env   # API + webviews + built panel
 ```
+
+> **`--env-file .env` is not optional.** This app has **no dotenv loader** — nothing in the code opens `.env`. Without the flag, `DATABASE_URL` is `None`, `IS_MYSQL` is `False`, and the server silently runs on local SQLite (`qr_api.db`) even though `.env` is sitting right there with a MySQL URL in it. See [Configuration](#configuration) for the full rule (it also affects `seed.py` and pytest).
 
 Interactive docs: http://127.0.0.1:8000/docs · seed local demo data (wipes `qr_api.db`): `.venv/bin/python seed.py`
 
@@ -72,6 +75,30 @@ See `/docs` for the full, authoritative endpoint list.
 - **Offline geocoding** — city↔coordinates use a built-in `CITY_COORDS` table (`app/geo.py`), no external geocoding service.
 
 ## Configuration
+
+### How environment variables get loaded (read this first)
+
+**There is no dotenv loader in this project.** `python-dotenv` is not in `requirements.txt` and no code calls `load_dotenv()`. `app/database.py` reads `os.environ` directly, and `os.environ` only contains what the operating system handed the process at startup. A `.env` file on disk is just a text file — **something has to copy it into the environment first.**
+
+That "something" differs per entry point:
+
+| How you start it | How `.env` gets loaded | If you forget |
+|---|---|---|
+| **uvicorn** (the API server) | `--env-file .env` — uvicorn reads the file and sets the vars *before* importing the app | `DATABASE_URL` is `None` → `IS_MYSQL` is `False` → **silently falls back to SQLite `qr_api.db`** |
+| **`seed.py`, `bootstrap_admin.py`, `import_retailers.py`, `backfill_retailer_logins.py`, pytest** | Nothing — these are plain Python, they never see uvicorn's flag. Export into the shell first:<br>`set -a; source .env; set +a` | Same: they operate on local SQLite instead of your real database |
+| **Docker / AWS Lambda / Render** | **`.env` never deploys** (it's gitignored and `.dockerignore`d). Every variable must be set in the host's own configuration — Lambda function env vars, Render's env store | The feature fails closed in production while working fine locally. Classic symptom: `502 "VASTRA_API_BASE_URL is not configured"` on the panel's Vastra OTP login |
+
+The failure mode to recognise: **the app does not error when `DATABASE_URL` is missing** — falling back to SQLite is intended behaviour for zero-setup local dev. So a missing env var looks like a working server that's writing to the wrong database. To confirm which backend you're actually on:
+
+```bash
+.venv/bin/python -c "import app.database as d; print('MySQL' if d.IS_MYSQL else 'SQLite', d.DATABASE_URL)"
+# without env loaded:  SQLite None
+# with env loaded:     MySQL mysql://...
+```
+
+Copy `.env.example` → `.env` to start; `.env` is gitignored and must never be committed.
+
+### Variables
 
 - `QR_BASE_URL` (env) — URL prefix baked into each QR (set to the deployed HTTPS origin + `/web/scan` before any production print run).
 - `DATABASE_URL` (env) — MySQL connection string (`mysql://user:pass@host:3306/db?ssl=true`); falls back to local SQLite `qr_api.db` when unset. See [docs/integration/MYSQL_SETUP.md](docs/integration/MYSQL_SETUP.md). The app creates/migrates tables on boot but **never seeds**.

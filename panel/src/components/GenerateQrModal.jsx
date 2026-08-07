@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { get, post, printUrl } from '../api.js'
+import { get, post } from '../api.js'
+import { buildStickerPdf, stickerCodes } from '../utils/stickerPdf.js'
 
 // In-panel QR generation — replaces the old standalone /web/generate webview so
 // the manufacturer never leaves the Products page. Sends the primary
@@ -19,6 +20,10 @@ export default function GenerateQrModal({ products, onClose }) {
   const [savedBatches, setSavedBatches] = useState(null)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
+  // Rendering runs in this tab now, so it needs a visible progress state —
+  // 2,000 codes takes ~10-20s where the server PDF was a single tab-open.
+  const [printing, setPrinting] = useState(null) // batch id being rendered
+  const [progress, setProgress] = useState(0)
 
   // Close on Escape, matching the other panel modals.
   useEffect(() => {
@@ -68,8 +73,29 @@ export default function GenerateQrModal({ products, onClose }) {
     }
   }
 
-  const printBatch = (batchId) => {
-    window.open(printUrl(batchId), '_blank')
+  // The sheet is built in the browser, not fetched from /qr/batches/{id}/print
+  // — a 2,000-code PDF is 10.3 MB and Lambda cannot return it. `data` is the
+  // freshly generated batch, which already carries its codes; a saved batch is
+  // fetched first. Either way the code list (including each code's server-built
+  // payload URL) comes from the API, and buildStickerPdf just lays it out.
+  const printBatch = async (batchId, data) => {
+    setError(null)
+    setPrinting(batchId)
+    setProgress(0)
+    try {
+      const src = data ?? (await get(`/qr/batches/${batchId}`))
+      await buildStickerPdf({
+        productName: src.product_name,
+        sku: src.product_sku,
+        codes: stickerCodes(src),
+        filename: `loyalty-qr-batch-${batchId}.pdf`,
+        onProgress: setProgress,
+      })
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setPrinting(null)
+    }
   }
 
   const newBatch = () => {
@@ -182,9 +208,12 @@ export default function GenerateQrModal({ products, onClose }) {
             <div className="btn-row">
               <button
                 className="btn-primary"
-                onClick={() => printBatch(batch.batch_id)}
+                disabled={printing !== null}
+                onClick={() => printBatch(batch.batch_id, batch)}
               >
-                Print stickers (PDF)
+                {printing === batch.batch_id
+                  ? `Building PDF… ${progress}%`
+                  : 'Print stickers (PDF)'}
               </button>
               <button
                 className="btn-secondary"
@@ -229,9 +258,10 @@ export default function GenerateQrModal({ products, onClose }) {
                       <td className="actions-col">
                         <button
                           className="btn-ghost small"
+                          disabled={printing !== null}
                           onClick={() => printBatch(b.id)}
                         >
-                          Print
+                          {printing === b.id ? `${progress}%` : 'Print'}
                         </button>
                       </td>
                     </tr>

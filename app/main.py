@@ -2029,13 +2029,25 @@ def list_batches(status: str | None = Query(None, pattern="^(pending|saved)$"),
 def get_batch(batch_id: int, user: dict = Depends(current_manufacturer)):
     with get_db() as db:
         batch = _get_batch(db, batch_id, user["id"])
+        # is_parent + items + payload let the panel rebuild the sticker sheet
+        # client-side for a saved batch (POST /qr/generate already returns the
+        # same three for a freshly generated one). Children first, then box
+        # codes, matching the order the sheet is laid out in.
         codes = db.execute(
-            """SELECT token, manual_code, redeemed_at, redeemed_by
-               FROM qr_codes WHERE batch_id = ?""",
+            """SELECT c.token, c.manual_code, c.redeemed_at, c.redeemed_by,
+                      c.is_parent,
+                      (SELECT COUNT(*) FROM qr_codes ch
+                       WHERE ch.parent_token = c.token) AS items
+               FROM qr_codes c
+               WHERE c.batch_id = ? ORDER BY c.is_parent, c.token""",
             (batch_id,),
         ).fetchall()
     out = dict(batch)
-    out["codes"] = [dict(c) for c in codes]
+    # payload is built here, never in the browser: QR_BASE_URL is server-side
+    # config and a frontend copy that drifted would point printed stickers at
+    # the wrong host.
+    out["codes"] = [{**dict(c), "payload": payload_for(c["token"])}
+                    for c in codes]
     return out
 
 

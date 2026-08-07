@@ -28,3 +28,5 @@ skill-observations/
 
 # stray lockfile from running npm at repo root (real one lives in panel/)
 /package-lock.json
+
+ck/
