@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { get, post, patch, del } from '../api.js'
 import ImportResult from '../components/ImportResult.jsx'
+import EmptyState from '../components/EmptyState.jsx'
 import { useConfirm } from '../confirm.jsx'
-import { downloadCSV, today } from '../utils/csv.js'
+import { downloadSample } from '../utils/sampleCsv.js'
 
 const CSV_HELP =
   'Needs a reward name and a points column. Description and image are matched ' +
@@ -130,22 +131,16 @@ export default function Gifts() {
     reader.readAsDataURL(file)
   }
 
-  const exportCsv = () => {
-    downloadCSV(
-      `rewards-${today()}.csv`,
-      [
-        { label: 'Reward', key: 'name' },
-        { label: 'Description', key: 'description' },
-        { label: 'Points', key: 'points_cost' },
-        { label: 'In shop', format: (g) => (g.active ? 'yes' : 'hidden') },
-        { label: 'Claims', format: (g) => g.claims ?? 0 },
-      ],
-      list,
-    )
-  }
-
   const remove = async (g) => {
-    if (!window.confirm(`Delete "${g.name}"?`)) return
+    const ok = await confirm({
+      title: `Delete ${g.name}?`,
+      message:
+        'It disappears from the reward shop. If retailers have already ' +
+        'claimed it, hide it instead so those claims keep their record.',
+      confirmLabel: 'Delete reward',
+      danger: true,
+    })
+    if (!ok) return
     setError(null)
     try {
       await del(`/gifts/${g.id}`)
@@ -179,10 +174,6 @@ export default function Gifts() {
   const removeAll = async () => {
     const ok = await confirm({
       title: `Delete all ${list.length} rewards?`,
-      message:
-        'Your entire reward shop is cleared and you would need to import a ' +
-        'CSV again to rebuild it. Rewards that already have claims are kept — ' +
-        'a claim has to keep pointing at what was redeemed. Hide those instead.',
       confirmLabel: `Delete all ${list.length}`,
       danger: true,
     })
@@ -215,13 +206,6 @@ export default function Gifts() {
           Reward shop <span className="count">{list.length}</span>
         </h2>
         <div className="btn-row">
-          <button
-            className="btn-secondary"
-            disabled={list.length === 0}
-            onClick={exportCsv}
-          >
-            ↓ Export CSV
-          </button>
           <input
             ref={fileRef}
             type="file"
@@ -237,16 +221,21 @@ export default function Gifts() {
           >
             Import CSV
           </button>
+          <button
+            className="btn-ghost"
+            onClick={() => downloadSample('gifts')}
+            title="Download a filled-in example file with the expected columns"
+          >
+            ↓ Sample CSV
+          </button>
           <button className="btn-primary" onClick={showForm ? () => setShowForm(false) : openAdd}>
             {showForm ? 'Close' : '+ Add reward'}
           </button>
-          <button
-            className="btn-ghost"
-            disabled={busy || list.length === 0}
-            onClick={removeAll}
-          >
-            Delete all
-          </button>
+          {list.length > 0 && (
+            <button className="btn-ghost" disabled={busy} onClick={removeAll}>
+              Delete all
+            </button>
+          )}
         </div>
       </div>
       <p className="hint">
@@ -379,8 +368,37 @@ export default function Gifts() {
             </div>
           </div>
         ))}
-        {list.length === 0 && <p className="empty">No rewards yet.</p>}
       </div>
+
+      {list.length === 0 && (
+        <div className="panel-card">
+          <EmptyState
+            icon="🎁"
+            title="No rewards yet"
+            message="Add the gifts retailers can redeem their points for, or import them as a CSV. Claims arrive in the Redemptions tab for approval."
+            action={
+              <>
+                <button className="btn-primary" onClick={openAdd}>
+                  + Add reward
+                </button>
+                <button
+                  className="btn-secondary"
+                  disabled={busy}
+                  onClick={() => fileRef.current?.click()}
+                >
+                  Import CSV
+                </button>
+                <button
+                  className="btn-ghost"
+                  onClick={() => downloadSample('gifts')}
+                >
+                  ↓ Sample CSV
+                </button>
+              </>
+            }
+          />
+        </div>
+      )}
     </div>
   )
 }

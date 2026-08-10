@@ -1,6 +1,7 @@
-// Client-side CSV export. No dependency — builds an RFC-4180 string from
-// already-loaded rows and triggers a browser download. Shared by every data
-// tab (Customers, Distributors, Products, Gifts, Claims, Redemptions).
+// Client-side CSV writing. No dependency — builds an RFC-4180 string from
+// plain objects and triggers a browser download. The data tabs no longer
+// export their contents; this now backs the downloadable import samples in
+// sampleCsv.js.
 
 // Quote a single field only when it contains a comma, quote, or newline; inner
 // quotes are doubled per RFC 4180.
@@ -38,6 +39,3 @@ export function downloadCSV(filename, columns, rows) {
   a.remove()
   URL.revokeObjectURL(url)
 }
-
-// `YYYY-MM-DD` stamp for export filenames.
-export const today = () => new Date().toISOString().slice(0, 10)

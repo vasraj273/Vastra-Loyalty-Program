@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { get, post, del } from '../api.js'
+import EmptyState from '../components/EmptyState.jsx'
 
 const SECTIONS = [
   { status: 'active', title: 'Active now' },
@@ -158,7 +159,22 @@ export default function Schemes() {
         </form>
       )}
 
-      {SECTIONS.map(({ status, title }) => {
+      {schemes.length === 0 && !showForm && (
+        <div className="panel-card">
+          <EmptyState
+            icon="🎯"
+            title="No schemes yet"
+            message="A scheme adds bonus points on top of a product's base value for a set period. The most generous active scheme wins — bonuses never stack."
+            action={
+              <button className="btn-primary" onClick={() => setShowForm(true)}>
+                + New scheme
+              </button>
+            }
+          />
+        </div>
+      )}
+
+      {schemes.length > 0 && SECTIONS.map(({ status, title }) => {
         const list = schemes.filter((s) => s.status === status)
         return (
           <section key={status} className={`scheme-section ${status}`}>

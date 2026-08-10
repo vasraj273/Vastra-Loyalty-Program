@@ -3,18 +3,19 @@ import vastraLogo from './assets/vastra-logo.png'
 import Dashboard from './tabs/Dashboard.jsx'
 import Schemes from './tabs/Schemes.jsx'
 import Claims from './tabs/Claims.jsx'
-import Customers from './tabs/Customers.jsx'
+import Retailers from './tabs/Customers.jsx'
 import Products from './tabs/Products.jsx'
 import Gifts from './tabs/Gifts.jsx'
 import Redemptions from './tabs/Redemptions.jsx'
 import Distributors from './tabs/Distributors.jsx'
 import Manufacturers from './tabs/Manufacturers.jsx'
 import Login from './Login.jsx'
+import { useConfirm } from './confirm.jsx'
 import { getUser, getToken, clearSession, post } from './api.js'
 
 const MANUF_TABS = [
   { id: 'dashboard', label: 'Dashboard', component: Dashboard },
-  { id: 'customers', label: 'Customers', component: Customers },
+  { id: 'customers', label: 'Retailers', component: Retailers },
   { id: 'distributors', label: 'Distributors', component: Distributors },
   { id: 'products', label: 'Products', component: Products },
   { id: 'schemes', label: 'Schemes', component: Schemes },
@@ -33,6 +34,7 @@ export default function App() {
   const [tab, setTab] = useState(tabs[0].id)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef(null)
+  const confirm = useConfirm()
 
   useEffect(() => {
     const onLogout = () => setUser(null)
@@ -67,6 +69,15 @@ export default function App() {
   }
 
   const logout = async () => {
+    const ok = await confirm({
+      title: 'Log out?',
+      message:
+        `You are signed in as ${user.display_name}. You will need your ` +
+        'credentials again to get back in.',
+      confirmLabel: 'Log out',
+      danger: true,
+    })
+    if (!ok) return
     try {
       await post('/auth/logout')
     } catch { /* token already dead */ }

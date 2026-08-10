@@ -20,6 +20,11 @@
   --shadow: 0 1px 2px rgba(17, 33, 52, 0.08), 0 8px 24px rgba(17, 33, 52, 0.07);
 }
 
+/* The panel is laid out in px, so the whole document is scaled down instead of
+   resizing every value. 0.8 = the browser's 80% zoom, which is the density the
+   panel is meant to be read at. Change this one number to rescale the UI. */
+:root { zoom: 0.8; }
+
 * { box-sizing: border-box; }
 
 body {
@@ -309,6 +314,18 @@ body {
 }
 
 .stat-row-3 { grid-template-columns: repeat(3, 1fr); }
+
+/* Blank state inside a stat card: says why the number is zero. */
+.stat-none {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-soft);
+  opacity: 0.85;
+}
+
+.stat-card.accent .stat-none,
+.stat-card.accent-leaf .stat-none { color: rgba(255, 255, 255, 0.78); }
+.stat-card.accent-gold .stat-none { color: #5a4708; opacity: 0.9; }
 
 .stat-card.accent-gold {
   background: var(--gold);
@@ -709,20 +726,21 @@ body {
 
 .login-card {
   width: 100%;
-  max-width: 380px;
+  max-width: 480px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 34px 32px 30px;
+  gap: 16px;
+  padding: 48px 44px 42px;
 }
 
 .login-card .brand-logo { align-self: center; }
+.login-card .brand-logo.login-logo { height: 104px; }
 
 .login-card h1 {
   font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-weight: 700;
-  font-size: 24px;
-  margin: 8px 0 0;
+  font-size: 30px;
+  margin: 10px 0 0;
   text-align: center;
 }
 
@@ -739,8 +757,8 @@ body {
 .login-card label {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  font-size: 11px;
+  gap: 7px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 1px;
@@ -749,18 +767,134 @@ body {
 
 .login-card input {
   font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  font-size: 15px;
-  padding: 11px 12px;
+  font-size: 16px;
+  padding: 14px 14px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: 8px;
   background: #fff;
   color: var(--ink);
 }
 
 .login-card input:focus { outline: 2px solid var(--indigo); outline-offset: -1px; }
 
+/* Full-width submit, matched to the taller inputs. */
+.login-card .btn-primary {
+  width: 100%;
+  min-height: 50px;
+  font-size: 16px;
+  margin-top: 4px;
+}
+
+.login-sub a { color: var(--primary-deep); }
+
 
 .form-grid.three { grid-template-columns: 2fr 1fr 1fr; }
+
+/* ── add/edit entity form (Retailers, Distributors) ──
+   A titled card with an even field grid and its own action footer, instead of
+   fields squeezed into uneven grid tracks. */
+.entity-form {
+  margin-bottom: 26px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.entity-form-head {
+  padding: 20px 24px 0;
+}
+
+.entity-form-head h3 {
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 700;
+  font-size: 18px;
+  margin: 0;
+}
+
+.entity-form-head .hint { margin: 6px 0 0; }
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 18px;
+  padding: 20px 24px 22px;
+}
+
+.field-grid label { display: flex; flex-direction: column; gap: 6px; }
+
+.field-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--ink-soft);
+}
+
+.field-label .req,
+.field-label .opt {
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  border-radius: 999px;
+  padding: 2px 7px;
+}
+
+.field-label .req {
+  background: rgba(251, 98, 75, 0.14);
+  color: var(--madder-deep);
+}
+
+.field-label .opt {
+  background: var(--paper-deep);
+  color: var(--ink-soft);
+}
+
+.field-grid input,
+.field-grid select {
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 15px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  width: 100%;
+}
+
+.field-grid input:focus,
+.field-grid select:focus { outline: 2px solid var(--indigo); outline-offset: -1px; }
+
+.field-grid input:invalid:not(:placeholder-shown) { border-color: var(--madder); }
+
+.field-hint {
+  font-size: 11px;
+  color: var(--ink-soft);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+.entity-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 24px;
+  background: var(--paper-deep);
+  border-top: 1px solid var(--line);
+}
+
+.entity-form-actions button {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 0 20px;
+}
 
 .created-note {
   background: rgba(62, 107, 79, 0.1);
@@ -785,6 +919,8 @@ body {
 
 .table-tools { padding: 6px 0 12px; }
 
+.search-box { position: relative; width: 100%; max-width: 360px; }
+
 .search {
   width: 100%;
   max-width: 360px;
@@ -797,7 +933,69 @@ body {
   color: var(--ink);
 }
 
+/* Room for the clear button so a long query never slides under it. */
+.search-box .search { padding-right: 34px; }
+
 .search:focus { outline: 2px solid var(--indigo); outline-offset: -1px; }
+
+.search-clear {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--paper-deep);
+  color: var(--ink-soft);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.search-clear:hover { background: var(--madder); color: #fff; }
+
+/* ── blank states ── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 46px 24px;
+  color: var(--ink-soft);
+}
+
+.empty-state.compact { padding: 26px 16px; }
+
+.empty-icon { font-size: 30px; line-height: 1; opacity: 0.85; }
+.empty-state.compact .empty-icon { font-size: 22px; }
+
+.empty-title {
+  margin: 4px 0 0;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--ink);
+}
+
+.empty-msg {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  max-width: 420px;
+}
+
+.empty-actions { margin-top: 10px; }
+
+/* A blank state inside a table replaces the rows, so it must not inherit the
+   italic .empty cell styling. */
+td .empty-state { font-style: normal; }
 
 .loc-badge {
   font-size: 11px;
@@ -1031,8 +1229,82 @@ th.actions-col { text-align: right; }
 
 /* ── confirmation dialog (stacks above form modals) ── */
 .confirm-backdrop { z-index: 200; }
-.confirm-modal { max-width: 380px; }
-.confirm-msg { margin: 0; font-size: 14px; color: var(--ink-soft); line-height: 1.5; }
+
+.confirm-modal {
+  max-width: 440px;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  animation: pop 0.16s ease-out;
+}
+
+@keyframes pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+.confirm-body { padding: 22px 26px; }
+
+.confirm-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Round badge: coral for destructive, brand blue for a plain question. */
+.confirm-icon {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-weight: 700;
+  font-size: 18px;
+  line-height: 1;
+  background: rgba(1, 145, 208, 0.12);
+  color: var(--primary-deep);
+}
+
+.confirm-icon.danger {
+  background: rgba(251, 98, 75, 0.16);
+  color: var(--madder-deep);
+}
+
+.confirm-modal h3 { font-size: 18px; line-height: 1.3; }
+
+.confirm-msg {
+  margin: 10px 0 0;
+  padding-left: 46px;
+  font-size: 14px;
+  color: var(--ink-soft);
+  line-height: 1.55;
+}
+
+/* Footer strip: the buttons sit on their own ground, right-aligned, and both
+   are forced to one height so a bordered ghost matches a solid primary. */
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 26px;
+  background: var(--paper-deep);
+  border-top: 1px solid var(--line);
+}
+
+.confirm-actions button,
+.modal .btn-row > button:not(.small) {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 0 20px;
+}
 
 .btn-danger {
   font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { get, post, patch, del } from '../api.js'
 import ImportResult from '../components/ImportResult.jsx'
+import EmptyState from '../components/EmptyState.jsx'
 import { useConfirm } from '../confirm.jsx'
-import { downloadCSV, today } from '../utils/csv.js'
+import { downloadSample } from '../utils/sampleCsv.js'
 
 const EMPTY = { name: '', phone: '', region: '' }
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
@@ -82,28 +83,16 @@ export default function Distributors() {
     }
   }
 
-  const exportCsv = () => {
-    downloadCSV(
-      `distributors-${today()}.csv`,
-      [
-        { label: 'Distributor', key: 'name' },
-        { label: 'Phone', key: 'phone' },
-        { label: 'Region', key: 'region' },
-        { label: 'Retailers', format: (d) => d.retailers ?? 0 },
-        { label: 'Scans', format: (d) => d.scans ?? 0 },
-      ],
-      list,
-    )
-  }
-
   const remove = async (d) => {
-    if (
-      !window.confirm(
-        `Delete distributor "${d.name}"? Its ${d.retailers} retailer(s) will be ` +
-          'unassigned (not deleted). Past scans keep their record.',
-      )
-    )
-      return
+    const ok = await confirm({
+      title: `Delete ${d.name}?`,
+      message:
+        `Its ${d.retailers} retailer(s) are only unassigned, never deleted, ` +
+        'and past scans keep the distributor they were recorded against.',
+      confirmLabel: 'Delete distributor',
+      danger: true,
+    })
+    if (!ok) return
     setError(null)
     try {
       await del(`/distributors/${d.id}`)
@@ -116,11 +105,6 @@ export default function Distributors() {
   const removeAll = async () => {
     const ok = await confirm({
       title: `Delete all ${list.length} distributors?`,
-      message:
-        'Your entire distributor list is cleared and you would need to import ' +
-        'a CSV again to rebuild it. Customers assigned to them are only ' +
-        'unassigned, never deleted, and past scans keep the distributor they ' +
-        'were recorded against.',
       confirmLabel: `Delete all ${list.length}`,
       danger: true,
     })
@@ -147,13 +131,6 @@ export default function Distributors() {
           Distributors <span className="count">{list.length}</span>
         </h2>
         <div className="btn-row">
-          <button
-            className="btn-secondary"
-            disabled={list.length === 0}
-            onClick={exportCsv}
-          >
-            ↓ Export CSV
-          </button>
           <input
             ref={fileRef}
             type="file"
@@ -169,21 +146,26 @@ export default function Distributors() {
           >
             Import CSV
           </button>
+          <button
+            className="btn-ghost"
+            onClick={() => downloadSample('distributors')}
+            title="Download a filled-in example file with the expected columns"
+          >
+            ↓ Sample CSV
+          </button>
           <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
             {showForm ? 'Close' : '+ Add distributor'}
           </button>
-          <button
-            className="btn-ghost"
-            disabled={busy || list.length === 0}
-            onClick={removeAll}
-          >
-            Delete all
-          </button>
+          {list.length > 0 && (
+            <button className="btn-ghost" disabled={busy} onClick={removeAll}>
+              Delete all
+            </button>
+          )}
         </div>
       </div>
       <p className="hint">
         Distributors sit between you and your retailers (you → distributor →
-        retailer). Assign retailers to a distributor in the Customers tab, or via
+        retailer). Assign retailers to a distributor in the Retailers tab, or via
         the <strong>distributor</strong> column when importing a CSV. An imported
         file only needs a name column — phone and region are matched from
         whatever your export calls them.
@@ -192,10 +174,20 @@ export default function Distributors() {
       <ImportResult result={importResult} onDismiss={() => setImportResult(null)} />
 
       {showForm && (
-        <form className="panel-card scheme-form" onSubmit={add}>
-          <div className="form-grid three">
+        <form className="panel-card entity-form" onSubmit={add}>
+          <div className="entity-form-head">
+            <h3>New distributor</h3>
+            <p className="hint">
+              Tracking only — a distributor has no login and holds no points.
+              The name is all that is needed.
+            </p>
+          </div>
+
+          <div className="field-grid">
             <label>
-              Distributor name
+              <span className="field-label">
+                Distributor name <em className="req">required</em>
+              </span>
               <input
                 required
                 value={form.name}
@@ -204,15 +196,21 @@ export default function Distributors() {
               />
             </label>
             <label>
-              Phone <span className="hint">(optional)</span>
+              <span className="field-label">
+                Mobile number <em className="opt">optional</em>
+              </span>
               <input
+                type="tel"
+                inputMode="numeric"
                 value={form.phone}
                 onChange={(e) => setForm({ ...form, phone: e.target.value })}
                 placeholder="98XXXXXXXX"
               />
             </label>
             <label>
-              Region <span className="hint">(optional)</span>
+              <span className="field-label">
+                Region <em className="opt">optional</em>
+              </span>
               <input
                 value={form.region}
                 onChange={(e) => setForm({ ...form, region: e.target.value })}
@@ -220,12 +218,51 @@ export default function Distributors() {
               />
             </label>
           </div>
-          <button className="btn-primary" disabled={busy}>
-            {busy ? 'Adding…' : 'Add distributor'}
-          </button>
+
+          <div className="entity-form-actions">
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => {
+                setForm(EMPTY)
+                setShowForm(false)
+              }}
+            >
+              Cancel
+            </button>
+            <button className="btn-primary" disabled={busy}>
+              {busy ? 'Adding…' : 'Add distributor'}
+            </button>
+          </div>
         </form>
       )}
 
+      {list.length === 0 ? (
+        <div className="panel-card">
+          <EmptyState
+            icon="🚚"
+            title="No distributors yet"
+            message="Import your distributor list as a CSV, or add the first one by hand. Retailers can then be assigned to them in the Retailers tab."
+            action={
+              <>
+                <button
+                  className="btn-primary"
+                  disabled={busy}
+                  onClick={() => fileRef.current?.click()}
+                >
+                  Import CSV
+                </button>
+                <button
+                  className="btn-ghost"
+                  onClick={() => downloadSample('distributors')}
+                >
+                  ↓ Sample CSV
+                </button>
+              </>
+            }
+          />
+        </div>
+      ) : (
       <div className="panel-card table-card">
         <table className="data-table">
           <thead>
@@ -321,6 +358,7 @@ export default function Distributors() {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   )
 }

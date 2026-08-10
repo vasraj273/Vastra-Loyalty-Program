@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { get, post, patch, del } from '../api.js'
 import { ColumnMap } from '../components/ImportResult.jsx'
+import EmptyState from '../components/EmptyState.jsx'
+import SearchBox from '../components/SearchBox.jsx'
 import { useConfirm } from '../confirm.jsx'
-import { downloadCSV, today } from '../utils/csv.js'
+import { downloadSample } from '../utils/sampleCsv.js'
 
 const EMPTY = { name: '', shop_name: '', region: '', phone: '', distributor_id: '' }
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
 const PAGE_SIZES = [10, 25, 50, 100, 500]
 
-export default function Customers() {
+export default function Retailers() {
   const [list, setList] = useState(null)
   const [form, setForm] = useState(EMPTY)
   const [showForm, setShowForm] = useState(false)
@@ -96,8 +98,15 @@ export default function Customers() {
   }
 
   const remove = async (r) => {
-    if (!window.confirm(`Remove "${r.shop_name}"? This cannot be undone.`))
-      return
+    const ok = await confirm({
+      title: `Remove ${r.shop_name}?`,
+      message:
+        'Their login stops working immediately and they disappear from the ' +
+        'list. This cannot be undone.',
+      confirmLabel: 'Remove retailer',
+      danger: true,
+    })
+    if (!ok) return
     setError(null)
     try {
       await del(`/retailers/${r.id}`)
@@ -109,12 +118,7 @@ export default function Customers() {
 
   const removeAll = async () => {
     const ok = await confirm({
-      title: `Delete all ${list.length} customers?`,
-      message:
-        'Your entire customer list is cleared and you would need to import a ' +
-        'CSV again to rebuild it. Their logins stop working immediately. ' +
-        'Customers who already have scan history are kept — their points and ' +
-        'claims need an owner.',
+      title: `Delete all ${list.length} retailers?`,
       confirmLabel: `Delete all ${list.length}`,
       danger: true,
     })
@@ -129,7 +133,7 @@ export default function Customers() {
         res.skipped
           ? `Deleted ${res.deleted}. Kept ${res.skipped} with scan history — ` +
             'delete their scans first, or leave them.'
-          : `Deleted ${res.deleted} customer(s).`,
+          : `Deleted ${res.deleted} retailer(s).`,
       )
       load()
     } catch (err) {
@@ -200,7 +204,7 @@ function splitCsvChunks(csvText, chunkSize = 250) {
       for (let i = 0; i < chunks.length; i++) {
         if (chunks.length > 1) {
           setNotice(
-            `Importing customers: batch ${i + 1} of ${chunks.length}...`,
+            `Importing retailers: batch ${i + 1} of ${chunks.length}...`,
           )
         }
         const res = await post('/retailers/import', { csv: chunks[i] })
@@ -231,7 +235,7 @@ function splitCsvChunks(csvText, chunkSize = 250) {
         columns: lastColumns,
       })
       setNotice(
-        `Import completed! ${totalCreated} customer(s) created, ${totalSkipped} skipped` +
+        `Import completed! ${totalCreated} retailer(s) created, ${totalSkipped} skipped` +
           (totalPoints ? `, ${fmt(totalPoints)} points carried over.` : '.'),
       )
       load()
@@ -241,26 +245,6 @@ function splitCsvChunks(csvText, chunkSize = 250) {
     } finally {
       setBusy(false)
     }
-  }
-
-  // Download every customer (current list) as CSV; distributor id → name.
-  const exportCsv = () => {
-    const dName = (id) =>
-      distributors.find((d) => d.id === id)?.name ?? ''
-    downloadCSV(
-      `customers-${today()}.csv`,
-      [
-        { label: 'Shop', key: 'shop_name' },
-        { label: 'Owner', key: 'name' },
-        { label: 'City', key: 'region' },
-        { label: 'Distributor', format: (r) => dName(r.distributor_id) },
-        { label: 'Phone', key: 'phone' },
-        { label: 'Address', key: 'address' },
-        { label: 'Scans', format: (r) => r.scans ?? 0 },
-        { label: 'Points', format: (r) => r.points ?? 0 },
-      ],
-      list,
-    )
   }
 
   const doAdjust = async () => {
@@ -345,28 +329,27 @@ function splitCsvChunks(csvText, chunkSize = 250) {
     <div className="customers">
       <div className="schemes-head">
         <h2 className="page-title">
-          Customers <span className="count">{list.length}</span>
+          Retailers{' '}
+          {/* Reflects the search, so the number always matches the rows. */}
+          <span className="count">
+            {q ? `${filtered.length} / ${list.length}` : list.length}
+          </span>
         </h2>
         <div className="btn-row">
-          <button
-            className="btn-secondary"
-            onClick={() => {
-              setPts('')
-              setNote('')
-              setFromId('')
-              setToId('')
-              setModal({ type: 'transfer' })
-            }}
-          >
-            Transfer points
-          </button>
-          <button
-            className="btn-secondary"
-            disabled={list.length === 0}
-            onClick={exportCsv}
-          >
-            ↓ Export CSV
-          </button>
+          {list.length > 0 && (
+            <button
+              className="btn-secondary"
+              onClick={() => {
+                setPts('')
+                setNote('')
+                setFromId('')
+                setToId('')
+                setModal({ type: 'transfer' })
+              }}
+            >
+              Transfer points
+            </button>
+          )}
           <input
             ref={fileRef}
             type="file"
@@ -382,16 +365,21 @@ function splitCsvChunks(csvText, chunkSize = 250) {
           >
             Import CSV
           </button>
-          <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
-            {showForm ? 'Close' : '+ Add customer'}
-          </button>
           <button
             className="btn-ghost"
-            disabled={busy || list.length === 0}
-            onClick={removeAll}
+            onClick={() => downloadSample('retailers')}
+            title="Download a filled-in example file with the expected columns"
           >
-            Delete all
+            ↓ Sample CSV
           </button>
+          <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
+            {showForm ? 'Close' : '+ Add retailer'}
+          </button>
+          {list.length > 0 && (
+            <button className="btn-ghost" disabled={busy} onClick={removeAll}>
+              Delete all
+            </button>
+          )}
         </div>
       </div>
       {error && <p className="error">{error}</p>}
@@ -452,19 +440,19 @@ function splitCsvChunks(csvText, chunkSize = 250) {
       )}
 
       {showForm && (
-        <form className="panel-card scheme-form" onSubmit={submit}>
-          <div className="form-grid">
+        <form className="panel-card entity-form" onSubmit={submit}>
+          <div className="entity-form-head">
+            <h3>New retailer</h3>
+            <p className="hint">
+              A login is created automatically and shown once after saving.
+            </p>
+          </div>
+
+          <div className="field-grid">
             <label>
-              Owner name
-              <input
-                required
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="Ramesh Kumar"
-              />
-            </label>
-            <label>
-              Shop name
+              <span className="field-label">
+                Shop name <em className="req">required</em>
+              </span>
               <input
                 required
                 value={form.shop_name}
@@ -475,29 +463,56 @@ function splitCsvChunks(csvText, chunkSize = 250) {
               />
             </label>
             <label>
-              City <span className="hint">(optional — auto-detected on first scan)</span>
+              <span className="field-label">
+                Owner name <em className="req">required</em>
+              </span>
               <input
-                list="city-options"
-                value={form.region}
-                onChange={(e) => setForm({ ...form, region: e.target.value })}
-                placeholder="Leave blank to detect from first scan"
+                required
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="Ramesh Kumar"
               />
-              <datalist id="city-options">
-                {cities.map((c) => (
-                  <option key={c} value={c.replace(/\b\w/g, (m) => m.toUpperCase())} />
-                ))}
-              </datalist>
             </label>
+            {/* Phone is required here on purpose: it is the key YourApp
+                resolves a retailer by when a scan comes in from their phone. */}
             <label>
-              Phone (optional)
+              <span className="field-label">
+                Mobile number <em className="req">required</em>
+              </span>
               <input
+                required
+                type="tel"
+                inputMode="numeric"
+                pattern="[0-9+\-\s]{10,15}"
+                title="10-digit mobile number"
                 value={form.phone}
                 onChange={(e) => setForm({ ...form, phone: e.target.value })}
                 placeholder="98XXXXXXXX"
               />
             </label>
             <label>
-              Distributor <span className="hint">(optional)</span>
+              <span className="field-label">
+                City <em className="opt">optional</em>
+              </span>
+              <input
+                list="city-options"
+                value={form.region}
+                onChange={(e) => setForm({ ...form, region: e.target.value })}
+                placeholder="Detected from the first scan"
+              />
+              <datalist id="city-options">
+                {cities.map((c) => (
+                  <option key={c} value={c.replace(/\b\w/g, (m) => m.toUpperCase())} />
+                ))}
+              </datalist>
+              <span className="field-hint">
+                Sets the map pin until GPS locks it in on the first scan.
+              </span>
+            </label>
+            <label>
+              <span className="field-label">
+                Distributor <em className="opt">optional</em>
+              </span>
               <select
                 value={form.distributor_id}
                 onChange={(e) =>
@@ -513,24 +528,58 @@ function splitCsvChunks(csvText, chunkSize = 250) {
               </select>
             </label>
           </div>
-          <p className="hint" style={{ margin: 0 }}>
-            Map location is set automatically from the city. The exact shop
-            position locks in by GPS the first time this customer scans a code.
-          </p>
-          <button className="btn-primary" disabled={busy}>
-            {busy ? 'Adding…' : 'Add customer'}
-          </button>
+
+          <div className="entity-form-actions">
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => {
+                setForm(EMPTY)
+                setShowForm(false)
+              }}
+            >
+              Cancel
+            </button>
+            <button className="btn-primary" disabled={busy}>
+              {busy ? 'Adding…' : 'Add retailer'}
+            </button>
+          </div>
         </form>
       )}
 
+      {list.length === 0 ? (
+        <div className="panel-card">
+          <EmptyState
+            icon="🏬"
+            title="No retailers yet"
+            message="Import your retailer list as a CSV, or add the first shop by hand. Each retailer gets a login automatically."
+            action={
+              <>
+                <button
+                  className="btn-primary"
+                  disabled={busy}
+                  onClick={() => fileRef.current?.click()}
+                >
+                  Import CSV
+                </button>
+                <button
+                  className="btn-ghost"
+                  onClick={() => downloadSample('retailers')}
+                >
+                  ↓ Sample CSV
+                </button>
+              </>
+            }
+          />
+        </div>
+      ) : (
       <div className="panel-card table-card">
         <div className="table-toolbar">
-          <input
-            className="search"
+          <SearchBox
             placeholder="Search name, shop, city, phone…"
             value={query}
-            onChange={(e) => {
-              setQuery(e.target.value)
+            onChange={(v) => {
+              setQuery(v)
               setPage(0)
             }}
           />
@@ -736,8 +785,24 @@ function splitCsvChunks(csvText, chunkSize = 250) {
             )}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan="9" className="empty">
-                  No customers match.
+                <td colSpan="9">
+                  <EmptyState
+                    compact
+                    icon="🔍"
+                    title={`No retailers match “${query.trim()}”`}
+                    message="Try a shop name, owner name, city or phone number."
+                    action={
+                      <button
+                        className="btn-ghost"
+                        onClick={() => {
+                          setQuery('')
+                          setPage(0)
+                        }}
+                      >
+                        Clear search
+                      </button>
+                    }
+                  />
                 </td>
               </tr>
             )}
@@ -767,6 +832,7 @@ function splitCsvChunks(csvText, chunkSize = 250) {
           </div>
         )}
       </div>
+      )}
 
       {modal?.type === 'adjust' && (
         <div className="modal-backdrop" onClick={() => setModal(null)}>

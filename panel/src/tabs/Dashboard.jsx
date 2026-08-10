@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { get } from '../api.js'
 import IndiaMap from '../components/IndiaMap.jsx'
 import BarChart from '../components/BarChart.jsx'
+import EmptyState from '../components/EmptyState.jsx'
 
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -54,22 +55,37 @@ export default function Dashboard() {
         <article className="stat-card reveal" style={{ '--d': '0ms' }}>
           <span className="stat-label">Retailers</span>
           <span className="stat-value">{fmt(totals.retailers)}</span>
+          {!totals.retailers && (
+            <span className="stat-none">Import your retailer list</span>
+          )}
         </article>
         <article className="stat-card reveal" style={{ '--d': '60ms' }}>
           <span className="stat-label">Products</span>
           <span className="stat-value">{fmt(totals.products)}</span>
+          {!totals.products && (
+            <span className="stat-none">Import your product list</span>
+          )}
         </article>
         <article className="stat-card reveal" style={{ '--d': '120ms' }}>
           <span className="stat-label">Codes issued</span>
           <span className="stat-value">{fmt(totals.codes_issued)}</span>
+          {!totals.codes_issued && (
+            <span className="stat-none">No QR codes generated yet</span>
+          )}
         </article>
         <article className="stat-card reveal" style={{ '--d': '180ms' }}>
           <span className="stat-label">Codes scanned</span>
           <span className="stat-value">{fmt(totals.scans)}</span>
+          {!totals.scans && (
+            <span className="stat-none">Waiting for the first scan</span>
+          )}
         </article>
         <article className="stat-card reveal accent" style={{ '--d': '240ms' }}>
           <span className="stat-label">Points awarded</span>
           <span className="stat-value">{fmt(totals.points_awarded)}</span>
+          {!totals.points_awarded && (
+            <span className="stat-none">Awarded on the first scan</span>
+          )}
         </article>
       </section>
 
@@ -77,14 +93,23 @@ export default function Dashboard() {
         <article className="stat-card reveal" style={{ '--d': '0ms' }}>
           <span className="stat-label">Redeem requests</span>
           <span className="stat-value">{fmt(totals.redeem_total)}</span>
+          {!totals.redeem_total && (
+            <span className="stat-none">No gift claims yet</span>
+          )}
         </article>
         <article className="stat-card reveal accent-gold" style={{ '--d': '60ms' }}>
           <span className="stat-label">Pending requests</span>
           <span className="stat-value">{fmt(totals.redeem_pending)}</span>
+          {!totals.redeem_pending && (
+            <span className="stat-none">Nothing waiting on you</span>
+          )}
         </article>
         <article className="stat-card reveal accent-leaf" style={{ '--d': '120ms' }}>
           <span className="stat-label">Approved requests</span>
           <span className="stat-value">{fmt(totals.redeem_approved)}</span>
+          {!totals.redeem_approved && (
+            <span className="stat-none">None approved yet</span>
+          )}
         </article>
       </section>
 
@@ -92,66 +117,101 @@ export default function Dashboard() {
         <div className="panel-card map-card">
           <h2>Scan activity across India</h2>
           <p className="hint">One dot per scanning retailer — hover for detail.</p>
-          <IndiaMap points={map_points} />
+          {map_points.length === 0 ? (
+            <EmptyState
+              icon="🗺️"
+              title="No scans on the map yet"
+              message="Every scan drops a pin here, placed by the retailer's GPS or their registered city."
+            />
+          ) : (
+            <IndiaMap points={map_points} />
+          )}
         </div>
         <div className="panel-card region-card">
           <h2>Region-wise</h2>
-          <table className="data-table">
-            <thead>
-              <tr><th>Region</th><th className="num">Scans</th><th className="num">Points</th></tr>
-            </thead>
-            <tbody>
-              {by_region.map((r) => (
-                <tr key={r.region}>
-                  <td>{r.region}</td>
-                  <td className="num">{fmt(r.scans)}</td>
-                  <td className="num">{fmt(r.points)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {by_region.length === 0 ? (
+            <EmptyState
+              compact
+              icon="📍"
+              title="No regions yet"
+              message="Regions appear once retailers start scanning."
+            />
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr><th>Region</th><th className="num">Scans</th><th className="num">Points</th></tr>
+              </thead>
+              <tbody>
+                {by_region.map((r) => (
+                  <tr key={r.region}>
+                    <td>{r.region}</td>
+                    <td className="num">{fmt(r.scans)}</td>
+                    <td className="num">{fmt(r.points)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </section>
 
       <section className="two-col">
         <div className="panel-card">
           <h2>Products</h2>
-          <table className="data-table">
-            <thead>
-              <tr><th>Product</th><th>SKU</th><th className="num">Scans</th><th className="num">Points</th></tr>
-            </thead>
-            <tbody>
-              {by_product.map((p) => (
-                <tr key={p.id}>
-                  <td>{p.name}</td>
-                  <td className="mono">{p.sku}</td>
-                  <td className="num">{fmt(p.scans)}</td>
-                  <td className="num">{fmt(p.points)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {by_product.length === 0 ? (
+            <EmptyState
+              compact
+              icon="📦"
+              title="No product activity yet"
+              message="A product appears here once one of its codes is scanned."
+            />
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr><th>Product</th><th>SKU</th><th className="num">Scans</th><th className="num">Points</th></tr>
+              </thead>
+              <tbody>
+                {by_product.map((p) => (
+                  <tr key={p.id}>
+                    <td>{p.name}</td>
+                    <td className="mono">{p.sku}</td>
+                    <td className="num">{fmt(p.scans)}</td>
+                    <td className="num">{fmt(p.points)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
         <div className="panel-card">
           <h2>Top retailers</h2>
-          <table className="data-table">
-            <thead>
-              <tr><th>Shop</th><th>Region</th><th className="num">Scans</th><th className="num">Points</th></tr>
-            </thead>
-            <tbody>
-              {top_retailers.map((r) => (
-                <tr key={r.id}>
-                  <td>
-                    {r.shop_name}
-                    <span className="sub"> · {r.name}</span>
-                  </td>
-                  <td>{r.region}</td>
-                  <td className="num">{fmt(r.scans)}</td>
-                  <td className="num">{fmt(r.points)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {top_retailers.length === 0 ? (
+            <EmptyState
+              compact
+              icon="🏬"
+              title="No retailer activity yet"
+              message="Your best-earning shops are ranked here after the first scans."
+            />
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr><th>Shop</th><th>Region</th><th className="num">Scans</th><th className="num">Points</th></tr>
+              </thead>
+              <tbody>
+                {top_retailers.map((r) => (
+                  <tr key={r.id}>
+                    <td>
+                      {r.shop_name}
+                      <span className="sub"> · {r.name}</span>
+                    </td>
+                    <td>{r.region}</td>
+                    <td className="num">{fmt(r.scans)}</td>
+                    <td className="num">{fmt(r.points)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </section>
 
@@ -163,34 +223,35 @@ export default function Dashboard() {
             retailers' own scans and points — distributors hold no points
             themselves.
           </p>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Distributor</th>
-                <th className="num">Retailers</th>
-                <th className="num">Retailer scans</th>
-                <th className="num">Retailer points</th>
-              </tr>
-            </thead>
-            <tbody>
-              {by_distributor.map((d) => (
-                <tr key={d.id}>
-                  <td>{d.name}</td>
-                  <td className="num">{fmt(d.retailers)}</td>
-                  <td className="num">{fmt(d.scans)}</td>
-                  <td className="num">{fmt(d.points)}</td>
-                </tr>
-              ))}
-              {by_distributor.length === 0 && (
+          {by_distributor.length === 0 ? (
+            <EmptyState
+              compact
+              icon="🚚"
+              title="No distributors yet"
+              message="Add them in the Distributors tab or via CSV import, then assign retailers to them."
+            />
+          ) : (
+            <table className="data-table">
+              <thead>
                 <tr>
-                  <td colSpan="4" className="empty">
-                    No distributors yet — add them in the Distributors tab or via
-                    CSV import.
-                  </td>
+                  <th>Distributor</th>
+                  <th className="num">Retailers</th>
+                  <th className="num">Retailer scans</th>
+                  <th className="num">Retailer points</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {by_distributor.map((d) => (
+                  <tr key={d.id}>
+                    <td>{d.name}</td>
+                    <td className="num">{fmt(d.retailers)}</td>
+                    <td className="num">{fmt(d.scans)}</td>
+                    <td className="num">{fmt(d.points)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </section>
 
@@ -211,8 +272,11 @@ export default function Dashboard() {
 
         {by_month.length === 0 ? (
           <div className="panel-card">
-            <p className="empty">No QR codes generated yet — generate codes in the
-              Vastra app to see monthly trends here.</p>
+            <EmptyState
+              icon="📈"
+              title="No QR activity yet"
+              message="Generate a batch of codes from the Products tab and the month-by-month generation and scan trends appear here."
+            />
           </div>
         ) : (
           <div className="chart-grid">

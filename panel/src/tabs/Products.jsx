@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { del, get, post, put } from '../api.js'
 import GenerateQrModal from '../components/GenerateQrModal.jsx'
 import ImportResult from '../components/ImportResult.jsx'
+import EmptyState from '../components/EmptyState.jsx'
+import SearchBox from '../components/SearchBox.jsx'
 import { useConfirm } from '../confirm.jsx'
-import { downloadCSV, today } from '../utils/csv.js'
+import { downloadSample } from '../utils/sampleCsv.js'
 
 // The catalog is the manufacturer's own CSV import. Columns are whatever their
 // file contained: the API returns `columns` (the free-form headers, in CSV
@@ -131,11 +133,6 @@ export default function Products() {
   const removeAll = async () => {
     const ok = await confirm({
       title: `Delete all ${products.length} products?`,
-      message:
-        'Your entire product list is cleared and you would need to import a ' +
-        'CSV again to rebuild it. Points you set here are lost. ' +
-        'Already-printed QR codes keep working — they carry their own ' +
-        'product details.',
       confirmLabel: `Delete all ${products.length}`,
       danger: true,
     })
@@ -170,33 +167,17 @@ export default function Products() {
     }
   }
 
-  const exportCsv = () => {
-    downloadCSV(
-      `products-${today()}.csv`,
-      [
-        { label: 'Product name', key: 'name' },
-        { label: 'Product code', key: 'sku' },
-        ...attrCols.map((c) => ({ label: c, key: c })),
-        { label: 'Points', key: 'points' },
-      ],
-      // Exports what the search is currently showing, not just the page.
-      // Fixed fields last so they win if a CSV column shared their key.
-      filtered.map((p) => ({
-        ...p.attrs,
-        name: p.name,
-        sku: p.sku,
-        points: p.points,
-      })),
-    )
-  }
-
   if (!catalog && !error) return <p className="loading">Loading…</p>
 
   return (
     <div className="products">
       <div className="schemes-head">
         <h2 className="page-title">
-          Products <span className="count">{products.length}</span>
+          Products{' '}
+          {/* Reflects the search, so the number always matches the rows. */}
+          <span className="count">
+            {q ? `${filtered.length} / ${products.length}` : products.length}
+          </span>
         </h2>
         <div className="btn-row">
           <input
@@ -215,26 +196,22 @@ export default function Products() {
             Import CSV
           </button>
           <button
-            className="btn-secondary"
-            onClick={() => setShowGenerate(true)}
-            disabled={!products.length}
+            className="btn-ghost"
+            onClick={() => downloadSample('products')}
+            title="Download a filled-in example file with the expected columns"
           >
-            Generate QR
+            ↓ Sample CSV
           </button>
-          <button
-            className="btn-secondary"
-            disabled={!filtered.length}
-            onClick={exportCsv}
-            title={q ? `Exports the ${filtered.length} matching product(s)` : undefined}
-          >
-            ↓ Export CSV
-          </button>
-          {imported && (
+          {products.length > 0 && (
             <button
-              className="btn-ghost"
-              disabled={busy || !products.length}
-              onClick={removeAll}
+              className="btn-secondary"
+              onClick={() => setShowGenerate(true)}
             >
+              Generate QR
+            </button>
+          )}
+          {imported && products.length > 0 && (
+            <button className="btn-ghost" disabled={busy} onClick={removeAll}>
               Delete all
             </button>
           )}
@@ -262,22 +239,39 @@ export default function Products() {
 
       {catalog?.source === 'empty' && (
         <div className="panel-card">
-          <p className="hint" style={{ margin: 0 }}>
-            No products yet — add them using the <strong>Import CSV</strong>{' '}
-            button.
-          </p>
+          <EmptyState
+            icon="📦"
+            title="No products yet"
+            message="Import your product list as a CSV. It only needs a product name and a product code — every other column you have is kept and shown here."
+            action={
+              <>
+                <button
+                  className="btn-primary"
+                  disabled={busy}
+                  onClick={() => fileRef.current?.click()}
+                >
+                  Import CSV
+                </button>
+                <button
+                  className="btn-ghost"
+                  onClick={() => downloadSample('products')}
+                >
+                  ↓ Sample CSV
+                </button>
+              </>
+            }
+          />
         </div>
       )}
 
       {products.length > 0 && (
         <div className="panel-card table-card">
           <div className="table-toolbar">
-            <input
-              className="search"
+            <SearchBox
               placeholder="Search product name or code…"
               value={query}
-              onChange={(e) => {
-                setQuery(e.target.value)
+              onChange={(v) => {
+                setQuery(v)
                 setPage(0)
               }}
             />
@@ -423,8 +417,24 @@ export default function Products() {
                 })}
                 {visible.length === 0 && (
                   <tr>
-                    <td className="empty" colSpan={attrCols.length + 4}>
-                      No products match “{query.trim()}”.
+                    <td colSpan={attrCols.length + 4}>
+                      <EmptyState
+                        compact
+                        icon="🔍"
+                        title={`No products match “${query.trim()}”`}
+                        message="Search covers the product name and code."
+                        action={
+                          <button
+                            className="btn-ghost"
+                            onClick={() => {
+                              setQuery('')
+                              setPage(0)
+                            }}
+                          >
+                            Clear search
+                          </button>
+                        }
+                      />
                     </td>
                   </tr>
                 )}

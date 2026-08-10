@@ -2775,7 +2775,8 @@ def dashboard(user: dict = Depends(current_manufacturer)):
             """SELECT
                  (SELECT COUNT(*) FROM retailers WHERE manufacturer_id = :m)
                      AS retailers,
-                 (SELECT COUNT(*) FROM products WHERE manufacturer_id = :m)
+                 (SELECT COUNT(*) FROM product_points
+                  WHERE manufacturer_id = :m AND source = 'import')
                      AS products,
                  (SELECT COUNT(*) FROM points_ledger
                   WHERE manufacturer_id = :m AND entry_type = 'scan')
@@ -2907,8 +2908,13 @@ def dashboard(user: dict = Depends(current_manufacturer)):
             months.setdefault(m, {"month": m, "generated": 0, "scanned": 0})
             months[m]["scanned"] = row["n"]
     by_month = [months[m] for m in sorted(months)]
+    # Mirror /catalog/products' precedence so the card agrees with the Products
+    # tab: imported rows, else the samples when they are switched on.
+    totals = dict(totals)
+    if not totals["products"] and USE_SAMPLE_PRODUCTS:
+        totals["products"] = len(_SAMPLE_PRODUCTS)
     return {
-        "totals": dict(totals),
+        "totals": totals,
         "by_region": [dict(r) for r in by_region],
         "by_product": [dict(r) for r in by_product],
         "by_distributor": [dict(r) for r in by_distributor],

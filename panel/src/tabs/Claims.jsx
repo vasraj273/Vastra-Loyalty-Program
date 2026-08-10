@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
 import { get, post } from '../api.js'
+import EmptyState from '../components/EmptyState.jsx'
 import { useConfirm } from '../confirm.jsx'
-import { downloadCSV, today } from '../utils/csv.js'
 
 const PAGE = 20
-const EXPORT_PAGE = 500
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
 
 export default function Claims() {
@@ -13,7 +12,6 @@ export default function Claims() {
   const [retailers, setRetailers] = useState([])
   const [error, setError] = useState(null)
   const [page, setPage] = useState(0)
-  const [exporting, setExporting] = useState(false)
   const [lookupCode, setLookupCode] = useState('')
   const [lookup, setLookup] = useState(null)
   const [actionError, setActionError] = useState(null)
@@ -28,6 +26,8 @@ export default function Claims() {
     from: '',
     to: '',
   })
+
+  const anyFilter = Object.values(filters).some(Boolean)
 
   // Shared query string for the current filters (without paging).
   const filterParams = () => {
@@ -103,46 +103,6 @@ export default function Claims() {
       setActionError(e.message)
     } finally {
       setBusy(false)
-    }
-  }
-
-  // Claims are server-paginated, so walk every page (with the current filters)
-  // before building the CSV. Rows are already box-grouped by the API.
-  const exportCsv = async () => {
-    setExporting(true)
-    setError(null)
-    try {
-      const rows = []
-      for (let offset = 0; ; offset += EXPORT_PAGE) {
-        const params = filterParams()
-        params.set('limit', EXPORT_PAGE)
-        params.set('offset', offset)
-        const res = await get(`/claims?${params}`)
-        rows.push(...res.claims)
-        if (offset + EXPORT_PAGE >= res.total || res.claims.length === 0) break
-      }
-      downloadCSV(
-        `claims-${today()}.csv`,
-        [
-          { label: 'When', key: 'scanned_at' },
-          { label: 'Shop', key: 'shop_name' },
-          { label: 'Owner', key: 'retailer_name' },
-          { label: 'Region', key: 'region' },
-          { label: 'Product', key: 'product_name' },
-          { label: 'SKU', key: 'sku' },
-          { label: 'Points', key: 'points' },
-          { label: 'Base', key: 'base_points' },
-          { label: 'Bonus', key: 'bonus_points' },
-          { label: 'Scheme', key: 'scheme_name' },
-          { label: 'Items', format: (c) => c.item_count ?? 1 },
-          { label: 'Code', key: 'token' },
-        ],
-        rows,
-      )
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setExporting(false)
     }
   }
 
@@ -275,15 +235,37 @@ export default function Claims() {
           <input type="date" value={filters.to} onChange={setFilter('to')} />
         </label>
         <span className="total">{data.total.toLocaleString('en-IN')} claims</span>
-        <button
-          className="btn-secondary"
-          disabled={exporting || data.total === 0}
-          onClick={exportCsv}
-        >
-          {exporting ? 'Exporting…' : '↓ Export CSV'}
-        </button>
       </div>
 
+      {data.claims.length === 0 ? (
+        <div className="panel-card">
+          <EmptyState
+            icon={anyFilter ? '🔍' : '📄'}
+            title={anyFilter ? 'No scans match these filters' : 'No scans yet'}
+            message={
+              anyFilter
+                ? 'Widen the date range, or clear the filters to see every scan.'
+                : 'Every QR code a retailer scans is listed here with the points it paid out.'
+            }
+            action={
+              anyFilter ? (
+                <button
+                  className="btn-ghost"
+                  onClick={() => {
+                    setFilters({
+                      product_id: '', retailer_id: '', region: '',
+                      from: '', to: '',
+                    })
+                    setPage(0)
+                  }}
+                >
+                  Clear filters
+                </button>
+              ) : null
+            }
+          />
+        </div>
+      ) : (
       <div className="panel-card table-card">
         <table className="data-table claims-table">
           <thead>
@@ -369,6 +351,7 @@ export default function Claims() {
           </button>
         </div>
       </div>
+      )}
     </div>
   )
 }
