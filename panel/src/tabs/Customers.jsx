@@ -5,6 +5,11 @@ import EmptyState from '../components/EmptyState.jsx'
 import SearchBox from '../components/SearchBox.jsx'
 import { useConfirm } from '../confirm.jsx'
 import { downloadSample } from '../utils/sampleCsv.js'
+import { downloadCSV, today } from '../utils/csv.js'
+import { ToolbarButton, OverflowMenu, Fab } from '../components/Toolbar.jsx'
+import {
+  IconTransfer, IconImport, IconExport, IconSample, IconTrash,
+} from '../components/icons.jsx'
 
 const EMPTY = { name: '', shop_name: '', region: '', phone: '', distributor_id: '' }
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
@@ -114,6 +119,26 @@ export default function Retailers() {
     } catch (err) {
       setError(err.message)
     }
+  }
+
+  // Download every retailer (the whole list, not the page) as CSV;
+  // distributor id → name.
+  const exportCsv = () => {
+    const dName = (id) => distributors.find((d) => d.id === id)?.name ?? ''
+    downloadCSV(
+      `retailers-${today()}.csv`,
+      [
+        { label: 'Shop', key: 'shop_name' },
+        { label: 'Owner', key: 'name' },
+        { label: 'City', key: 'region' },
+        { label: 'Distributor', format: (r) => dName(r.distributor_id) },
+        { label: 'Phone', key: 'phone' },
+        { label: 'Address', key: 'address' },
+        { label: 'Scans', format: (r) => r.scans ?? 0 },
+        { label: 'Points', format: (r) => r.points ?? 0 },
+      ],
+      list,
+    )
   }
 
   const removeAll = async () => {
@@ -336,9 +361,16 @@ function splitCsvChunks(csvText, chunkSize = 250) {
           </span>
         </h2>
         <div className="btn-row">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,text/csv"
+            style={{ display: 'none' }}
+            onChange={onImportFile}
+          />
           {list.length > 0 && (
-            <button
-              className="btn-secondary"
+            <ToolbarButton
+              icon={<IconTransfer />}
               onClick={() => {
                 setPts('')
                 setNote('')
@@ -348,38 +380,41 @@ function splitCsvChunks(csvText, chunkSize = 250) {
               }}
             >
               Transfer points
-            </button>
+            </ToolbarButton>
           )}
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".csv,text/csv"
-            style={{ display: 'none' }}
-            onChange={onImportFile}
-          />
-          <button
-            className="btn-secondary"
+          <ToolbarButton
+            icon={<IconImport />}
             disabled={busy}
             onClick={() => fileRef.current?.click()}
             title="Needs a shop or name column. Phone, city, address, distributor and point balance are matched from your own headers (Mobile, City, address1, Distributor, Point Balance…). A distributor name that isn't on file yet is created and linked; a balance is carried over into the wallet."
           >
             Import CSV
-          </button>
-          <button
-            className="btn-ghost"
-            onClick={() => downloadSample('retailers')}
-            title="Download a filled-in example file with the expected columns"
-          >
-            ↓ Sample CSV
-          </button>
-          <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
-            {showForm ? 'Close' : '+ Add retailer'}
-          </button>
-          {list.length > 0 && (
-            <button className="btn-ghost" disabled={busy} onClick={removeAll}>
-              Delete all
-            </button>
-          )}
+          </ToolbarButton>
+          <OverflowMenu
+            items={[
+              {
+                label: 'Export CSV',
+                icon: <IconExport />,
+                // Hidden on a blank slate — there is nothing to export.
+                show: list.length > 0,
+                onClick: exportCsv,
+              },
+              {
+                label: 'Sample CSV',
+                icon: <IconSample />,
+                title: 'Download a filled-in example file with the expected columns',
+                onClick: () => downloadSample('retailers'),
+              },
+              {
+                label: 'Delete all',
+                icon: <IconTrash />,
+                danger: true,
+                show: list.length > 0,
+                disabled: busy,
+                onClick: removeAll,
+              },
+            ]}
+          />
         </div>
       </div>
       {error && <p className="error">{error}</p>}
@@ -554,21 +589,13 @@ function splitCsvChunks(csvText, chunkSize = 250) {
             title="No retailers yet"
             message="Import your retailer list as a CSV, or add the first shop by hand. Each retailer gets a login automatically."
             action={
-              <>
-                <button
-                  className="btn-primary"
-                  disabled={busy}
-                  onClick={() => fileRef.current?.click()}
-                >
-                  Import CSV
-                </button>
-                <button
-                  className="btn-ghost"
-                  onClick={() => downloadSample('retailers')}
-                >
-                  ↓ Sample CSV
-                </button>
-              </>
+              <button
+                className="btn-primary"
+                disabled={busy}
+                onClick={() => fileRef.current?.click()}
+              >
+                Import CSV
+              </button>
             }
           />
         </div>
@@ -940,6 +967,12 @@ function splitCsvChunks(csvText, chunkSize = 250) {
           </div>
         </div>
       )}
+
+      <Fab
+        label={showForm ? 'Close the add-retailer form' : 'Add retailer'}
+        close={showForm}
+        onClick={() => setShowForm((s) => !s)}
+      />
     </div>
   )
 }

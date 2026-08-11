@@ -23,7 +23,7 @@
 /* The panel is laid out in px, so the whole document is scaled down instead of
    resizing every value. 0.8 = the browser's 80% zoom, which is the density the
    panel is meant to be read at. Change this one number to rescale the UI. */
-:root { zoom: 0.8; }
+:root { --ui-zoom: 0.8; zoom: var(--ui-zoom); }
 
 * { box-sizing: border-box; }
 
@@ -270,6 +270,76 @@ body {
 .btn-ghost:hover:not(:disabled) { border-color: var(--ink); }
 .btn-ghost:disabled { opacity: 0.4; cursor: default; }
 .btn-ghost.danger { color: var(--madder-deep); border-color: var(--madder); }
+
+/* ── tab toolbar (pill buttons + ⋮ overflow + floating add) ──
+   The row above every list. Only the actions worth a permanent slot live here
+   (import, and the tab's own action); export/sample/delete-all sit behind ⋮,
+   and adding a row is the circular button pinned bottom-right. */
+.toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 15px;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(17, 33, 52, 0.06);
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.toolbar-btn svg { width: 17px; height: 17px; flex: none; }
+.toolbar-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary-deep); }
+.toolbar-btn:disabled { opacity: 0.45; cursor: default; }
+
+.toolbar-btn.danger { color: var(--madder-deep); border-color: rgba(251, 98, 75, 0.45); }
+.toolbar-btn.danger:hover:not(:disabled) { border-color: var(--madder); background: #fff5f3; }
+
+.toolbar-btn.icon-only { width: 38px; padding: 0; justify-content: center; }
+.toolbar-btn.icon-only.open { border-color: var(--primary); color: var(--primary-deep); }
+
+.overflow-menu { position: relative; display: inline-flex; }
+
+/* The ⋮ items reuse the burger menu's popup, with room for their icons. */
+.overflow-menu .menu-pop { min-width: 190px; }
+.overflow-menu .menu-item { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.overflow-menu .menu-item svg { width: 17px; height: 17px; flex: none; }
+.overflow-menu .menu-item:disabled { opacity: 0.4; cursor: default; background: transparent; }
+.menu-item.danger { color: var(--madder-deep); }
+.menu-item.danger:hover:not(:disabled) { background: rgba(227, 74, 51, 0.12); color: var(--madder-deep); }
+
+.fab {
+  position: fixed;
+  right: 30px;
+  bottom: 30px;
+  z-index: 70;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--primary);
+  box-shadow: 0 6px 18px rgba(1, 145, 208, 0.40);
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+.fab svg { width: 26px; height: 26px; }
+.fab:hover { background: var(--primary-deep); transform: translateY(-2px); box-shadow: 0 9px 22px rgba(1, 145, 208, 0.45); }
+.fab:active { transform: translateY(0); box-shadow: 0 4px 12px rgba(1, 145, 208, 0.40); }
+
+/* While the add form is open the same button closes it. */
+.fab.close { background: var(--indigo); }
+.fab.close svg { transform: rotate(45deg); transition: transform 0.2s; }
+.fab.close:hover { background: var(--ink); }
 
 /* ── dashboard ── */
 .stat-row {
@@ -577,6 +647,8 @@ body {
 
 /* ── claims ── */
 .claims .page-title { margin-bottom: 18px; }
+/* Inside the toolbar row the heading is aligned by the flex box itself. */
+.schemes-head .page-title { margin-bottom: 0; }
 
 .filters {
   display: flex;
@@ -715,77 +787,256 @@ body {
   color: var(--ink-soft);
 }
 
-/* ── login ── */
+/* ── login ──
+   Full-bleed textile-wave backdrop with a single centred card. Access is
+   Vastra mobile + OTP only, so the card holds one field at a time. */
 .login-screen {
-  min-height: 100vh;
+  /* The document is scaled by :root{zoom}, and vh units are not rescaled with
+     it, so dividing by the zoom makes this exactly one viewport tall. */
+  min-height: calc(100vh / var(--ui-zoom));
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 24px;
+  position: relative;
+}
+
+/* Fixed, so the waves cover the window even when the card overflows. */
+.login-bg {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+  background: radial-gradient(
+    circle at 50% 42%,
+    #ffffff 0%, #f7fbff 35%, #eef6fd 72%, #e7f2fb 100%
+  );
+}
+
+.login-orb { position: absolute; border-radius: 50%; filter: blur(2px); opacity: 0.7; }
+
+.login-orb.orb-1 {
+  width: 520px; height: 520px; top: -300px; left: -180px;
+  background: radial-gradient(circle, rgba(1, 145, 208, 0.14), rgba(1, 145, 208, 0) 70%);
+}
+
+.login-orb.orb-2 {
+  width: 600px; height: 600px; top: 80px; right: -260px;
+  background: radial-gradient(circle, rgba(1, 145, 208, 0.13), rgba(1, 145, 208, 0) 70%);
+}
+
+.login-wave {
+  position: absolute;
+  width: 125%;
+  left: -12%;
+  bottom: -210px;
+  height: 430px;
+  border-radius: 50% 50% 0 0;
+}
+
+.login-wave.wave-1 {
+  transform: rotate(-8deg);
+  border-top: 2px solid rgba(1, 145, 208, 0.20);
+  background: linear-gradient(
+    155deg,
+    rgba(1, 145, 208, 0.24) 0%,
+    rgba(1, 145, 208, 0.12) 35%,
+    rgba(255, 255, 255, 0) 68%
+  );
+}
+
+.login-wave.wave-2 {
+  bottom: -285px;
+  transform: rotate(7deg);
+  border-top: 2px solid rgba(1, 145, 208, 0.16);
+  background: linear-gradient(25deg, rgba(1, 145, 208, 0.18), rgba(255, 255, 255, 0) 62%);
+}
+
+.login-wave.wave-3 {
+  bottom: -330px;
+  transform: rotate(-3deg);
+  border-top: 1px solid rgba(1, 145, 208, 0.14);
+  background: linear-gradient(165deg, rgba(120, 200, 245, 0.22), rgba(255, 255, 255, 0) 58%);
+}
+
+.login-wave-lines {
+  position: absolute;
+  width: 900px;
+  height: 330px;
+  right: -40px;
+  bottom: -20px;
+  opacity: 0.35;
+  transform: rotate(-7deg);
+  background: repeating-radial-gradient(
+    ellipse at 50% 100%,
+    transparent 0 17px,
+    rgba(1, 145, 208, 0.18) 18px 19px,
+    transparent 20px 30px
+  );
+  mask-image: linear-gradient(to top, black 0%, transparent 78%);
+  -webkit-mask-image: linear-gradient(to top, black 0%, transparent 78%);
+}
+
+.login-dots {
+  position: absolute;
+  right: 4%;
+  top: 42%;
+  width: 360px;
+  height: 250px;
+  opacity: 0.22;
+  background-image: radial-gradient(circle, rgba(1, 145, 208, 0.45) 1.3px, transparent 1.5px);
+  background-size: 13px 13px;
+  mask-image: radial-gradient(ellipse, black 0%, transparent 72%);
+  -webkit-mask-image: radial-gradient(ellipse, black 0%, transparent 72%);
 }
 
 .login-card {
-  width: 100%;
-  max-width: 480px;
+  position: relative;
+  z-index: 2;
+  width: min(555px, 100%);
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 48px 44px 42px;
+  padding: 38px 36px 30px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid #d6e3f0;
+  border-radius: 16px;
+  box-shadow: 0 18px 45px rgba(28, 67, 105, 0.13);
 }
 
 .login-card .brand-logo { align-self: center; }
-.login-card .brand-logo.login-logo { height: 104px; }
+.login-card .brand-logo.login-logo { height: 104px; margin-bottom: 0; }
 
 .login-card h1 {
   font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-weight: 700;
-  font-size: 30px;
-  margin: 10px 0 0;
+  font-size: 34px;
+  line-height: 1.15;
+  margin: 18px 0 0;
   text-align: center;
+  color: var(--indigo);
 }
 
-.login-sub {
-  margin: 0 0 10px;
-  text-align: center;
-  font-size: 12px;
-  letter-spacing: 1.6px;
-  text-transform: uppercase;
-  color: var(--madder);
-  font-weight: 600;
-}
-
-.login-card label {
+/* Person-with-shield mark between the title and the form. */
+.login-icon {
+  width: 84px;
+  height: 84px;
+  margin: 24px auto 22px;
+  border-radius: 50%;
+  background: rgba(1, 145, 208, 0.10);
   display: flex;
-  flex-direction: column;
-  gap: 7px;
-  font-size: 12px;
-  font-weight: 600;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary-deep);
+}
+
+.login-icon svg { width: 45px; height: 45px; }
+
+.login-field { display: block; margin-bottom: 15px; }
+
+.login-label {
+  display: block;
+  margin-bottom: 9px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.7px;
   text-transform: uppercase;
-  letter-spacing: 1px;
+  color: var(--indigo);
+}
+
+.login-input-wrap { display: block; position: relative; }
+
+.login-input-icon {
+  position: absolute;
+  left: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 21px;
+  height: 21px;
   color: var(--ink-soft);
+  pointer-events: none;
 }
 
 .login-card input {
+  width: 100%;
+  height: 58px;
+  padding: 0 18px 0 53px;
   font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
   font-size: 16px;
-  padding: 14px 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 1px solid #bcd1e7;
+  border-radius: 10px;
   background: #fff;
   color: var(--ink);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-.login-card input:focus { outline: 2px solid var(--indigo); outline-offset: -1px; }
+.login-card input::placeholder { color: #8a99ad; }
+.login-card input:disabled { background: var(--paper); color: var(--ink-soft); }
 
-/* Full-width submit, matched to the taller inputs. */
-.login-card .btn-primary {
+.login-card input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(1, 145, 208, 0.12);
+}
+
+.login-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   width: 100%;
-  min-height: 50px;
-  font-size: 16px;
-  margin-top: 4px;
+  height: 58px;
+  margin-top: 6px;
+  border: 0;
+  border-radius: 10px;
+  font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  font-size: 17px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--primary);
+  box-shadow: 0 3px 0 var(--primary-deep);
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s, background 0.15s;
 }
 
-.login-sub a { color: var(--primary-deep); }
+.login-submit svg { width: 20px; height: 20px; }
+.login-submit:hover:not(:disabled) {
+  background: var(--primary-deep);
+  transform: translateY(-1px);
+  box-shadow: 0 5px 12px rgba(1, 145, 208, 0.22);
+}
+.login-submit:active:not(:disabled) { transform: translateY(1px); box-shadow: 0 2px 0 var(--primary-deep); }
+.login-submit:disabled { opacity: 0.6; cursor: default; }
+
+.login-info {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  text-align: center;
+}
+
+.login-card .error { margin: 0 0 12px; font-size: 13px; }
+
+.login-links { margin: 16px 0 0; text-align: center; font-size: 14px; color: var(--ink-soft); }
+.login-links a { color: var(--primary-deep); }
+
+.login-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 24px 0 0;
+  font-size: 14px;
+  color: var(--ink-soft);
+}
+
+.login-note svg { width: 19px; height: 19px; }
+
+@media (max-width: 600px) {
+  .login-card { padding: 28px 22px 24px; }
+  .login-card .brand-logo.login-logo { height: 78px; }
+  .login-card h1 { font-size: 29px; }
+}
 
 
 .form-grid.three { grid-template-columns: 2fr 1fr 1fr; }

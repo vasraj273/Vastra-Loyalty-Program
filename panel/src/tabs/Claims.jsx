@@ -2,8 +2,12 @@ import { useEffect, useState } from 'react'
 import { get, post } from '../api.js'
 import EmptyState from '../components/EmptyState.jsx'
 import { useConfirm } from '../confirm.jsx'
+import { downloadCSV, today } from '../utils/csv.js'
+import { OverflowMenu } from '../components/Toolbar.jsx'
+import { IconExport } from '../components/icons.jsx'
 
 const PAGE = 20
+const EXPORT_PAGE = 500
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
 
 export default function Claims() {
@@ -17,6 +21,7 @@ export default function Claims() {
   const [actionError, setActionError] = useState(null)
   const [notice, setNotice] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [refresh, setRefresh] = useState(0)
   const confirm = useConfirm()
   const [filters, setFilters] = useState({
@@ -58,6 +63,46 @@ export default function Claims() {
     const t = setTimeout(() => { setNotice(null); setActionError(null) }, 5000)
     return () => clearTimeout(t)
   }, [notice, actionError])
+
+  // Claims are server-paginated, so walk every page (with the current filters)
+  // before building the CSV. Rows are already box-grouped by the API.
+  const exportCsv = async () => {
+    setExporting(true)
+    setError(null)
+    try {
+      const rows = []
+      for (let offset = 0; ; offset += EXPORT_PAGE) {
+        const params = filterParams()
+        params.set('limit', EXPORT_PAGE)
+        params.set('offset', offset)
+        const res = await get(`/claims?${params}`)
+        rows.push(...res.claims)
+        if (offset + EXPORT_PAGE >= res.total || res.claims.length === 0) break
+      }
+      downloadCSV(
+        `claims-${today()}.csv`,
+        [
+          { label: 'When', key: 'scanned_at' },
+          { label: 'Shop', key: 'shop_name' },
+          { label: 'Owner', key: 'retailer_name' },
+          { label: 'Region', key: 'region' },
+          { label: 'Product', key: 'product_name' },
+          { label: 'SKU', key: 'sku' },
+          { label: 'Points', key: 'points' },
+          { label: 'Base', key: 'base_points' },
+          { label: 'Bonus', key: 'bonus_points' },
+          { label: 'Scheme', key: 'scheme_name' },
+          { label: 'Items', format: (c) => c.item_count ?? 1 },
+          { label: 'Code', key: 'token' },
+        ],
+        rows,
+      )
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const doLookup = async () => {
     if (!lookupCode.trim()) return
@@ -131,7 +176,23 @@ export default function Claims() {
           {actionError || notice}
         </div>
       )}
-      <h2 className="page-title">Claims &amp; Redemptions</h2>
+      <div className="schemes-head">
+        <h2 className="page-title">Claims &amp; Redemptions</h2>
+        <div className="btn-row">
+          <OverflowMenu
+            items={[
+              {
+                label: exporting ? 'Exporting…' : 'Export CSV',
+                icon: <IconExport />,
+                // Nothing matches the current filters — nothing to export.
+                show: data.total > 0,
+                disabled: exporting,
+                onClick: exportCsv,
+              },
+            ]}
+          />
+        </div>
+      </div>
 
       {/* Find a specific scan by sticker code (full QR token or 6-char
           manual code) — the entry point when a retailer reports someone

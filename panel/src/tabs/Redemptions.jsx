@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import EmptyState from '../components/EmptyState.jsx'
 import { get, post } from '../api.js'
 import { useConfirm } from '../confirm.jsx'
+import { downloadCSV, today } from '../utils/csv.js'
+import { OverflowMenu } from '../components/Toolbar.jsx'
+import { IconExport } from '../components/icons.jsx'
 
 const STATUSES = ['pending', 'approved', 'rejected']
 
@@ -10,7 +13,37 @@ export default function Redemptions() {
   const [filter, setFilter] = useState('pending')
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(null)
+  const [exporting, setExporting] = useState(false)
   const confirm = useConfirm()
+
+  // Exports all three statuses, not just the one being viewed.
+  const exportCsv = async () => {
+    setExporting(true)
+    setError(null)
+    try {
+      const all = (
+        await Promise.all(STATUSES.map((s) => get(`/gift-claims?status=${s}`)))
+      ).flat()
+      downloadCSV(
+        `redemptions-${today()}.csv`,
+        [
+          { label: 'When', key: 'created_at' },
+          { label: 'Reference', format: (c) => c.reference || `CLM-${c.id}` },
+          { label: 'Shop', key: 'shop_name' },
+          { label: 'Owner', key: 'retailer_name' },
+          { label: 'Region', key: 'region' },
+          { label: 'Gift', key: 'gift_name' },
+          { label: 'Points', key: 'points_spent' },
+          { label: 'Status', key: 'status' },
+        ],
+        all,
+      )
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const load = useCallback(() => {
     const q = filter ? `?status=${filter}` : ''
@@ -53,7 +86,23 @@ export default function Redemptions() {
 
   return (
     <div className="redemptions">
-      <h2 className="page-title">Gift redemptions</h2>
+      <div className="schemes-head">
+        <h2 className="page-title">Gift redemptions</h2>
+        <div className="btn-row">
+          <OverflowMenu
+            items={[
+              {
+                label: exporting ? 'Exporting…' : 'Export CSV',
+                icon: <IconExport />,
+                // Only meaningful once something has been claimed.
+                show: (list?.length ?? 0) > 0,
+                disabled: exporting,
+                onClick: exportCsv,
+              },
+            ]}
+          />
+        </div>
+      </div>
       <p className="hint">
         Approve to confirm you’ll hand over the gift. Reject to refund the
         retailer’s points automatically.

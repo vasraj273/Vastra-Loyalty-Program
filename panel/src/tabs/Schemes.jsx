@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { get, post, del } from '../api.js'
 import EmptyState from '../components/EmptyState.jsx'
+import { Fab } from '../components/Toolbar.jsx'
 
 const SECTIONS = [
   { status: 'active', title: 'Active now' },
@@ -72,9 +73,6 @@ export default function Schemes() {
     <div className="schemes">
       <div className="schemes-head">
         <h2 className="page-title">Schemes &amp; Campaigns</h2>
-        <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
-          {showForm ? 'Close' : '+ New scheme'}
-        </button>
       </div>
       {error && <p className="error">{error}</p>}
 
@@ -212,6 +210,12 @@ export default function Schemes() {
           </section>
         )
       })}
+
+      <Fab
+        label={showForm ? 'Close the new-scheme form' : 'New scheme'}
+        close={showForm}
+        onClick={() => setShowForm((s) => !s)}
+      />
     </div>
   )
 }

@@ -4,6 +4,11 @@ import ImportResult from '../components/ImportResult.jsx'
 import EmptyState from '../components/EmptyState.jsx'
 import { useConfirm } from '../confirm.jsx'
 import { downloadSample } from '../utils/sampleCsv.js'
+import { downloadCSV, today } from '../utils/csv.js'
+import { ToolbarButton, OverflowMenu, Fab } from '../components/Toolbar.jsx'
+import {
+  IconImport, IconExport, IconSample, IconTrash,
+} from '../components/icons.jsx'
 
 const EMPTY = { name: '', phone: '', region: '' }
 const fmt = (n) => (n ?? 0).toLocaleString('en-IN')
@@ -102,6 +107,20 @@ export default function Distributors() {
     }
   }
 
+  const exportCsv = () => {
+    downloadCSV(
+      `distributors-${today()}.csv`,
+      [
+        { label: 'Distributor', key: 'name' },
+        { label: 'Phone', key: 'phone' },
+        { label: 'Region', key: 'region' },
+        { label: 'Retailers', format: (d) => d.retailers ?? 0 },
+        { label: 'Scans', format: (d) => d.scans ?? 0 },
+      ],
+      list,
+    )
+  }
+
   const removeAll = async () => {
     const ok = await confirm({
       title: `Delete all ${list.length} distributors?`,
@@ -138,29 +157,38 @@ export default function Distributors() {
             style={{ display: 'none' }}
             onChange={onImportFile}
           />
-          <button
-            className="btn-secondary"
+          <ToolbarButton
+            icon={<IconImport />}
             disabled={busy}
             onClick={() => fileRef.current?.click()}
             title="Needs a name column. Phone and region are matched from your own headers (Mobile, Contact No, City, State…)."
           >
             Import CSV
-          </button>
-          <button
-            className="btn-ghost"
-            onClick={() => downloadSample('distributors')}
-            title="Download a filled-in example file with the expected columns"
-          >
-            ↓ Sample CSV
-          </button>
-          <button className="btn-primary" onClick={() => setShowForm((s) => !s)}>
-            {showForm ? 'Close' : '+ Add distributor'}
-          </button>
-          {list.length > 0 && (
-            <button className="btn-ghost" disabled={busy} onClick={removeAll}>
-              Delete all
-            </button>
-          )}
+          </ToolbarButton>
+          <OverflowMenu
+            items={[
+              {
+                label: 'Export CSV',
+                icon: <IconExport />,
+                show: list.length > 0,
+                onClick: exportCsv,
+              },
+              {
+                label: 'Sample CSV',
+                icon: <IconSample />,
+                title: 'Download a filled-in example file with the expected columns',
+                onClick: () => downloadSample('distributors'),
+              },
+              {
+                label: 'Delete all',
+                icon: <IconTrash />,
+                danger: true,
+                show: list.length > 0,
+                disabled: busy,
+                onClick: removeAll,
+              },
+            ]}
+          />
         </div>
       </div>
       <p className="hint">
@@ -244,21 +272,13 @@ export default function Distributors() {
             title="No distributors yet"
             message="Import your distributor list as a CSV, or add the first one by hand. Retailers can then be assigned to them in the Retailers tab."
             action={
-              <>
-                <button
-                  className="btn-primary"
-                  disabled={busy}
-                  onClick={() => fileRef.current?.click()}
-                >
-                  Import CSV
-                </button>
-                <button
-                  className="btn-ghost"
-                  onClick={() => downloadSample('distributors')}
-                >
-                  ↓ Sample CSV
-                </button>
-              </>
+              <button
+                className="btn-primary"
+                disabled={busy}
+                onClick={() => fileRef.current?.click()}
+              >
+                Import CSV
+              </button>
             }
           />
         </div>
@@ -359,6 +379,12 @@ export default function Distributors() {
         </table>
       </div>
       )}
+
+      <Fab
+        label={showForm ? 'Close the add-distributor form' : 'Add distributor'}
+        close={showForm}
+        onClick={() => setShowForm((s) => !s)}
+      />
     </div>
   )
 }

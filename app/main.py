@@ -166,6 +166,25 @@ import hmac as _hmac  # noqa: E402
 
 YOURAPP_API_KEY = _os.environ.get("YOURAPP_API_KEY", "")
 
+# Every /yourapp/* response carries `status`: True when the call worked, False
+# when it did not — so YourApp can tell "the API is fine, there is just no
+# data" apart from "the API failed", without reading the HTTP code. The HTTP
+# codes themselves are unchanged (404 stays 404).
+#
+# `status` is the boolean and nothing else. The code's own redeemed/available
+# state, which used to hold this name, is `qrStatus` on /yourapp/qr/lookup —
+# that endpoint only. Never put a string back in `status`.
+#
+# Success is stamped by the three endpoints themselves. Failure is stamped
+# here, so it also covers errors raised before the endpoint body runs (a bad
+# X-API-Key, a rate limit, request validation) and unhandled crashes — the
+# case where knowing the API is down matters most.
+YOURAPP_PREFIX = "/yourapp/"
+
+
+def _is_yourapp(request: Request) -> bool:
+    return request.url.path.startswith(YOURAPP_PREFIX)
+
 
 def require_yourapp_key(request: Request) -> None:
     if not YOURAPP_API_KEY:
@@ -173,6 +192,68 @@ def require_yourapp_key(request: Request) -> None:
     supplied = request.headers.get("x-api-key", "")
     if not _hmac.compare_digest(supplied, YOURAPP_API_KEY):
         raise HTTPException(401, "Invalid API key")
+
+
+from fastapi.exception_handlers import (  # noqa: E402
+    http_exception_handler as _default_http_handler,
+    request_validation_exception_handler as _default_validation_handler,
+)
+from fastapi.exceptions import RequestValidationError  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
+from starlette.exceptions import HTTPException as _StarletteHTTPException  # noqa: E402
+
+
+def _stamp_false(resp: Response) -> JSONResponse:
+    """Re-emit an error response with `status: False` added, keeping its HTTP
+    status code, its headers (Retry-After on a 429) and its original body."""
+    try:
+        data = json.loads(resp.body)
+    except Exception:
+        data = {"detail": resp.body.decode("utf-8", "replace")}
+    if not isinstance(data, dict):
+        data = {"detail": data}
+    data["status"] = False
+    out = JSONResponse(data, status_code=resp.status_code)
+    for key, value in resp.headers.items():
+        if key.lower() not in ("content-length", "content-type"):
+            out.headers[key] = value
+    return out
+
+
+# Each handler delegates to the framework's own so non-/yourapp routes keep
+# exactly the responses they return today; only /yourapp/* is restamped.
+async def _http_exc(request: Request, exc):
+    resp = await _default_http_handler(request, exc)
+    return _stamp_false(resp) if _is_yourapp(request) else resp
+
+
+async def _validation_exc(request: Request, exc):
+    resp = await _default_validation_handler(request, exc)
+    return _stamp_false(resp) if _is_yourapp(request) else resp
+
+
+async def _ratelimit_exc(request: Request, exc):
+    resp = _rate_limit_exceeded_handler(request, exc)
+    return _stamp_false(resp) if _is_yourapp(request) else resp
+
+
+async def _unhandled_exc(request: Request, exc):
+    """A crash is the case where YourApp most needs to hear `status: False`,
+    so answer 500 with the flag instead of letting the connection die with no
+    body. Anything outside /yourapp/* re-raises and keeps the default
+    behaviour (and the traceback in the logs)."""
+    if not _is_yourapp(request):
+        raise exc
+    return JSONResponse(
+        {"detail": "Internal server error", "status": False},
+        status_code=500,
+    )
+
+
+app.add_exception_handler(_StarletteHTTPException, _http_exc)
+app.add_exception_handler(RequestValidationError, _validation_exc)
+app.add_exception_handler(RateLimitExceeded, _ratelimit_exc)
+app.add_exception_handler(Exception, _unhandled_exc)
 
 
 def _norm_phone(s: str | None) -> str:
@@ -2315,7 +2396,9 @@ def yourapp_qr_lookup(request: Request, body: YourAppLookupIn,
     base = row["points_per_code"]
     bonus = scheme["bonus_points"] if scheme else 0
     return {
-        "status": "redeemed" if row["redeemed_at"] else "available",
+        # The code's own state. It lives in `qrStatus` because `status` is
+        # reserved for the boolean did-the-call-work flag — never merge them.
+        "qrStatus": "redeemed" if row["redeemed_at"] else "available",
         "is_box": bool(row["is_parent"]),
         "items": items,
         "product": {"external_id": row["product_external_id"],
@@ -2327,6 +2410,7 @@ def yourapp_qr_lookup(request: Request, body: YourAppLookupIn,
                    if scheme else None),
         "redeemed_at": row["redeemed_at"],
         "redeemed_by_shop": redeemed_by_shop,
+        "status": True,
     }
 
 
@@ -2341,8 +2425,10 @@ def yourapp_points(request: Request, body: YourAppPointsIn,
     if len(want) < 10:
         raise HTTPException(422, "Invalid phone number")
     with get_db() as db:
+        # `phone` must be selected: the match is done in Python (normalised),
+        # not in SQL, so the column has to come back with the row.
         matches = [dict(r) for r in db.execute(
-            "SELECT id, blocked FROM retailers WHERE phone IS NOT NULL")
+            "SELECT id, blocked, phone FROM retailers WHERE phone IS NOT NULL")
             if _norm_phone(r["phone"]) == want]
         if not matches:
             raise HTTPException(403, "Phone number not registered")
@@ -2350,7 +2436,8 @@ def yourapp_points(request: Request, body: YourAppPointsIn,
             raise HTTPException(409, "Multiple retailers share this phone number")
         if matches[0]["blocked"]:
             raise HTTPException(403, "Account is blocked")
-        return {"total_points": _balance(db, matches[0]["id"])}
+        return {"total_points": _balance(db, matches[0]["id"]),
+                "status": True}
 
 
 @app.post("/yourapp/scan")
@@ -2375,7 +2462,9 @@ def yourapp_scan(request: Request, body: YourAppScanIn,
             _refresh_retailer_pin(retailer["id"], body.lat, body.lng)
         except Exception:
             pass
-    return result
+    # Stamped here rather than inside _redeem_code, so the webview's own
+    # POST /scan keeps the exact response shape it has today.
+    return {**result, "status": True}
 
 
 # ---------- schemes / campaigns (manufacturer-scoped) ----------

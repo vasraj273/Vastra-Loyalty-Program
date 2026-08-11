@@ -6,6 +6,11 @@ import EmptyState from '../components/EmptyState.jsx'
 import SearchBox from '../components/SearchBox.jsx'
 import { useConfirm } from '../confirm.jsx'
 import { downloadSample } from '../utils/sampleCsv.js'
+import { downloadCSV, today } from '../utils/csv.js'
+import { ToolbarButton, OverflowMenu } from '../components/Toolbar.jsx'
+import {
+  IconImport, IconExport, IconSample, IconTrash, IconQr,
+} from '../components/icons.jsx'
 
 // The catalog is the manufacturer's own CSV import. Columns are whatever their
 // file contained: the API returns `columns` (the free-form headers, in CSV
@@ -167,6 +172,26 @@ export default function Products() {
     }
   }
 
+  const exportCsv = () => {
+    downloadCSV(
+      `products-${today()}.csv`,
+      [
+        { label: 'Product name', key: 'name' },
+        { label: 'Product code', key: 'sku' },
+        ...attrCols.map((c) => ({ label: c, key: c })),
+        { label: 'Points', key: 'points' },
+      ],
+      // Exports what the search is currently showing, not just the page.
+      // Fixed fields last so they win if a CSV column shared their key.
+      filtered.map((p) => ({
+        ...p.attrs,
+        name: p.name,
+        sku: p.sku,
+        points: p.points,
+      })),
+    )
+  }
+
   if (!catalog && !error) return <p className="loading">Loading…</p>
 
   return (
@@ -187,34 +212,44 @@ export default function Products() {
             style={{ display: 'none' }}
             onChange={onImportFile}
           />
-          <button
-            className="btn-primary"
+          {products.length > 0 && (
+            <ToolbarButton icon={<IconQr />} onClick={() => setShowGenerate(true)}>
+              Generate QR
+            </ToolbarButton>
+          )}
+          <ToolbarButton
+            icon={<IconImport />}
             disabled={busy}
             onClick={() => fileRef.current?.click()}
             title={CSV_HELP}
           >
             Import CSV
-          </button>
-          <button
-            className="btn-ghost"
-            onClick={() => downloadSample('products')}
-            title="Download a filled-in example file with the expected columns"
-          >
-            ↓ Sample CSV
-          </button>
-          {products.length > 0 && (
-            <button
-              className="btn-secondary"
-              onClick={() => setShowGenerate(true)}
-            >
-              Generate QR
-            </button>
-          )}
-          {imported && products.length > 0 && (
-            <button className="btn-ghost" disabled={busy} onClick={removeAll}>
-              Delete all
-            </button>
-          )}
+          </ToolbarButton>
+          <OverflowMenu
+            items={[
+              {
+                label: 'Export CSV',
+                icon: <IconExport />,
+                show: products.length > 0,
+                onClick: exportCsv,
+              },
+              {
+                label: 'Sample CSV',
+                icon: <IconSample />,
+                title: 'Download a filled-in example file with the expected columns',
+                onClick: () => downloadSample('products'),
+              },
+              {
+                label: 'Delete all',
+                icon: <IconTrash />,
+                danger: true,
+                // Only an imported catalog can be cleared; samples aren't rows.
+                show: imported && products.length > 0,
+                disabled: busy,
+                onClick: removeAll,
+              },
+            ]}
+          />
         </div>
       </div>
 
@@ -244,21 +279,13 @@ export default function Products() {
             title="No products yet"
             message="Import your product list as a CSV. It only needs a product name and a product code — every other column you have is kept and shown here."
             action={
-              <>
-                <button
-                  className="btn-primary"
-                  disabled={busy}
-                  onClick={() => fileRef.current?.click()}
-                >
-                  Import CSV
-                </button>
-                <button
-                  className="btn-ghost"
-                  onClick={() => downloadSample('products')}
-                >
-                  ↓ Sample CSV
-                </button>
-              </>
+              <button
+                className="btn-primary"
+                disabled={busy}
+                onClick={() => fileRef.current?.click()}
+              >
+                Import CSV
+              </button>
             }
           />
         </div>
@@ -401,7 +428,7 @@ export default function Products() {
                               </button>
                               {imported && (
                                 <button
-                                  className="btn-ghost small"
+                                  className="btn-ghost small danger"
                                   disabled={busy}
                                   onClick={() => remove(p)}
                                 >

@@ -4,6 +4,11 @@ import ImportResult from '../components/ImportResult.jsx'
 import EmptyState from '../components/EmptyState.jsx'
 import { useConfirm } from '../confirm.jsx'
 import { downloadSample } from '../utils/sampleCsv.js'
+import { downloadCSV, today } from '../utils/csv.js'
+import { ToolbarButton, OverflowMenu, Fab } from '../components/Toolbar.jsx'
+import {
+  IconImport, IconExport, IconSample, IconTrash,
+} from '../components/icons.jsx'
 
 const CSV_HELP =
   'Needs a reward name and a points column. Description and image are matched ' +
@@ -171,6 +176,20 @@ export default function Gifts() {
     }
   }
 
+  const exportCsv = () => {
+    downloadCSV(
+      `rewards-${today()}.csv`,
+      [
+        { label: 'Reward', key: 'name' },
+        { label: 'Description', key: 'description' },
+        { label: 'Points', key: 'points_cost' },
+        { label: 'In shop', format: (g) => (g.active ? 'yes' : 'hidden') },
+        { label: 'Claims', format: (g) => g.claims ?? 0 },
+      ],
+      list,
+    )
+  }
+
   const removeAll = async () => {
     const ok = await confirm({
       title: `Delete all ${list.length} rewards?`,
@@ -213,29 +232,38 @@ export default function Gifts() {
             style={{ display: 'none' }}
             onChange={onImportFile}
           />
-          <button
-            className="btn-secondary"
+          <ToolbarButton
+            icon={<IconImport />}
             disabled={busy}
             onClick={() => fileRef.current?.click()}
             title={CSV_HELP}
           >
             Import CSV
-          </button>
-          <button
-            className="btn-ghost"
-            onClick={() => downloadSample('gifts')}
-            title="Download a filled-in example file with the expected columns"
-          >
-            ↓ Sample CSV
-          </button>
-          <button className="btn-primary" onClick={showForm ? () => setShowForm(false) : openAdd}>
-            {showForm ? 'Close' : '+ Add reward'}
-          </button>
-          {list.length > 0 && (
-            <button className="btn-ghost" disabled={busy} onClick={removeAll}>
-              Delete all
-            </button>
-          )}
+          </ToolbarButton>
+          <OverflowMenu
+            items={[
+              {
+                label: 'Export CSV',
+                icon: <IconExport />,
+                show: list.length > 0,
+                onClick: exportCsv,
+              },
+              {
+                label: 'Sample CSV',
+                icon: <IconSample />,
+                title: 'Download a filled-in example file with the expected columns',
+                onClick: () => downloadSample('gifts'),
+              },
+              {
+                label: 'Delete all',
+                icon: <IconTrash />,
+                danger: true,
+                show: list.length > 0,
+                disabled: busy,
+                onClick: removeAll,
+              },
+            ]}
+          />
         </div>
       </div>
       <p className="hint">
@@ -377,28 +405,23 @@ export default function Gifts() {
             title="No rewards yet"
             message="Add the gifts retailers can redeem their points for, or import them as a CSV. Claims arrive in the Redemptions tab for approval."
             action={
-              <>
-                <button className="btn-primary" onClick={openAdd}>
-                  + Add reward
-                </button>
-                <button
-                  className="btn-secondary"
-                  disabled={busy}
-                  onClick={() => fileRef.current?.click()}
-                >
-                  Import CSV
-                </button>
-                <button
-                  className="btn-ghost"
-                  onClick={() => downloadSample('gifts')}
-                >
-                  ↓ Sample CSV
-                </button>
-              </>
+              <button
+                className="btn-primary"
+                disabled={busy}
+                onClick={() => fileRef.current?.click()}
+              >
+                Import CSV
+              </button>
             }
           />
         </div>
       )}
+
+      <Fab
+        label={showForm ? 'Close the reward form' : 'Add reward'}
+        close={showForm}
+        onClick={showForm ? () => setShowForm(false) : openAdd}
+      />
     </div>
   )
 }
