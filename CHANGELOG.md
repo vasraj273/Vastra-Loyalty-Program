@@ -4,6 +4,116 @@ Notable changes to the Loyalty QR API. Dates are when the change went live on
 production. Schema changes are additive (`_MIGRATIONS`), applied by `migrate()`
 on startup — no reseed, existing data preserved.
 
+## 2026-08-11 (`status` flag for YourApp · panel toolbar, exports & blank states)
+
+### Added
+- **`status` — the did-it-work boolean, `/yourapp/*` only.** Every response
+  from `POST /yourapp/qr/lookup`, `POST /yourapp/scan` and
+  `POST /yourapp/points` now carries `status`: `true` when the call worked,
+  `false` when it did not, so YourApp can separate "no data / already used"
+  from "the API failed" without reading the HTTP code. **HTTP codes are
+  unchanged.** Successes are stamped by the endpoints; failures by four
+  exception handlers (`_http_exc`, `_validation_exc`, `_ratelimit_exc`,
+  `_unhandled_exc`), which delegate to FastAPI's own handlers and re-emit the
+  body via `_stamp_false`, preserving the code and headers (`Retry-After` on a
+  `429`). That covers errors raised before the endpoint body runs — bad
+  `X-API-Key` `401`, integration off `503`, rate limit `429`, validation `422`
+  — and unhandled crashes, which now answer
+  `500 {"detail": "Internal server error", "status": false}` instead of a dead
+  connection. Nothing outside `/yourapp/` is touched. New suite:
+  `tests/test_yourapp_api_status.py`, which also asserts the flag never leaks
+  into `/auth/login` or `POST /scan`.
+- **Export CSV on every data tab** — Claims, Customers, Distributors, Gifts,
+  Products and Redemptions, via the shared client-side `utils/csv.js`
+  (RFC-4180 + BOM `Blob`; no dependency, no new endpoint). Claims walks all
+  pages; Redemptions exports all three statuses.
+- **Sample CSV downloads** (`utils/sampleCsv.js`) for the four importable
+  lists, with headers copied from the server's own `_CSV_*_HEADERS` alias
+  tuples, so a filled-in sample always resolves.
+- **Shared `EmptyState`** for blank tabs (instead of a header-only table) and a
+  shared `SearchBox` for every searchable tab.
+
+### Changed
+- **BREAKING for YourApp only — `status` → `qrStatus` on
+  `POST /yourapp/qr/lookup`.** The code's own `available|redeemed` state moved
+  to `qrStatus` when the boolean took the name. That rename is the *only* field
+  change; `/yourapp/scan` still reports its outcome through `redeemed`. An
+  already-redeemed code is a *successful* call: `status: true` +
+  `qrStatus: "redeemed"`. `status` strings on panel endpoints (scheme
+  `active|upcoming|previous`, claim `pending|approved|rejected`, batch
+  `pending|saved`) are unrelated fields and are untouched.
+- **Every tab's toolbar is now the same three parts** (`components/Toolbar.jsx`
+  + `icons.jsx`): pill buttons for the permanent actions, an overflow `⋮` at
+  the far right (Export CSV, Sample CSV, Delete all), and a circular FAB
+  bottom-right for the add form — the old "+ Add …" / "+ New scheme" header
+  buttons are gone. Overflow items hide themselves while their list is empty,
+  and an empty `⋮` renders nothing.
+- **The panel's login screen is Vastra mobile + OTP only.** The password form
+  was removed from the UI; `POST /auth/login` still exists and remains the only
+  way a super admin can get a token, but it must now be called directly.
+- **`totals.products` on `GET /analytics/dashboard`** counts the imported
+  catalog (`product_points` where `source = 'import'`) instead of the legacy
+  `products` table, falling back to the samples when the catalog is empty and
+  `USE_SAMPLE_PRODUCTS` is on — the card and the Products tab can no longer
+  disagree.
+
+## 2026-08-07 (sticker PDFs render in the browser)
+
+### Changed
+- **The panel builds the A4 sticker sheet client-side**
+  (`panel/src/utils/stickerPdf.js`, jsPDF + `qrcode`) instead of calling
+  `GET /qr/batches/{id}/print`. It is a direct port of `app/pdf_service.py` —
+  same grid, sizes and fonts, so printed output is unchanged (the only
+  difference is that jsPDF measures y from the page top, reportlab from the
+  bottom). Reason: the PDF grows ~5.2 KB per code, so a 2,000-sticker batch is
+  10.3 MB and exceeds Lambda's 6 MB buffered response cap, while the same batch
+  as JSON is ~180 KB and costs the server no PNG rendering. Rendering now takes
+  ~10–20s for 2,000 codes, so the modal shows progress.
+- **`GET /qr/batches/{id}` now returns `is_parent`, `items` and `payload` per
+  code** (children first, then box codes) — the same three `POST /qr/generate`
+  already returned — so a *saved* batch can be re-printed client-side.
+  `payload` is built server-side from `QR_BASE_URL` and must never be rebuilt
+  in a browser: a drifted frontend copy would print stickers pointing at a dead
+  host.
+- `GET /qr/batches/{id}/print` and `app/pdf_service.py` are unchanged and still
+  serve direct API callers; the panel simply no longer calls them.
+
+## 2026-08-05 (AWS Lambda · opening balances · import fixes)
+
+### Added
+- **Lambda-runnable image + AWS runbook.** The `Dockerfile` gains the AWS
+  Lambda Web Adapter (pinned `0.9.1`) with `AWS_LWA_INVOKE_MODE=response_stream`;
+  `docs/integration/AWS_LAMBDA_DEPLOY.md` documents the five load-bearing
+  requirements (adapter, `RESPONSE_STREAM` Function URL, ≥1,769 MB memory,
+  internet egress for Vastra login, RDS Proxy).
+- **`bootstrap_admin.py`** — creates the first super admin (and optionally a
+  password-login manufacturer) non-destructively and idempotently: it never
+  resets an existing password and drops nothing, so unlike `seed.py` it is safe
+  against a real database. It also runs `init_db`/`migrate`/`create_constraints`,
+  so it doubles as the out-of-band way to apply the schema before traffic.
+- **Opening balances on retailer import.** A customer export's current-points
+  column (`Point Balance` and friends) is carried over as one `points_ledger`
+  row of the new `entry_type='import_opening'` per **newly created** retailer.
+  The wallet and the Customers tab pick it up; every `entry_type='scan'` filter
+  ignores it, so a carried-over number cannot inflate scan analytics. Skipped
+  duplicate rows are left alone (no double-crediting on a re-import); negative
+  cells are refused and reported in `errors`; `'14.00'`, `'1,005.00'` and
+  `'₹ 500'` all parse.
+
+### Fixed
+- **Retailer import: the shop-or-name rule is per row, not per file.** A file
+  carrying both `Firm Name` and `Name` fills the firm in only for shops that
+  trade under one, so a blank shop cell now falls back to the person's name and
+  the row imports. Only a row with *neither* is an error. Rejecting those cost a
+  real 2,230-row import 420 rows.
+- **Distributor linking on customer import** matches existing distributors
+  case-insensitively before creating one, so a customer list imported after the
+  distributor list attaches to those rows instead of creating near-duplicates.
+- **`DELETE /retailers` / `DELETE /retailers/{id}`** no longer treat an
+  `import_opening` row as protective history — a balance carried over by the
+  very import being undone is part of that import, so the retailer is deleted
+  with it. Real scan/claim history still protects a retailer.
+
 ## 2026-08-03 (MySQL migration)
 
 Production moves from PostgreSQL/Neon to **MySQL 8.0.13+** (AWS RDS). SQLite

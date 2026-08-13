@@ -112,9 +112,12 @@ sequenceDiagram
   "Redeeming…".
 - **Backend-driven alternative:** if YourApp prefers to keep loyalty calls out
   of the app entirely, its backend can scan server-to-server with the
-  retailer's phone number (`POST /yourapp/scan`) and preview codes
-  (`POST /yourapp/qr/lookup`) using the shared `X-API-Key` — no retailer
-  SSO/token needed. See [API_REFERENCE](API_REFERENCE.md).
+  retailer's phone number (`POST /yourapp/scan`), preview codes
+  (`POST /yourapp/qr/lookup`) and read a balance (`POST /yourapp/points`)
+  using the shared `X-API-Key` — no retailer SSO/token needed. Those responses
+  add a boolean `status` (did the call work) and report a code's own state as
+  `qrStatus`. See [YOURAPP_SCAN_API](YOURAPP_SCAN_API.md) and
+  [API_REFERENCE](API_REFERENCE.md).
 
 ### Wallet
 - **API:** `GET /retailer/wallet` → `balance` + `history` (latest 100 ledger

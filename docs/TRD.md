@@ -1,6 +1,6 @@
 # Technical Requirements Document — Vastra Loyalty Program
 
-**Status:** Live (Render + MySQL) · **Last updated:** 2026-06-24
+**Status:** Live (AWS Lambda + RDS for MySQL; Render remains the demo path) · **Last updated:** 2026-08-13
 
 Companion to **PRD.md** (product) and **CLAUDE.md** (contributor conventions).
 This document describes the technical design as built.
@@ -20,7 +20,8 @@ Single FastAPI service (`app/main.py`) serving three surfaces from one container
 ```
 
 - **Backend:** Python 3.12+, FastAPI, Pydantic v2, Uvicorn.
-- **PDF/QR:** `qrcode[pil]`, `reportlab` (A4 label sheets).
+- **PDF/QR:** `qrcode[pil]`, `reportlab` (A4 label sheets) server-side;
+  `jspdf` + `qrcode` in the panel, which is what actually prints today (§6.4).
 - **DB driver:** `pymysql[rsa]` (MySQL 8.0.13+); stdlib `sqlite3` otherwise.
 - **Panel:** React + Vite (`panel/`), built to `panel/dist`, served at `/panel`.
   `panel/src/api.js` is the only fetch layer. Navigation is a top-right burger
@@ -28,9 +29,19 @@ Single FastAPI service (`app/main.py`) serving three surfaces from one container
   promise-based `useConfirm()` (`confirm.jsx`) gates every points-changing action
   (adjust/transfer/approve/reject) with a themed confirmation dialog. Every data
   tab exports to CSV via a shared client-side helper (`utils/csv.js` — RFC-4180 +
-  BOM `Blob` download, no dependency). QR generation runs in a modal
-  (`components/GenerateQrModal.jsx`) calling the existing `/qr/*` endpoints, so the
-  standalone `/web/generate` page is no longer linked from the panel.
+  BOM `Blob` download, no dependency); the four importable lists also offer a
+  downloadable starter file (`utils/sampleCsv.js`, headers picked from the
+  server's own alias tuples so a filled-in sample always resolves). Every tab's
+  toolbar is the same three parts (`components/Toolbar.jsx` + `icons.jsx`): pill
+  buttons for the actions worth a permanent slot, an overflow `⋮` at the far
+  right (Export CSV, Sample CSV, Delete all — each hidden while its list is
+  empty, and an empty `⋮` renders nothing), and a circular FAB bottom-right that
+  opens the tab's add form. Blank states render through the shared
+  `components/EmptyState.jsx` rather than a header-only table, and searchable
+  tabs share `components/SearchBox.jsx`. QR generation runs in a modal
+  (`components/GenerateQrModal.jsx`) calling the existing `/qr/*` endpoints and
+  building the sticker sheet in-browser (§6.4), so the standalone
+  `/web/generate` page is no longer linked from the panel.
 - **Webviews:** static HTML/JS in `app/web/` served via `FileResponse`. Retailer
   pages (`home/scan/shop/claims`) carry a shared burger menu; `scan.html` plays a
   count-up + confetti animation on a successful scan and auto-restarts the camera
@@ -50,7 +61,7 @@ Tables (`app/database.py` `SCHEMA`, evolved additively via `_MIGRATIONS`):
 | `manufacturers` | Manufacturer + super-admin accounts | `username`, `password_hash`, `display_name`, `is_admin`, `external_id` (SSO/OTP map = Vastra `organization_Id`), `blocked` (0/1 emergency lockout), `vastra_access_token` (stored server-side by OTP login, wiped on logout) |
 | `auth_tokens` | Manufacturer/admin bearer tokens (single active session — new login deletes old rows) | `token`, `manufacturer_id` |
 | `products` | **Legacy** catalog (read-only; no new rows) | `manufacturer_id`, `name`, `sku`, `loyalty_points` |
-| `product_points` | Manufacturer's own points value per Vastra product | `manufacturer_id`, `product_external_id`, `points` |
+| `product_points` | The **imported catalog** (`source='import'`: name, sku, points, plus `attrs` — every other CSV column keyed by its original header). `source IS NULL` rows are legacy points-overrides. | `manufacturer_id`, `product_external_id`, `name`, `sku`, `points`, `attrs`, `source` |
 | `retailers` | Shops | `manufacturer_id`, `shop_name`, `region`, `username`, `password_hash`, `lat`, `lng`, `location_source`, `address`, `distributor_id`, `external_id` (SSO map, unique per manufacturer), `blocked` (0/1 emergency lockout) |
 | `retailer_tokens` | Retailer bearer tokens (single active session — new login deletes old rows) | `token`, `retailer_id` |
 | `distributors` | Distributor layer (tracking only, no login/points) | `manufacturer_id`, `name`, `phone`, `region` |
@@ -62,8 +73,8 @@ Tables (`app/database.py` `SCHEMA`, evolved additively via `_MIGRATIONS`):
 
 Every tenant-owned row carries `manufacturer_id`.
 
-**Product reference model (Vastra is the product System of Record, pulled
-server-side).** The QR/scan/claims/analytics/wallet paths no longer join the
+**Product reference model (the catalog is the manufacturer's own CSV
+import).** The QR/scan/claims/analytics/wallet paths no longer join the
 local `products` table: `qr_batches` and `points_ledger` carry a product
 **reference** (`product_external_id`) + immutable **snapshot**
 (`product_name`/`product_sku`), and `qr_batches` carries its own
@@ -82,21 +93,38 @@ only) and resolved once into the same snapshot. Product CRUD/import is
 
 `app/database.py` is **dual-backend**: MySQL when `DATABASE_URL` is set, SQLite
 otherwise. Application code is written in **SQLite style everywhere** (`?`
-placeholders, `cur.lastrowid`, `datetime('now')`, `:name` params); a `_PGConn`
+placeholders, `cur.lastrowid`, `datetime('now')`, `:name` params); a `_MyConn`
 adapter translates to PyMySQL at runtime.
 
-- Tables using `cur.lastrowid` on INSERT must be in `_ID_TABLES` (adapter appends
-  `RETURNING id` on PG).
-- Avoid `%` literals and inline `:word` time formats (would break translation).
+- `cur.lastrowid` needs no registration — MySQL supports it natively (the old
+  `_ID_TABLES`/`RETURNING id` rewrite went away with psycopg).
+- Avoid `%` literals and inline `:word` time formats (would break translation) —
+  which is why `_translate` emits `CAST(UTC_TIMESTAMP() AS CHAR)` rather than
+  `DATE_FORMAT(...)`.
+- Any indexed/UNIQUE/PK text column must be `VARCHAR(n)`, never `TEXT` — MySQL
+  cannot index a bare TEXT; a literal default on a text column must be written
+  `DEFAULT ('')`.
+- MySQL has **no partial indexes and no `IF [NOT] EXISTS`** for indexes or
+  columns, so `_INDEXES`, `_MYSQL_CONSTRAINTS` and `migrate()` guard every
+  statement with an `information_schema` lookup instead. It also silently
+  ignores inline `REFERENCES`, so `_mysql_foreign_keys()` re-emits them as
+  table-level `ADD CONSTRAINT`.
 - **Schema evolution is additive & idempotent.** New tables → `SCHEMA`
-  (`CREATE TABLE IF NOT EXISTS`); new columns → `_MIGRATIONS` (`ADD COLUMN IF NOT
-  EXISTS` on PG, PRAGMA-checked on SQLite). `migrate()` runs every startup.
-- Startup does `init_db()` + `migrate()` + `_backfill_coords()` — **never seeds**.
-  `seed.py`/`reset_db()` are destructive (local/initial only) and do **not** run
-  `_MIGRATIONS`.
-- **No `;` in `SCHEMA` comments.** The PG `executescript` splits on `;`; a
+  (`CREATE TABLE IF NOT EXISTS`); new columns → `_MIGRATIONS`
+  (information_schema-checked on MySQL, PRAGMA-checked on SQLite). `migrate()`
+  runs every startup.
+- Startup does `init_db()` + `migrate()` + `create_constraints()` +
+  `_backfill_coords()` + `_backfill_product_snapshots()` — **never seeds**.
+  `seed.py`/`reset_db()` are destructive (local/initial only, `ALLOW_MYSQL=1`
+  required against MySQL) and do **not** run `_MIGRATIONS`. Use
+  `bootstrap_admin.py` against a real database.
+- `get_db()` pins `READ COMMITTED` and `time_zone = '+00:00'` per connection;
+  both are load-bearing (under InnoDB's default REPEATABLE READ the gift-claim
+  guard's `SELECT … FOR UPDATE` re-read a stale snapshot and let 12 of 20
+  concurrent claims through).
+- **No `;` in `SCHEMA` comments.** `executescript` splits on `;`; a
   semicolon in a `--` comment would split a statement (SQLite tolerates it, so it
-  only fails on MySQL at deploy). `executescript` now strips full-line `--`
+  only fails on MySQL at deploy). It strips full-line `--`
   comments before splitting, but keep schema comments semicolon-free.
 
 ## 4. Authentication & authorization
@@ -145,8 +173,9 @@ adapter translates to PyMySQL at runtime.
   so a parent id space can't resolve across tenants. Enabled by env `SSO_SECRET`
   (unset → endpoints return `503`); `SSO_ISSUERS`/`SSO_AUDIENCE`/`SSO_MAX_AGE`
   default to `vastra,yourapp` / `loyalty` / `120`s.
-- **YourApp server-to-server scan (phone-verified):** `POST /yourapp/qr/lookup`
-  and `POST /yourapp/scan` skip the retailer session entirely — YourApp's
+- **YourApp server-to-server scan (phone-verified):** `POST /yourapp/qr/lookup`,
+  `POST /yourapp/scan` and `POST /yourapp/points` skip the retailer session
+  entirely — YourApp's
   backend authenticates with a shared secret (`X-API-Key` header, env
   `YOURAPP_API_KEY`, checked via `hmac.compare_digest`; unset → `503`). The
   retailer is resolved by **phone number** (`_retailer_by_phone`: digits-only,
@@ -155,6 +184,25 @@ adapter translates to PyMySQL at runtime.
   No match → `403`, duplicate phones → `409`, `blocked` → `403`. Because phone
   is an identity key, `POST /retailers/import` rejects rows whose normalized
   phone duplicates another retailer of the same manufacturer.
+  (`/yourapp/points` carries no code, so it matches the phone across all
+  manufacturers.)
+- **`status` — the did-it-work flag, `/yourapp/*` only.** Every response from
+  those three endpoints carries a boolean `status` (`true` = the call worked),
+  so YourApp can separate "no data" from "the API failed" without reading the
+  HTTP code; the codes themselves are unchanged. The code's own
+  redeemed/available state is `qrStatus` on `/yourapp/qr/lookup` — it held the
+  name `status` until Aug 2026 and was renamed when the boolean took it; never
+  merge the two (an already-redeemed code is a *successful* call:
+  `status: true` + `qrStatus: "redeemed"`). Successes are stamped by the
+  endpoints; **failures are stamped centrally** by four exception handlers
+  (`_http_exc`, `_validation_exc`, `_ratelimit_exc`, `_unhandled_exc`), which
+  delegate to the framework's own handler and re-emit the body with the flag,
+  preserving status code and headers. That placement also covers errors raised
+  before the endpoint body runs (bad key `401`, off `503`, rate limit `429`,
+  validation `422`) and unhandled crashes → `500 {"detail": "Internal server
+  error", "status": false}`. `/yourapp/scan` stamps its own return rather than
+  `_redeem_code`, so the webview's `POST /scan` shape is untouched; non-
+  `/yourapp/` paths fall through to the default handlers.
 
 ## 5. API surface
 
@@ -172,7 +220,13 @@ Authoritative list at `/docs`. Principal endpoints:
   `GET|POST /schemes`, `DELETE /schemes/{id}`;
   `GET|POST /gifts`, `PATCH|DELETE /gifts/{id}`.
 - **Bulk import (CSV-as-JSON):** `POST /retailers/import`,
-  `POST /distributors/import`. (No products import — the catalog is Vastra's.)
+  `POST /distributors/import`, `POST /catalog/products/import`,
+  `POST /gifts/import`. Each reports `created`/`skipped`/`errors` plus a
+  `columns` map of the headers it actually matched.
+- **Bulk clear:** `DELETE /retailers`, `DELETE /distributors`,
+  `DELETE /catalog/products`, `DELETE /gifts` — manufacturer-scoped, each
+  enforcing the same protection its single-row delete does but skipping
+  protected rows instead of failing the whole call.
 - **Retailers:** `GET|POST /retailers`, `PATCH|DELETE /retailers/{id}`,
   `POST /retailers/{id}/adjust`, `POST /retailers/transfer`,
   `POST /retailers/import` (CSV-as-JSON bulk create), `POST /retailer/location`.
@@ -181,8 +235,8 @@ Authoritative list at `/docs`. Principal endpoints:
   `POST /qr/batches/{id}/save`, `GET /qr/batches/{id}/print`,
   `DELETE /qr/batches/{id}`, `GET /qr/codes/{token}/image`.
 - **Scan & rewards:** `POST /scan`,
-  **YourApp server-to-server** `POST /yourapp/qr/lookup`, `POST /yourapp/scan`
-  (auth `X-API-Key`); `GET /retailer/wallet`, `/retailer/shop`,
+  **YourApp server-to-server** `POST /yourapp/qr/lookup`, `POST /yourapp/scan`,
+  `POST /yourapp/points` (auth `X-API-Key`); `GET /retailer/wallet`, `/retailer/shop`,
   `POST /retailer/claim`, `GET /retailer/claims`; `GET /claims`,
   `GET /gift-claims`, `POST /gift-claims/{id}/approve|reject`;
   **scan reversal** `GET /scans/lookup`, `POST /scans/reverse`.
@@ -197,7 +251,8 @@ Both endpoints share one redemption core (`_redeem_code` + `_find_code` in
 `app/main.py`); `/scan` resolves the retailer from the bearer token,
 `/yourapp/scan` from the phone number (see §4). `/yourapp/qr/lookup` reuses
 `_find_code` + `_best_scheme` for a read-only preview (product snapshot,
-base/bonus/total points, `available`/`redeemed`) that never changes state.
+base/bonus/total points, `qrStatus: available|redeemed`) that never changes
+state.
 1. Resolve code by `token` or `manual_code`; reject unknown (404), already-redeemed
    (409), cross-manufacturer (403).
 2. Determine codes to register (a parent box → all unredeemed children).
@@ -229,6 +284,11 @@ base/bonus/total points, `available`/`redeemed`) that never changes state.
 - `totals` includes `retailers`, `products`, `scans`, `points_awarded`,
   `codes_issued`, and redemption-request counts from `gift_claims`:
   `redeem_total`, `redeem_pending`, `redeem_approved`.
+- `totals.products` counts the **imported catalog** (`product_points` where
+  `source = 'import'`), not the legacy `products` table, and mirrors
+  `GET /catalog/products`' precedence by falling back to `_SAMPLE_PRODUCTS`
+  when the catalog is empty and `USE_SAMPLE_PRODUCTS` is on — so the card and
+  the Products tab can never disagree.
 - `by_region` rolls scans/points up by region; blank/NULL region groups under
   `'Unspecified'` via `COALESCE(NULLIF(region, ''), 'Unspecified')`.
 - `by_product` groups scan ledger rows by the product snapshot key
@@ -303,12 +363,26 @@ base/bonus/total points, `available`/`redeemed`) that never changes state.
   unauthenticated open redirects to `/web?next=…` and `home.html` likewise strips
   the token from the address bar (kept in memory) before showing the login form.
 
-### 6.4 Printable PDF (`app/pdf_service.py`)
+### 6.4 Printable PDF (`app/pdf_service.py` + `panel/src/utils/stickerPdf.js`)
 - `build_pdf` lays child stickers on a 4×6 grid; box (parent) stickers go on their
   own page in a 2×3 grid with a border. Each box sticker stacks **title →
   QR → product name → manual code, all inside the border** — the box QR is sized
   `min(cell) − 38mm` to leave room for both label lines (a larger QR previously
   pushed the labels onto/below the bottom border).
+- **The panel renders the sheet in the browser**, not via
+  `GET /qr/batches/{id}/print`. `stickerPdf.js` (jsPDF + `qrcode`) is a direct
+  port of the layout above — same A4 grid, sizes and fonts; the only difference
+  is that jsPDF measures y from the page top where reportlab measures from the
+  bottom. The reason: the PDF grows ~5.2 KB per code, so a 2,000-sticker batch is
+  10.3 MB and exceeds Lambda's 6 MB buffered response cap, while the same batch
+  as JSON is ~180 KB and spends no server CPU on PNG rendering. A 2,000-code
+  run takes ~10–20s in the tab, so the modal shows a progress percentage.
+- The QR **payload string always comes from the API verbatim**
+  (`POST /qr/generate` and `GET /qr/batches/{id}` both return it per code) and is
+  never rebuilt from a token in the browser — `QR_BASE_URL` is server-side
+  config and a drifted frontend copy would print stickers pointing at a dead
+  host.
+- The server endpoint stays for direct API callers.
 
 ## 7. Configuration
 
@@ -320,7 +394,7 @@ base/bonus/total points, `available`/`redeemed`) that never changes state.
 | `SSO_ISSUERS` | Allowed JWT `iss` values (comma-separated). Default `vastra,yourapp`. |
 | `SSO_AUDIENCE` | Required JWT `aud`. Default `loyalty`. |
 | `SSO_MAX_AGE` | Max assertion age in seconds (`iat` freshness, bounds replay). Default `120`. |
-| `YOURAPP_API_KEY` | Shared secret for the YourApp server-to-server scan endpoints (`X-API-Key` header on `/yourapp/qr/lookup` + `/yourapp/scan`). Unset → they return `503`. |
+| `YOURAPP_API_KEY` | Shared secret for the YourApp server-to-server endpoints (`X-API-Key` header on `/yourapp/qr/lookup`, `/yourapp/scan`, `/yourapp/points`). Unset → they return `503`. |
 
 ## 8. Deployment
 

@@ -2,19 +2,60 @@
  LOYALTY SCAN API  —  for the YourApp backend team
 ==========================================================
 
-Two APIs for scanning loyalty QR codes from YourApp.
+Three APIs for scanning loyalty QR codes from YourApp
+(preview a code, redeem it, read a retailer's balance).
 Call them from your BACKEND SERVER only — the API key must
 never be put inside the mobile app.
 
 Base URL:
     https://vastra-loyalty.onrender.com
 
-Headers (required on both APIs):
+Headers (required on all three APIs):
     Content-Type : application/json
     X-API-Key    : <secret key — shared with you privately>
 
 All requests and responses are JSON.
-Every error looks like:  { "detail": "<message>" }
+Every error looks like:
+    { "detail": "<message>", "status": false }
+
+
+----------------------------------------------------------
+ "status" — DID THE CALL WORK?
+----------------------------------------------------------
+
+EVERY response from these APIs carries a boolean "status":
+
+    status: true   -> the call worked. We answered you.
+    status: false  -> the call did not work.
+
+It is there so you can tell "the API is fine, there is just
+no data / the code was already used" apart from "the API
+failed", without reading the HTTP code. The HTTP codes are
+UNCHANGED — a 404 is still a 404. This is a second, easier
+signal, never a replacement.
+
+Two things to keep straight:
+
+1. "status" is ONLY the boolean. A code's own
+   redeemed/available state is reported as "qrStatus", on
+   /yourapp/qr/lookup only. (That field used to be called
+   "status"; it was renamed when the boolean took the name.
+   If you integrated before Aug 2026, this rename is the
+   only field change you need to make.)
+
+2. An ALREADY-REDEEMED code is a SUCCESSFUL call. Lookup
+   answers status: true with qrStatus: "redeemed".
+   status: false means we failed to answer — not that the
+   answer was "no".
+
+status: false also comes back on failures that happen
+before we even look at your request — a wrong X-API-Key
+(401), the integration switched off (503), a rate limit
+(429), a malformed body (422) — and on an unhandled crash
+on our side, which answers
+    500 { "detail": "Internal server error", "status": false }
+instead of dropping the connection. That last case is the
+one this flag exists for.
 
 
 ----------------------------------------------------------
@@ -41,7 +82,7 @@ letters do not matter.
 RESPONSE (200 OK):
 
     {
-      "status": "available",
+      "qrStatus": "available",
       "is_box": false,
       "items": 1,
       "product": {
@@ -54,12 +95,15 @@ RESPONSE (200 OK):
       "total_points": 75,
       "scheme": { "id": 2, "name": "Diwali Bonus" },
       "redeemed_at": null,
-      "redeemed_by_shop": null
+      "redeemed_by_shop": null,
+      "status": true
     }
 
 Notes:
-- "status" becomes "redeemed" once the code is scanned;
+- "qrStatus" becomes "redeemed" once the code is scanned;
   then "redeemed_at" and "redeemed_by_shop" are filled in.
+  "status" stays true either way — a redeemed code is
+  still a successful lookup.
 - Points are PER ITEM. For a box sticker ("is_box": true),
   each of the "items" children earns "total_points"
   (example: a 12-item box = 12 x total_points).
@@ -113,13 +157,15 @@ RESPONSE (200 OK):
         "shop_name": "Kumar Sarees",
         "region": "Jaipur"
       },
-      "new_balance": 555
+      "new_balance": 555,
+      "status": true
     }
 
 Show "points_awarded" and "new_balance" to the retailer as
 the success screen. For a box, "items_registered" = number
 of items credited, and the points fields are totals across
-all of them.
+all of them. The scan reports its own outcome through
+"redeemed", as it always has — there is no "qrStatus" here.
 
 
 ----------------------------------------------------------
@@ -138,7 +184,7 @@ Request:
 
 Response 200:
 
-    { "total_points": 555 }
+    { "total_points": 555, "status": true }
 
 - "total_points" is the live wallet balance (scans earned
   minus gifts redeemed, etc.), always current.
@@ -155,6 +201,10 @@ blocked", 409 "Multiple retailers share this phone number",
 ----------------------------------------------------------
  ERRORS TO HANDLE
 ----------------------------------------------------------
+
+Every one of these carries "status": false next to
+"detail", so checking !body.status is enough to route into
+your error path.
 
 HTTP 404  "Invalid code"
     The code does not exist (or belongs to another brand).
@@ -186,7 +236,12 @@ HTTP 503  "YourApp integration is not configured"
     The key is not set on our server — contact us.
 
 HTTP 429  (rate limited)
-    Too many calls too fast. Wait a moment and retry.
+    Too many calls too fast. Wait a moment and retry
+    (the Retry-After header is preserved).
+
+HTTP 500  "Internal server error"
+    Something broke on our side. Safe to show "please try
+    again"; report it to us if it keeps happening.
 
 
 ----------------------------------------------------------
@@ -257,7 +312,8 @@ as "code" in the APIs:
 Suggested test sequence:
 
     1. POST /yourapp/qr/lookup with code MF5NWA
-       -> "Test Saree", total_points 10, status "available"
+       -> "Test Saree", total_points 10,
+          qrStatus "available", status true
 
     2. POST /yourapp/scan with phone 9895822412 + MF5NWA
        -> redeemed: true, points_awarded: 10, new_balance
@@ -266,7 +322,9 @@ Suggested test sequence:
        -> 409 "Code already redeemed"
 
     4. POST /yourapp/qr/lookup with MF5NWA again
-       -> status "redeemed", redeemed_by_shop "Malhotra Sarees"
+       -> qrStatus "redeemed", redeemed_by_shop
+          "Malhotra Sarees", status STILL true (the call
+          worked — the code is simply used up)
 
     5. POST /yourapp/scan with phone 9999999999 (NOT
        registered) + a fresh code

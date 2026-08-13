@@ -103,7 +103,7 @@ sequenceDiagram
   P->>L: POST /qr/generate { product_external_id, product_name, product_sku, points_per_code, quantity, items_per_box? }
   L->>L: store batch with snapshot + manufacturer_id; mint codes
   L-->>P: 201 { batch_id, codes[], boxes_codes[], actions }
-  P->>L: GET /qr/batches/{id}/print (PDF)
+  Note over P: sticker sheet rendered in the browser from<br/>each code's server-built payload URL
 ```
 
 **No outbound call is involved.** Generation reads nothing but the request
@@ -214,7 +214,9 @@ Authorization: Bearer <loyalty manufacturer token>
   ledger; response `product` carries `external_id` instead of an integer id.
   Unaffected by this change.
 - **`/claims`, `/qr/batches*`, `/qr/batches/{id}/print`** — read snapshots
-  instead of joining `products`. Unaffected.
+  instead of joining `products`. Unaffected. (`GET /qr/batches/{id}` also
+  returns each code's `payload`/`is_parent`/`items` so the panel can render the
+  sticker sheet client-side.)
 - **`/analytics/dashboard`** — `by_product` groups by `product_external_id` +
   snapshot and can only report products **with loyalty activity** (no
   zero-scan rows, since loyalty no longer knows the full catalog). Unaffected.

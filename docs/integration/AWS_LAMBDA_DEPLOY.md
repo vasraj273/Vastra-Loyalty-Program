@@ -76,6 +76,14 @@ reintroduce exactly the cap you just removed.
 
 ## 3. Response size: print PDFs can exceed the buffered cap
 
+> **Update (Aug 2026): the panel no longer hits this path.** The sticker sheet
+> is now rendered in the browser (`panel/src/utils/stickerPdf.js`) from
+> `GET /qr/batches/{id}`, which returns ~180 KB of JSON for the same 2,000-code
+> batch and spends no Lambda CPU on PNG rendering. The numbers below still
+> govern `GET /qr/batches/{id}/print`, which remains available to direct API
+> callers — and the streaming requirement itself still stands on the import
+> path (§2), so **none of the configuration changes**.
+
 Lambda's **buffered** response limit is **6 MB**; `RESPONSE_STREAM` raises it to
 **20 MB**. The print-PDF endpoint returns a whole sticker sheet in one response,
 and it grows linearly with the batch:
@@ -218,12 +226,12 @@ production while working perfectly on your machine.
 | `QR_BASE_URL` | `https://<host>/web/scan` | Every generated QR encodes `127.0.0.1`. **Irreversible once stickers are printed** |
 | `VASTRA_API_BASE_URL` | Vastra's production origin | Manufacturer OTP login returns `502` |
 | `VASTRA_API_KEY` | as issued by Vastra | — |
-| `YOURAPP_API_KEY` | long random string | `/yourapp/qr/lookup` + `/yourapp/scan` return `503` |
+| `YOURAPP_API_KEY` | long random string | `/yourapp/qr/lookup`, `/yourapp/scan` + `/yourapp/points` return `503` |
 | `SSO_SECRET` | long random string | `/auth/sso/*` return `503` |
 | `RL_STORAGE_URI` | `redis://<elasticache>:6379` | Rate limits are per-execution-environment (§8) |
 | `USE_SAMPLE_PRODUCTS` | leave unset | (unset is correct — the Products tab prompts for a CSV import) |
 | `PORT` | `8000` | Adapter cannot reach uvicorn |
-| `AWS_LWA_INVOKE_MODE` | `response_stream` | Print PDFs over 6 MB fail (§3) |
+| `AWS_LWA_INVOKE_MODE` | `response_stream` | Long imports are cut off at the buffered cap; direct `/qr/batches/{id}/print` calls over 6 MB fail (§3) |
 
 Store `VASTRA_API_KEY`, `YOURAPP_API_KEY`, `SSO_SECRET` and the database
 password in **Secrets Manager** or SSM Parameter Store rather than as plaintext
@@ -262,7 +270,7 @@ If imports remain uncomfortable, lower the panel's chunk size from 250 (in
 - [ ] An account exists — Vastra OTP login, or `bootstrap_admin.py` (§7)
 - [ ] `RL_STORAGE_URI` set, or the weaker guarantee consciously accepted (§8)
 - [ ] Secrets in Secrets Manager, not plaintext function config (§9)
-- [ ] Smoke test: `/docs` loads · `/panel/` loads · OTP login succeeds · generate 5 codes · scan one · print PDF opens
+- [ ] Smoke test: `/docs` loads · `/panel/` loads · OTP login succeeds · generate 5 codes · scan one · the panel's Print downloads the sticker PDF
 
 ## 12. What this runtime does not change
 

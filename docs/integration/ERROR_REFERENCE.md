@@ -15,6 +15,20 @@ structured form:
 { "detail": [ { "loc": ["body", "quantity"], "msg": "…", "type": "…" } ] }
 ```
 
+**Under `/yourapp/*` only**, every error body additionally carries
+`"status": false` (and every success carries `"status": true`), so YourApp can
+branch on the flag instead of the HTTP code:
+```json
+{ "detail": "Invalid code", "status": false }
+```
+The HTTP code is unchanged, and so are the headers (a `429` keeps its
+`Retry-After`). This is stamped by four exception handlers rather than inside
+the endpoints, so it also covers failures raised before the endpoint runs —
+auth, rate limiting, request validation — plus unhandled crashes, which answer
+`500 { "detail": "Internal server error", "status": false }` instead of a dead
+connection. Nothing outside `/yourapp/*` is affected. See
+[API_REFERENCE](API_REFERENCE.md#the-status-flag-yourapp-only).
+
 ## Status codes at a glance
 
 | HTTP | Class | Retryable? | General client behavior |
@@ -84,7 +98,11 @@ structured form:
 > There is **no "expired code" error** — QR codes never expire. Only the scheme
 > *bonus* is time-bounded (it silently contributes 0 when no scheme is active).
 
-### YourApp server-to-server (`POST /yourapp/qr/lookup`, `POST /yourapp/scan`)
+### YourApp server-to-server (`POST /yourapp/qr/lookup`, `POST /yourapp/scan`, `POST /yourapp/points`)
+
+Every row below also carries `"status": false`. Note that an **already-redeemed
+code is not an error on the lookup endpoint** — it answers `200` with
+`status: true` and `qrStatus: "redeemed"`.
 
 | HTTP | `detail` | Meaning | Client behavior |
 |---|---|---|---|
@@ -93,8 +111,9 @@ structured form:
 | 422 | `Invalid phone number` | Fewer than 10 digits after normalization | Send the retailer's full 10-digit number. |
 | 403 | `Phone number not registered` | No retailer of the scanned code's manufacturer has this phone | Onboard the retailer (CSV import with phone) under the right manufacturer. |
 | 403 | `Account is blocked` | Retailer emergency lockout (`blocked = 1`) | "Account disabled, contact support." |
-| 409 | `Multiple retailers share this phone number` | Duplicate normalized phone within the manufacturer | Data cleanup: fix the duplicate phones in the Customers tab. |
+| 409 | `Multiple retailers share this phone number` | Duplicate normalized phone within the manufacturer — on `/yourapp/points` (which has no code, so no tenant) duplicates are counted across **all** manufacturers | Data cleanup: fix the duplicate phones in the Customers tab. |
 | 404 / 409 | as `/scan` above | Same redemption core — invalid code, already redeemed | Same as `/scan`. |
+| 500 | `Internal server error` | Unhandled server exception, returned with `status: false` rather than a dropped connection | Show "try again"; alert us if it persists. |
 
 ### Scan reversal (`GET /scans/lookup`, `POST /scans/reverse` — manufacturer)
 

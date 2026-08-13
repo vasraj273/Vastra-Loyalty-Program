@@ -1,6 +1,6 @@
 # Product Requirements Document — Vastra Loyalty Program
 
-**Status:** Live in production · **Last updated:** 2026-06-25 · **Owner:** Vastra team
+**Status:** Live in production · **Last updated:** 2026-08-13 · **Owner:** Vastra team
 
 ## 1. Overview
 
@@ -61,9 +61,12 @@ schemes are unverifiable and easy to abuse.
   existing session stops working on the next request.
 
 ### 4.2 Catalog & rewards
-- **Products come from Vastra's catalog** — the panel pulls the manufacturer's
-  live product list server-side (no local product management); the
-  manufacturer sets/edits each product's **base loyalty points** in the panel.
+- **Products come from the manufacturer's own CSV** — the catalog is imported
+  in the Products tab (`POST /catalog/products/import`), headers matched rather
+  than dictated, and every extra column of their file is kept and displayed.
+  Vastra's product API is **not** a catalog source (it returns design numbers
+  but no design names). The manufacturer sets/edits each product's **base
+  loyalty points** in the panel.
 - **Schemes** add a time-bound bonus on top of base points (optionally scoped to
   specific products). Overlapping schemes do not stack — the most generous active
   one wins.
@@ -153,10 +156,12 @@ schemes are unverifiable and easy to abuse.
    products, adds schemes, gifts, retailers, and distributors (retailer logins
    auto-created; city + distributor optional). Distributors and Customers also
    support **bulk CSV import** (the retailer CSV auto-creates + links
-   distributors). There is no product CSV import — the catalog is Vastra's.
+   distributors, and carries opening point balances over). Products and gifts
+   import the same way; each imported list also has a **Delete all** so a bad
+   import can be undone in one step.
 3. **Generate & print** — in the Products tab, **Generate QR** opens an in-panel
-   modal: pick a Vastra-catalog product → set/confirm points → quantity →
-   generate → save → print A4 PDF of QR labels.
+   modal: pick a catalog product → set/confirm points → quantity →
+   generate → save → print A4 PDF of QR labels (rendered in the browser).
 4. **Earn** — retailer logs into YourApp → scans QR (or types manual code) →
    points awarded with scheme bonus (shown with a count-up + confetti animation);
    location captured. "Scan another" reopens the camera right away.

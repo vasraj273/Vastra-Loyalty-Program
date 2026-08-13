@@ -1,15 +1,47 @@
 # Loyalty Scan API — handoff for the YourApp team
 
-Two server-to-server endpoints for scanning loyalty QR codes from YourApp.
-Call them from the **YourApp backend only** — the API key must never ship
-inside the mobile app.
+Three server-to-server endpoints for scanning loyalty QR codes from YourApp
+(preview a code, redeem it, read a retailer's balance). Call them from the
+**YourApp backend only** — the API key must never ship inside the mobile app.
 
 - **Base URL:** `https://vastra-loyalty.onrender.com`
 - **Headers (both endpoints):**
   - `Content-Type: application/json`
   - `X-API-Key: <shared secret>` — we share this privately (not in this doc)
 - **All bodies and responses are JSON.** Errors look like
-  `{ "detail": "<message>" }`.
+  `{ "detail": "<message>", "status": false }`.
+
+---
+
+## 0. `status` — did the call work?
+
+**Every response from these endpoints carries a boolean `status`.**
+
+- `status: true` — the call worked. The API is up and it answered you.
+- `status: false` — the call did not work. Something went wrong.
+
+It exists so you can tell *"the API is fine, there is simply no data / the code
+was already used"* apart from *"the API failed"* without reading the HTTP code.
+The HTTP codes are **unchanged** — a `404` is still a `404`. This is a second,
+easier signal, never a replacement.
+
+Two things to keep straight:
+
+- **`status` is only ever the boolean.** A code's own redeemed/available state
+  is reported as **`qrStatus`** on `/yourapp/qr/lookup` — that endpoint only.
+  (This field used to be called `status`; it was renamed when the boolean took
+  the name. If you integrated before Aug 2026, that rename is the only field
+  change you need to make.)
+- **An already-redeemed code is a *successful* call.** The lookup answers
+  `status: true` with `qrStatus: "redeemed"`. `status: false` means we failed
+  to answer, not that the answer was "no".
+
+`status: false` also comes back on failures that happen *before* we look at
+your request — a wrong `X-API-Key` (`401`), the integration being switched off
+(`503`), a rate limit (`429`), a malformed body (`422`) — and on an unhandled
+crash on our side, which answers
+`500 { "detail": "Internal server error", "status": false }` rather than
+dropping the connection. That last case is the one this flag exists for.
 
 ---
 
@@ -31,7 +63,7 @@ manual code printed under it (dashes/spaces/case don't matter).
 Response `200`:
 ```json
 {
-  "status": "available",
+  "qrStatus": "available",
   "is_box": false,
   "items": 1,
   "product": { "external_id": "VP-9281", "name": "Silk Saree", "sku": "SS-001" },
@@ -40,11 +72,13 @@ Response `200`:
   "total_points": 75,
   "scheme": { "id": 2, "name": "Diwali Bonus" },
   "redeemed_at": null,
-  "redeemed_by_shop": null
+  "redeemed_by_shop": null,
+  "status": true
 }
 ```
-- `status` becomes `"redeemed"` once scanned; then `redeemed_at` and
-  `redeemed_by_shop` are filled.
+- `qrStatus` becomes `"redeemed"` once scanned; then `redeemed_at` and
+  `redeemed_by_shop` are filled. `status` stays `true` either way — a
+  redeemed code is still a successful lookup (see §0).
 - Points are **per item**. For a box sticker (`is_box: true`), each of the
   `items` children credits `total_points` (so a 12-item box = 12 ×
   `total_points`).
@@ -82,11 +116,13 @@ Response `200`:
   "bonus_points": 25,
   "scheme": { "id": 2, "name": "Diwali Bonus" },
   "retailer": { "id": 12, "shop_name": "Kumar Sarees", "region": "Jaipur" },
-  "new_balance": 555
+  "new_balance": 555,
+  "status": true
 }
 ```
 For a box, `items_registered` = number of items credited and the points
-fields are the totals across them.
+fields are the totals across them. The scan reports its own outcome through
+`redeemed`, as it always has — there is no `qrStatus` here.
 
 ## 2b. Get a retailer's total points
 
@@ -102,7 +138,7 @@ Request:
 
 Response `200`:
 ```json
-{ "total_points": 555 }
+{ "total_points": 555, "status": true }
 ```
 - `total_points` is the live wallet balance (points earned from scans minus
   gifts redeemed, etc.) — always current.
@@ -116,6 +152,9 @@ Errors: `403 Phone number not registered`, `403 Account is blocked`,
 
 ## 3. Errors to handle
 
+Every one of these carries `"status": false` next to `detail`, so
+`if (!body.status)` is enough to route into your error path.
+
 | HTTP | `detail` | Meaning / what to show |
 |---|---|---|
 | 404 | `Invalid code` | Code doesn't exist (or belongs to another brand). "This code isn't valid." |
@@ -126,7 +165,8 @@ Errors: `403 Phone number not registered`, `403 Account is blocked`,
 | 422 | `Invalid phone number` | Fewer than 10 digits after cleanup. |
 | 401 | `Invalid API key` | Wrong/missing `X-API-Key` — config issue, don't retry. |
 | 503 | `YourApp integration is not configured` | Key not set on our server — contact us. |
-| 429 | (rate limited) | Back off and retry after a moment. |
+| 429 | (rate limited) | Back off and retry after a moment (`Retry-After` header is preserved). |
+| 500 | `Internal server error` | Something broke on our side. Safe to show "try again"; report it if it persists. |
 
 Notes:
 - **Don't blind-retry the scan call** on a timeout — check with

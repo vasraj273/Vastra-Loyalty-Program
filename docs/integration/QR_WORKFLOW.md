@@ -35,13 +35,14 @@ sequenceDiagram
     L->>DB: INSERT parent (box) codes; link children via parent_token
   end
   L-->>C: 201 { batch_id, codes[], boxes_codes[], actions }
-  C->>L: GET /qr/batches/{id}/print  (A4 PDF)
+  Note over C: A4 sticker sheet is rendered in the browser<br/>from the returned codes (payload + manual_code)
   C->>L: POST /qr/batches/{id}/save  (pending → saved)
 ```
 
 The caller is now the **loyalty admin panel** (manufacturer logs in
 directly) — see [PRODUCT_INTEGRATION](PRODUCT_INTEGRATION.md) for how the
-panel sources the product list from Vastra beforehand. With the primary
+panel sources the product list from the manufacturer's own CSV import
+beforehand. With the primary
 `product_external_id` contract, loyalty does **not** validate the product
 against a local table (it has none); that validation only happens for the
 legacy `product_id` body.
@@ -60,7 +61,20 @@ stateDiagram-v2
   saved --> [*]: printed / in circulation
 ```
 
-`saved` batches can be printed any time via `GET /qr/batches/{id}/print`.
+`saved` batches can be printed any time: the panel re-fetches
+`GET /qr/batches/{id}` (which returns each code's `payload`, `manual_code`,
+`is_parent` and `items`) and lays the sheet out in the browser
+(`panel/src/utils/stickerPdf.js`, a port of the server layout — same A4 grid,
+same fonts, same output). The server-rendered
+`GET /qr/batches/{id}/print` still exists for direct API callers, but the panel
+no longer uses it: the PDF grows ~5.2 KB per code, so a 2,000-sticker batch is
+10.3 MB — past Lambda's 6 MB buffered response cap — while the same batch as
+JSON is ~180 KB and costs the server no PNG rendering.
+
+The QR payload string is always taken from the API response verbatim and never
+rebuilt client-side: `QR_BASE_URL` is server-side config, and a frontend copy
+that drifted would send every printed sticker to a dead host.
+
 Discarding deletes the batch and its codes (only sensible while pending).
 
 ## 4. QR scan lifecycle & redemption
@@ -97,9 +111,11 @@ without a retailer session via `POST /yourapp/scan {phone, code, lat?, lng?}`
 (auth `X-API-Key` = `YOURAPP_API_KEY`; the retailer is matched by registered
 phone, last 10 digits, within the scanned code's manufacturer), and preview a
 code first with the read-only `POST /yourapp/qr/lookup {code}` (product,
-points, `available`/`redeemed` — never redeems). Both share this exact
-redemption core, so all the states above are identical. See
-[API_REFERENCE](API_REFERENCE.md).
+points, `qrStatus: available|redeemed` — never redeems). Both share this exact
+redemption core, so all the states above are identical. Both also carry the
+boolean `status` (did the call work) that every `/yourapp/*` response does. See
+[API_REFERENCE](API_REFERENCE.md) and
+[YOURAPP_SCAN_API](YOURAPP_SCAN_API.md).
 
 ## 5. Duplicate prevention (double-spend safety)
 

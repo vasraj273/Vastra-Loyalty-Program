@@ -26,6 +26,30 @@
 - All error bodies are FastAPI standard: `{ "detail": "<message>" }`. See
   [ERROR_REFERENCE](ERROR_REFERENCE.md).
 
+### The `status` flag (`/yourapp/*` only)
+
+Every response from the three `/yourapp/*` endpoints — success **and** failure
+— carries a boolean **`status`**: `true` when the call worked, `false` when it
+did not. It lets YourApp's frontend tell *"the API is fine, there is simply no
+data"* apart from *"the API failed"* without reading the HTTP code. **HTTP
+codes are unchanged**; this is an additional signal, never a replacement.
+
+- `status` is the boolean and nothing else. A code's own redeemed/available
+  state is **`qrStatus`**, on `POST /yourapp/qr/lookup` only (it held the name
+  `status` before Aug 2026 — that rename is the only field change).
+  `POST /yourapp/scan` still reports its outcome through `redeemed`.
+- An already-redeemed code is a *successful* call: `status: true` with
+  `qrStatus: "redeemed"`.
+- Failures are stamped centrally by four exception handlers, so the flag also
+  covers errors raised before the endpoint body runs — bad `X-API-Key` (`401`),
+  integration off (`503`), rate limit (`429`, `Retry-After` preserved),
+  validation (`422`) — and unhandled crashes, which answer
+  `500 { "detail": "Internal server error", "status": false }`.
+- **Scoped to paths under `/yourapp/`.** No other endpoint gains the field, and
+  `status` strings elsewhere (scheme `active|upcoming|previous`, claim
+  `pending|approved|rejected`, batch `pending|saved`) are unrelated fields and
+  are untouched.
+
 ## Endpoint index
 
 | Area | Method & Route | Auth |
@@ -57,6 +81,7 @@
 | Scan | `POST /scan` | R |
 | Scan | `POST /yourapp/qr/lookup` | Key |
 | Scan | `POST /yourapp/scan` | Key |
+| Scan | `POST /yourapp/points` | Key |
 | Wallet | `GET /retailer/wallet` | R |
 | Rewards | `GET /retailer/shop` | R |
 | Rewards | `POST /retailer/claim` | R |
@@ -282,12 +307,29 @@ Marks a `pending` batch as `saved`. **Response 200:** `{ "batch_id": 7, "status"
 Optional `?status=pending|saved`. **Response 200:** array of batch summaries (`batch_id`, `product_name`, `sku`, `quantity`, `points_per_code`, `status`, `created_at`).
 
 ### GET /qr/batches/{id} — Auth M
-**Response 200:** batch + `codes: [{ token, manual_code, redeemed_at, redeemed_by }]`. **Errors:** `404 Batch not found`.
+- **Response 200:** batch +
+  `codes: [{ token, manual_code, redeemed_at, redeemed_by, is_parent, items, payload }]`,
+  children first then box (parent) codes.
+- `payload` is the exact string encoded in the QR, built server-side from
+  `QR_BASE_URL`. **Never rebuild it in a client** — a frontend copy that
+  drifted would point printed stickers at a dead host.
+- `is_parent`/`items`/`payload` exist so the panel can render the sticker sheet
+  client-side for a *saved* batch (`POST /qr/generate` already returns the same
+  three for a freshly generated one).
+- **Errors:** `404 Batch not found`.
 
 ### GET /qr/batches/{id}/print — Auth M
-- **Purpose:** printable A4 PDF of all stickers in the batch.
+- **Purpose:** printable A4 PDF of all stickers in the batch, rendered
+  server-side by `app/pdf_service.py`.
 - **Response 200:** `application/pdf` (binary; `Content-Disposition: inline`). Accepts `?token=` so it can open in a browser tab.
 - **Errors:** `404 Batch not found`.
+- **The admin panel no longer calls this.** It builds the identical sheet in
+  the browser from `GET /qr/batches/{id}` (`panel/src/utils/stickerPdf.js`),
+  because the PDF grows ~5.2 KB per code — a 2,000-sticker batch is 10.3 MB,
+  past Lambda's 6 MB buffered response cap, while the same batch as JSON is
+  ~180 KB. The endpoint stays for direct API use and small batches; on Lambda
+  it is subject to the response-size limits in
+  [AWS_LAMBDA_DEPLOY §3](AWS_LAMBDA_DEPLOY.md).
 
 ### DELETE /qr/batches/{id} — Auth M → 204
 Discards a batch and its codes. **Errors:** `404 Batch not found`.
@@ -328,15 +370,18 @@ Discards a batch and its codes. **Errors:** `404 Batch not found`.
 - **Response 200:**
 ```json
 {
-  "status": "available",
+  "qrStatus": "available",
   "is_box": false, "items": 1,
   "product": { "external_id": "VP-9281", "name": "Silk Saree", "sku": "SS-001" },
   "base_points": 50, "bonus_points": 25, "total_points": 75,
   "scheme": { "id": 2, "name": "Diwali Bonus" },
-  "redeemed_at": null, "redeemed_by_shop": null
+  "redeemed_at": null, "redeemed_by_shop": null,
+  "status": true
 }
 ```
-  `status` is `redeemed` once scanned (`redeemed_at`/`redeemed_by_shop` filled).
+  `qrStatus` is `redeemed` once scanned (`redeemed_at`/`redeemed_by_shop`
+  filled) — an already-redeemed code is still a *successful* call, so `status`
+  stays `true` (see [the `status` flag](#the-status-flag-yourapp-only)).
   Points are **per item**; for a box (`is_box: true`) each of the `items`
   children credits `total_points`. `bonus_points` reflects the best scheme
   active **right now** — the credited bonus is decided at scan time.
@@ -353,7 +398,8 @@ Discards a batch and its codes. **Errors:** `404 Batch not found`.
 - **Request:** `{ "phone": "+91 98765 43210", "code": "a1b2c3…", "lat": 26.91, "lng": 75.78 }`
   (`lat`/`lng` optional, separate fields; phone matching is on the last 10
   digits, so `+91`/`0` prefixes, spaces, and dashes are all tolerated).
-- **Response 200:** identical shape to `POST /scan` above.
+- **Response 200:** identical shape to `POST /scan` above, **plus
+  `"status": true`**.
 - **Side effect:** when `lat`/`lng` are sent, the retailer's shop pin, city,
   and street address are refreshed (latest wins) exactly like
   `POST /retailer/location`; best-effort, never fails the scan.
@@ -361,6 +407,20 @@ Discards a batch and its codes. **Errors:** `404 Batch not found`.
   `403 Account is blocked` · `409 Multiple retailers share this phone number` ·
   `409 Code already redeemed` / `Box already redeemed` ·
   `422 Invalid phone number` · `401 Invalid API key` · `503` not configured · `429`.
+
+### POST /yourapp/points — Auth Key
+- **Purpose:** read a retailer's current wallet balance and nothing else.
+  Read-only.
+- **Auth:** `X-API-Key` header. **Rate limit:** `RL_SCAN` (per caller IP).
+- **Request:** `{ "phone": "+91 98765 43210" }` (same last-10-digit matching).
+- **Response 200:** `{ "total_points": 555, "status": true }`
+- **Tenancy:** there is no code in this call, so the phone is matched across
+  **all** manufacturers — unlike `/yourapp/scan`, whose tenant comes from the
+  scanned code. A phone registered to two retailers returns `409` rather than
+  guessing.
+- **Errors:** `403 Phone number not registered` · `403 Account is blocked` ·
+  `409 Multiple retailers share this phone number` · `422 Invalid phone number` ·
+  `401 Invalid API key` · `503` not configured · `429`.
 
 ---
 
@@ -432,6 +492,10 @@ Refunds the points. **Response 200:** `{ "claim_id": 5, "status": "rejected", "r
 ### GET /analytics/dashboard — Auth M
 - **Response 200:** `{ "totals": { "retailers", "products", "scans", "points_awarded", "codes_issued", "redeem_total", "redeem_pending", "redeem_approved" }, "by_region": [...], "by_product": [...], "by_distributor": [...], "top_retailers": [...], "map_points": [...], "by_month": [ { "month": "2026-06", "generated": 500, "scanned": 120 } ] }`
 - All values manufacturer-scoped. `by_month` buckets are `YYYY-MM`.
+- `totals.products` counts the **imported catalog** (`product_points` rows with
+  `source = 'import'`), not the legacy `products` table — and falls back to the
+  built-in samples when the catalog is empty and `USE_SAMPLE_PRODUCTS` is on,
+  so the card always agrees with what the Products tab shows.
 
 ---
 

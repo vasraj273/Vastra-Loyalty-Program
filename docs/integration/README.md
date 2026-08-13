@@ -19,11 +19,11 @@ integrate **without reading the source code**.
 | 3 | [MOBILE_INTEGRATION_GUIDE.md](MOBILE_INTEGRATION_GUIDE.md) | Manufacturer + retailer app flows, APIs, UX, errors, retries |
 | 4 | [API_REFERENCE.md](API_REFERENCE.md) | Endpoint-by-endpoint contract (SSO + QR + scan + wallet + claims) |
 | 5 | [QR_WORKFLOW.md](QR_WORKFLOW.md) | Generation → batch → scan → redemption → ledger → claims → analytics |
-| 6 | [PRODUCT_INTEGRATION.md](PRODUCT_INTEGRATION.md) | Vastra as product System of Record, pulled server-side; panel-driven QR generation ✅ (CRUD removed; `scheme_products` migration pending) |
+| 6 | [PRODUCT_INTEGRATION.md](PRODUCT_INTEGRATION.md) | The manufacturer's own CSV import as the catalog; panel-driven QR generation ✅ (Vastra is **not** a catalog source; CRUD removed; `scheme_products` migration pending) |
 | 7 | [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md) | Env vars, migrations, SSO config, health, rollback, prod checklist |
 | 8 | [ERROR_REFERENCE.md](ERROR_REFERENCE.md) | Every API error, meaning, client behavior, retry guidance |
 | 9 | [INTEGRATION_CHECKLIST.md](INTEGRATION_CHECKLIST.md) | Practical checklists: Backend / Mobile / DevOps / QA |
-| 10 | [YOURAPP_SCAN_API.md](YOURAPP_SCAN_API.md) | **Handoff spec for the YourApp team** — the two server-to-server scan endpoints (phone-verified), self-contained ✅ |
+| 10 | [YOURAPP_SCAN_API.md](YOURAPP_SCAN_API.md) | **Handoff spec for the YourApp team** — the three server-to-server endpoints (phone-verified) and the `status`/`qrStatus` contract, self-contained ✅ (a plain-text mirror lives beside it as `YOURAPP_SCAN_API.txt` — update both) |
 
 ## Reading order
 
@@ -31,8 +31,9 @@ integrate **without reading the source code**.
 2. **SSO_INTEGRATION** — nothing else works until auth does.
 3. **API_REFERENCE** + **ERROR_REFERENCE** as you build.
 4. **QR_WORKFLOW** and **MOBILE_INTEGRATION_GUIDE** for the feature flows.
-5. **PRODUCT_INTEGRATION** for the product-ownership model — pull-based, panel-driven
-   (implemented; `scheme_products` migration to `product_external_id` still pending).
+5. **PRODUCT_INTEGRATION** for the product-ownership model — CSV-imported,
+   panel-driven (implemented; `scheme_products` migration to
+   `product_external_id` still pending).
 6. **DEPLOYMENT_GUIDE** + **INTEGRATION_CHECKLIST** for go-live.
 
 ## Companion (existing repo docs)

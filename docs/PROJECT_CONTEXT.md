@@ -3,8 +3,9 @@
 A one-stop orientation to what this project is, who it serves, how it's built, and
 where it stands. For deeper detail see the companion docs linked at the end.
 
-**Status:** Live in production on Render + MySQL (AWS RDS) with real data.
-**Last updated:** 2026-08-05.
+**Status:** Live in production on AWS Lambda + RDS for MySQL (Render remains
+the demo path) with real data.
+**Last updated:** 2026-08-13.
 
 ---
 
@@ -14,7 +15,7 @@ A **multi-tenant loyalty-program backend** for the VastraApp ecosystem. The mark
 flow is **manufacturer → distributor → retailer**:
 
 - **Manufacturers** (textile makers) generate QR codes in the **loyalty admin
-  panel** — picking from their Vastra-catalog products — and print them on
+  panel** — picking from their own CSV-imported product catalog — and print them on
   product/box stickers.
 - **Retailers** (shops) scan those codes in **YourApp** when they receive stock,
   earning loyalty **points** they later redeem for **gifts**.
@@ -41,7 +42,7 @@ One FastAPI service serves three surfaces from a single container:
 
 - **Points & the wallet ledger.** `points_ledger` is a typed transaction log
   (`scan`, `gift_redeem`, `refund`, `adjustment`, `transfer`, `scan_reversed`,
-  `reversal`). A retailer's
+  `reversal`, `import_opening`). A retailer's
   **balance = SUM(points)**; scan analytics filter `entry_type='scan'`. Always add
   a ledger row rather than mutating a balance. A manufacturer can **reverse** a
   scan credited to the wrong retailer (`POST /scans/reverse`): the scan rows flip
@@ -60,8 +61,7 @@ One FastAPI service serves three surfaces from a single container:
   **reference** (`product_external_id`) + immutable **snapshot**
   (`product_name`/`product_sku`) on `qr_batches` and `points_ledger`. The
   manufacturer's points-per-scan value is loyalty's own data (`product_points`
-  table), set/edited from the panel and merged onto Vastra's list at read
-  time. Product CRUD/import is **removed**; `GET /products` and
+  table), set/edited from the panel. Product CRUD/import is **removed**; `GET /products` and
   `scheme_products` remain only for legacy local rows. See
   `docs/integration/PRODUCT_INTEGRATION.md`.
 - **Schemes.** Time-bound bonus points on top of base, optionally scoped to
@@ -87,11 +87,18 @@ Dashboard (two stat rows — funnel totals + redemption requests; region +
 by-distributor tables; clustered India scan map; and a **QR analytics** section
 with a year selector + month-wise generation and generated-vs-scanned bar charts),
 Customers (retailers — with assign-distributor, per-row map link, **Import CSV**),
-Distributors (**Import CSV**), Products (Vastra-sourced list, per-product
-points editable inline, **Generate QR** as an in-panel modal), Schemes,
-Gifts, Claims, Redemptions. Super admin sees a
-Manufacturers tab instead. Every data tab has an **Export CSV** button
-(client-side download, `panel/src/utils/csv.js`).
+Distributors (**Import CSV**), Products (the manufacturer's **CSV-imported**
+catalog, searchable + paginated, per-product points editable inline,
+**Generate QR** as an in-panel modal that builds the sticker PDF in the
+browser), Schemes, Gifts, Claims, Redemptions. Super admin sees a
+Manufacturers tab instead.
+
+Every tab's toolbar is the same three parts (`components/Toolbar.jsx`): pill
+buttons for the permanent actions, an overflow **⋮** at the far right (Export
+CSV, Sample CSV, Delete all — each hidden while the list is empty), and a
+circular **+** bottom-right for the add form. Exports are client-side downloads
+(`panel/src/utils/csv.js`); blank tabs render a shared `EmptyState` card
+instead of a header-only table.
 
 **Retailer webview** (`/web`, shared burger-menu nav — Home/Scan/Reward
 shop/Claims history/Log out): home/login, **scan** (camera + manual code, with a
@@ -134,10 +141,12 @@ scans and rewards with claims survive, and the panel says so.
 ## 6. Tech & architecture
 
 - **Backend:** Python 3.12+, FastAPI, Pydantic v2, Uvicorn. PDF/QR via `reportlab`,
-  `qrcode`.
+  `qrcode` server-side — though the sticker sheet the panel prints is now built
+  in the browser (`panel/src/utils/stickerPdf.js`, jsPDF + `qrcode`), because a
+  2,000-code PDF is 10.3 MB and exceeds Lambda's buffered response cap.
 - **Database — dual backend** (`app/database.py`): MySQL when `DATABASE_URL` is
   set, SQLite otherwise. Code is written in **SQLite style everywhere** (`?`
-  placeholders, `cur.lastrowid`, `datetime('now')`); a `_PGConn` adapter translates
+  placeholders, `cur.lastrowid`, `datetime('now')`); a `_MyConn` adapter translates
   to PyMySQL. Schema evolution is **additive & idempotent** — new tables in
   `SCHEMA`, new columns in `_MIGRATIONS`, applied by `migrate()` on every startup.
   **Never reseed/drop the production DB.** (Gotchas: no `;` inside `SCHEMA` comments; no `%` literals in SQL; `VARCHAR(n)` not `TEXT` for any indexed column.)
@@ -160,13 +169,18 @@ scans and rewards with claims survive, and the panel says so.
   server-side (`manufacturers.vastra_access_token`) — **nothing reads it
   today**, it is kept for a possible future catalog reconnect. Wiped on logout.
 - **YourApp server-to-server scan (phone-verified):** `POST /yourapp/qr/lookup`
-  (read-only code preview: product, points, `available`/`redeemed`) and
-  `POST /yourapp/scan` (`phone` + `code` + optional `lat`/`lng`) are called by
+  (read-only code preview: product, points, `qrStatus: available|redeemed`),
+  `POST /yourapp/scan` (`phone` + `code` + optional `lat`/`lng`) and
+  `POST /yourapp/points` (`phone` → balance only) are called by
   YourApp's backend with a shared secret (`X-API-Key` = env `YOURAPP_API_KEY`;
   unset → `503`) — no retailer session. The retailer is matched by registered
   **phone number** (last-10-digit match) within the scanned code's
-  manufacturer; both endpoints share `/scan`'s redemption core, and the scan
-  refreshes the shop pin like `POST /retailer/location`.
+  manufacturer; lookup and scan share `/scan`'s redemption core, and the scan
+  refreshes the shop pin like `POST /retailer/location`. Every `/yourapp/*`
+  response carries a boolean **`status`** (did the call work) — successes from
+  the endpoints, failures from four central exception handlers, so even a crash
+  answers `500` with `status: false` instead of a dead connection. HTTP codes
+  are unchanged, and no other path gains the field.
 - **Multi-tenancy:** every owned row carries `manufacturer_id`; retailer endpoints
   derive the retailer from the token, never the body. Retailer `external_id` is
   unique per manufacturer, so a parent id can't resolve across tenants.
@@ -185,8 +199,12 @@ scans and rewards with claims survive, and the panel says so.
 - `seed.py` is destructive (local/initial only) and does **not** run `_MIGRATIONS`.
 - **Env vars:** `QR_BASE_URL` (QR payload origin), `DATABASE_URL` (MySQL),
   and optionally `SSO_SECRET` + `SSO_ISSUERS`/`SSO_AUDIENCE`/`SSO_MAX_AGE` to enable
-  native-app SSO, and `YOURAPP_API_KEY` to enable the YourApp server-to-server
-  scan endpoints (`/yourapp/*`).
+  native-app SSO, `YOURAPP_API_KEY` to enable the YourApp server-to-server
+  endpoints (`/yourapp/*`), and `VASTRA_API_BASE_URL` (+ companions) for the
+  panel's OTP login — its only login screen, so unset means nobody can sign in.
+  **There is no dotenv loader:** locally pass `--env-file .env` to uvicorn; on a
+  host, set every variable in the host's own configuration (`.env` never
+  deploys) or the feature fails closed in production while working locally.
 
 ## 8. Known gaps / backlog
 

@@ -48,7 +48,7 @@ closed in production while working locally).
    - `SSO_SECRET` = a long random string — only needed to enable native-app SSO (see below); omit for a plain demo.
    - `VASTRA_API_BASE_URL` / `VASTRA_API_KEY` — power the panel's **Vastra OTP login** (see below); omit for a plain demo (OTP login fails closed with a 502 until set; password login keeps working). These do **not** affect the product catalog.
    - `USE_SAMPLE_PRODUCTS` — leave unset (defaults to `0`) for a real client. Set it to `1` only for demos/testing, which makes the Products tab show three built-in demo products until the manufacturer imports their CSV.
-   - `YOURAPP_API_KEY` = a long random string shared with YourApp's backend — enables the server-to-server scan endpoints (`/yourapp/qr/lookup`, `/yourapp/scan`, see "YourApp server-to-server scan" below); omit and they return `503`.
+   - `YOURAPP_API_KEY` = a long random string shared with YourApp's backend — enables the server-to-server endpoints (`/yourapp/qr/lookup`, `/yourapp/scan`, `/yourapp/points`, see "YourApp server-to-server scan" below); omit and they return `503`.
 5. Deploy. First boot creates and migrates the tables but **does not seed** — a
    fresh database therefore has **no accounts at all** and nobody can log into
    `/panel`. Seed once, by hand, from your machine with `DATABASE_URL` set (see
@@ -80,7 +80,7 @@ Note: free tier sleeps after idle (first request takes ~30s) and the SQLite file
 2. **Manufacturer**: log out, log in as `surya/surya123` → dashboard with map, schemes, claims (all Surya-only data; log in as `heritage` to show isolation).
 3. **Generate**: in the panel, Products tab → **Generate QR** (opens an in-panel modal) → pick product → quantity 5 → Generate → Print PDF. (The standalone `/web/generate` page still works for the Vastra webview.)
 4. **Scan**: scan a printed QR with the phone camera — it opens `/web/scan/<token>` directly → Redeem → count-up + confetti animation with the scheme bonus. Or open `/web/scan`, use the in-page camera / type the 6-char manual code; "Scan another" reopens the camera. The retailer pages share a burger-menu nav.
-5. Back in the panel: the scan is already in Claims (a box scan shows as one `📦 Box · N items` row) and on the map. Every data tab has an **Export CSV** button.
+5. Back in the panel: the scan is already in Claims (a box scan shows as one `📦 Box · N items` row) and on the map. Every data tab offers **Export CSV** in its ⋮ overflow menu (hidden while the list is empty).
 
 ## Database (MySQL)
 
@@ -189,11 +189,16 @@ boot (`migrate()`/`create_constraints()`), so no manual migration is needed.
 YourApp's backend can scan on behalf of a retailer without any retailer
 session: set **`YOURAPP_API_KEY`** (a long random shared secret) and have
 YourApp send it in the `X-API-Key` header to `POST /yourapp/qr/lookup`
-(read-only preview: product, points, scanned-or-not) and `POST /yourapp/scan`
-(`phone` + `code` + optional `lat`/`lng`). The retailer is matched by the
+(read-only preview: product, points, `qrStatus: available|redeemed`),
+`POST /yourapp/scan` (`phone` + `code` + optional `lat`/`lng`) and
+`POST /yourapp/points` (`phone` → balance only). Every `/yourapp/*` response
+carries a boolean `status` saying whether the call worked — HTTP codes are
+unchanged; see `docs/integration/YOURAPP_SCAN_API.md`. The retailer is matched by the
 **phone number** registered in loyalty (import retailers with their YourApp
 phone via the panel's Import CSV) — matching uses the last 10 digits, scoped
-to the scanned code's manufacturer. Unset key → both endpoints return `503`.
+to the scanned code's manufacturer (`/yourapp/points` has no code, so it
+matches across all manufacturers). Unset key → all three endpoints return
+`503`.
 Keep the key server-side only (never in a mobile app build), and rotate it by
 changing the env var. See `docs/integration/API_REFERENCE.md`.
 

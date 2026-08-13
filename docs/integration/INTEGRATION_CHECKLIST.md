@@ -38,11 +38,18 @@ product-list API contract (see [PRODUCT_INTEGRATION §8](PRODUCT_INTEGRATION.md#
       column) — phone identifies the retailer on `/yourapp/scan`, matched on
       the last 10 digits within the scanned code's manufacturer.
 - [ ] Call `POST /yourapp/qr/lookup {code}` for a pre-scan preview (product,
-      points, `status: available|redeemed`) — read-only, safe to call freely.
+      points, `qrStatus: available|redeemed`) — read-only, safe to call freely.
 - [ ] Call `POST /yourapp/scan {phone, code, lat?, lng?}` to redeem; same
-      response shape as `/scan`.
+      response shape as `/scan` plus `status`.
+- [ ] Call `POST /yourapp/points {phone}` for a balance-only read (matched
+      across all manufacturers — no code, so no tenant).
+- [ ] Branch on the boolean **`status`** on every `/yourapp/*` response
+      (`true` = the call worked, `false` = it did not), and read the code's own
+      state from **`qrStatus`** — it was renamed out of `status` in Aug 2026.
+      Remember a redeemed code is `status: true` + `qrStatus: "redeemed"`.
 - [ ] Handle `403 Phone number not registered`, `409 Multiple retailers share
-      this phone number` (data cleanup), and the standard `404`/`409` scan states.
+      this phone number` (data cleanup), the standard `404`/`409` scan states,
+      and `500 Internal server error` (arrives as JSON with `status: false`).
 
 **Configure secrets**
 - [ ] `SSO_SECRET` distributed only to Vastra + YourApp backends + loyalty env.

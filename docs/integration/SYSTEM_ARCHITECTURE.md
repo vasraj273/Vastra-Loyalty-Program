@@ -64,7 +64,7 @@ that QR generation doesn't need it — see [PRODUCT_INTEGRATION](PRODUCT_INTEGRA
 
 | System | Responsibility |
 |---|---|
-| **Vastra Backend** | System of Record for **products** and **manufacturer identity**. Authenticates manufacturers for the panel via mobile + OTP (`loyalty-signup`/`loyalty-verifyotp`, issuing the per-org `access_token`) and serves its design list to the Loyalty Backend (server-side pull with that token, read-only) so the panel can power QR generation; no longer originates QR generation itself. Manufacturer SSO assertion minting still exists but its continued purpose (beyond the now-removed generation flow) is unclear. |
+| **Vastra Backend** | System of Record for **manufacturer identity**. Authenticates manufacturers for the panel via mobile + OTP (`loyalty-signup`/`loyalty-verifyotp`, issuing the per-org `access_token`, which Loyalty stores but does not currently read). It is **not** the product catalog source — that is the manufacturer's own CSV import — and it no longer originates QR generation. Manufacturer SSO assertion minting still exists but its continued purpose (beyond the now-removed generation flow) is unclear. |
 | **YourApp Backend** | Identity provider for **retailers**. Authenticates retailers and mints retailer SSO assertions. |
 | **Loyalty Backend** | System of Record for the **loyalty domain**: QR batches/codes, the points ledger & wallets, schemes, gifts, claims, and analytics. Validates and redeems QR codes; enforces multi-tenancy. |
 | **Loyalty Admin Panel** | Web client of the Loyalty API for manufacturers + super admin. |
@@ -113,15 +113,20 @@ sequenceDiagram
   L-->>P: catalog (no Vastra call)
   M->>P: Select product, set/adjust points, request N QR codes
   P->>L: POST /qr/generate (product_external_id + snapshot + points_per_code)
-  L-->>P: batch + codes
-  P->>L: GET /qr/batches/{id}/print (PDF)
+  L-->>P: batch + codes (each with its server-built payload URL)
+  Note over P: A4 sticker sheet rendered in the browser<br/>(utils/stickerPdf.js) — no print call
   M->>P: View analytics / claims
   P->>L: GET /analytics/dashboard, /claims, /gift-claims
 ```
 
-Vastra Backend's role in this flow is now limited to serving its product
-list to Loyalty (a plain, read-only, server-side GET) — it no longer
-originates or participates in the QR-generation request itself.
+Vastra Backend takes **no part in this flow at all**. The catalog is the
+manufacturer's own CSV import, and generation reads nothing but the request
+body — Vastra's product API is not a catalog source (`get-design-ids` returns
+design numbers but no design *name*, so it could only supply unusable product
+names; `fetch_vastra_products()` stays dormant in `app/vastra_client.py` for a
+possible future reconnect). Vastra's only live role here is **OTP login** (the
+top of the diagram above), which is a separate, always-on path — see
+[PRODUCT_INTEGRATION §1](PRODUCT_INTEGRATION.md).
 
 ## 6. Retailer flow (high level)
 
@@ -157,11 +162,17 @@ sequenceDiagram
   R->>RA: Scan a QR sticker
   RA->>RB: code (+ retailer's phone, GPS)
   RB->>L: POST /yourapp/qr/lookup {code}  (X-API-Key)
-  L-->>RB: product, points, available/redeemed
+  L-->>RB: product, points, qrStatus: available|redeemed, status: true
   RB->>L: POST /yourapp/scan {phone, code, lat?, lng?}  (X-API-Key)
-  L-->>RB: points awarded + new balance
+  L-->>RB: points awarded + new balance, status: true
   RB-->>RA: show result
 ```
+
+Every `/yourapp/*` response carries the boolean **`status`** (`true` = the call
+worked), so YourApp can separate "no data / already redeemed" from "the API
+failed" without reading the HTTP code — which is unchanged. The code's own
+state is `qrStatus` on the lookup endpoint; failures, including unhandled
+crashes (`500`), come back as JSON with `status: false`.
 
 The retailer is resolved by the **phone number registered in loyalty**
 (imported from YourApp data), matched on the last 10 digits within the scanned
